@@ -68,11 +68,25 @@ async function startBotRuntime() {
   }
 }
 
+async function stopBotRuntime() {
+  const bots = Array.from(runningBots.values());
+  runningBots.clear();
+
+  for (const clientBot of bots) {
+    try {
+      await clientBot.stop();
+    } catch (err) {
+      console.error('CUSTOMER BOT STOP ERROR:', err.message);
+    }
+  }
+}
+
 function getRunningBotCount() {
   return runningBots.size;
 }
 
 module.exports = {
   startBotRuntime,
+  stopBotRuntime,
   getRunningBotCount
 };

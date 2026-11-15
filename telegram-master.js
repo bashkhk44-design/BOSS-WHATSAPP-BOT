@@ -4,10 +4,12 @@ const { Bot, Keyboard } = require('grammy');
 const {
   pool,
   initDatabase,
-  insertTelegramBot
+  insertTelegramBot,
+  acquireTelegramRuntimeLock,
+  releaseTelegramRuntimeLock
 } = require('./db');
 
-const { startBotRuntime } = require('./bot-runtime');
+const { startBotRuntime, stopBotRuntime } = require('./bot-runtime');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const adminId = process.env.TELEGRAM_ADMIN_ID;
@@ -245,7 +247,15 @@ bot.catch((err) => {
 
 async function start() {
   await initDatabase();
+
+  const locked = await acquireTelegramRuntimeLock();
+
+  if (!locked) {
+    throw new Error('هناك نسخة أخرى تشغّل بوتات تلغرام بالفعل؛ تم منع التشغيل المكرر');
+  }
+
   await startBotRuntime();
+
   bot.start({
     onStart: (info) =>
       console.log(`BOSS BOT MASTER يعمل: @${info.username}`)
@@ -257,6 +267,44 @@ async function start() {
     );
   });
 }
+
+let shuttingDown = false;
+
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  console.log('Shutting down Telegram runtime:', signal);
+
+  try {
+    bot.stop();
+  } catch (err) {
+    console.error('MASTER BOT STOP ERROR:', err.message);
+  }
+
+  try {
+    await stopBotRuntime();
+  } catch (err) {
+    console.error('CUSTOMER BOTS STOP ERROR:', err.message);
+  }
+
+  try {
+    await releaseTelegramRuntimeLock();
+  } catch (err) {
+    console.error('RUNTIME LOCK RELEASE ERROR:', err.message);
+  }
+
+  try {
+    await pool.end();
+  } catch (err) {
+    console.error('DATABASE SHUTDOWN ERROR:', err.message);
+  }
+
+  process.exit(0);
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
 
 start().catch((err) => {
   console.error(

@@ -131,10 +131,70 @@ async function getActiveTelegramBots() {
   }));
 }
 
+
+let runtimeLockClient = null;
+
+async function acquireTelegramRuntimeLock() {
+  if (runtimeLockClient) return true;
+
+  const client = await pool.connect();
+
+  try {
+    const result = await client.query(
+      'SELECT pg_try_advisory_lock($1, $2) AS locked',
+      [20261115, 1]
+    );
+
+    if (!result.rows[0].locked) {
+      client.release();
+      return false;
+    }
+
+    runtimeLockClient = client;
+
+    client.on('error', (err) => {
+      console.error('TELEGRAM RUNTIME LOCK CONNECTION LOST:', err.message);
+      process.exit(1);
+    });
+
+    client.on('end', () => {
+      if (runtimeLockClient === client) {
+        console.error('TELEGRAM RUNTIME LOCK CONNECTION ENDED');
+        process.exit(1);
+      }
+    });
+
+    console.log('Telegram runtime lock acquired');
+    return true;
+  } catch (err) {
+    client.release();
+    throw err;
+  }
+}
+
+async function releaseTelegramRuntimeLock() {
+  const client = runtimeLockClient;
+  if (!client) return;
+
+  runtimeLockClient = null;
+
+  try {
+    await client.query(
+      'SELECT pg_advisory_unlock($1, $2)',
+      [20261115, 1]
+    );
+    console.log('Telegram runtime lock released');
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   pool,
   initDatabase,
   insertTelegramBot,
   getActiveTelegramBots,
-  decryptToken
+  decryptToken,
+  acquireTelegramRuntimeLock,
+  releaseTelegramRuntimeLock
 };
