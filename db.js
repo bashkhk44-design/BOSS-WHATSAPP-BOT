@@ -102,6 +102,9 @@ async function initDatabase() {
   `);
 
   console.log('Neon PostgreSQL connected; telegram_bots table ready');
+
+  const { initProjectDatabase } = require('./project-db');
+  await initProjectDatabase();
 }
 
 async function insertTelegramBot({ name, username, token }) {
