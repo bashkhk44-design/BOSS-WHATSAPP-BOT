@@ -249,10 +249,20 @@ bot.catch((err) => {
 async function start() {
   await initDatabase();
 
-  const locked = await acquireTelegramRuntimeLock();
+  let locked = false;
+  const lockDeadline = Date.now() + 600000;
+
+  while (!locked && Date.now() < lockDeadline) {
+    locked = await acquireTelegramRuntimeLock();
+
+    if (!locked) {
+      console.log('نسخة أخرى ما زالت تشغّل بوتات تلغرام؛ إعادة المحاولة بعد 5 ثوانٍ');
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+  }
 
   if (!locked) {
-    throw new Error('هناك نسخة أخرى تشغّل بوتات تلغرام بالفعل؛ تم منع التشغيل المكرر');
+    throw new Error('انتهت مهلة انتظار قفل تشغيل بوتات تلغرام بعد 10 دقائق');
   }
 
   await startBotRuntime();
