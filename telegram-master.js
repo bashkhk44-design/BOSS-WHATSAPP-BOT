@@ -10,6 +10,7 @@ const {
 } = require('./db');
 
 const { startBotRuntime, stopBotRuntime } = require('./bot-runtime');
+const { startIntakeBot, stopIntakeBot } = require('./intake-bot');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const adminId = process.env.TELEGRAM_ADMIN_ID;
@@ -255,6 +256,7 @@ async function start() {
   }
 
   await startBotRuntime();
+  await startIntakeBot();
 
   bot.start({
     onStart: (info) =>
@@ -277,6 +279,12 @@ async function shutdown(signal, exitCode = 0) {
   shuttingDown = true;
 
   console.log('Shutting down Telegram runtime:', signal);
+
+  try {
+    await stopIntakeBot();
+  } catch (err) {
+    console.error('INTAKE BOT STOP ERROR:', err.message);
+  }
 
   try {
     await bot.stop();
