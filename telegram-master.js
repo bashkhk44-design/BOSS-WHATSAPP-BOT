@@ -1,11 +1,10 @@
 require('dotenv').config();
+
 const { Bot, Keyboard } = require('grammy');
-const fs = require('fs');
-const path = require('path');
+const { pool, initDatabase } = require('./db');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const adminId = process.env.TELEGRAM_ADMIN_ID;
-const DB = path.join(__dirname, 'data', 'telegram-bots.json');
 
 if (!token || !adminId) {
   console.error('إعدادات Telegram ناقصة');
@@ -18,13 +17,11 @@ function isAdmin(ctx) {
   return ctx.from && String(ctx.from.id) === String(adminId);
 }
 
-function readDB() {
-  try {
-    const data = JSON.parse(fs.readFileSync(DB, 'utf8'));
-    return { bots: Array.isArray(data.bots) ? data.bots : [] };
-  } catch {
-    return { bots: [] };
-  }
+async function getBots() {
+  const result = await pool.query(
+    'SELECT id, name, username, active FROM telegram_bots ORDER BY id DESC'
+  );
+  return result.rows;
 }
 
 function menu() {
@@ -35,9 +32,35 @@ function menu() {
     .resized();
 }
 
+async function showBots(ctx) {
+  const bots = await getBots();
+
+  if (!bots.length) {
+    return ctx.reply('🤖 لا توجد بوتات مسجلة حالياً.');
+  }
+
+  const lines = bots.map((b, i) =>
+    `${i + 1}. ${b.name || 'بدون اسم'}\nالحساب: ${b.username ? '@' + b.username : 'غير معروف'}\nالحالة: ${b.active ? '🟢 فعال' : '🔴 متوقف'}`
+  );
+
+  return ctx.reply('🤖 قائمة البوتات:\n\n' + lines.join('\n\n'));
+}
+
+async function showStats(ctx) {
+  const bots = await getBots();
+  const active = bots.filter(b => b.active).length;
+
+  return ctx.reply(
+    `📊 إحصائيات BOSS BOT MASTER\n\n` +
+    `إجمالي البوتات: ${bots.length}\n` +
+    `الفعالة: ${active}\n` +
+    `المتوقفة: ${bots.length - active}`
+  );
+}
+
 bot.command('start', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply('⛔ غير مصرح لك.');
-  await ctx.reply(
+  return ctx.reply(
     '👑 BOSS BOT MASTER\n\nأهلاً بك في مركز إدارة جميع البوتات.',
     { reply_markup: menu() }
   );
@@ -49,28 +72,18 @@ bot.command('id', async (ctx) => {
 
 bot.command('bots', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply('⛔ غير مصرح لك.');
-  const bots = readDB().bots;
-  if (!bots.length) return ctx.reply('🤖 لا توجد بوتات مسجلة حتى الآن.');
-  const lines = bots.map((b, i) =>
-    `${i + 1}. ${b.name || 'بدون اسم'}\nالحساب: ${b.username ? '@' + b.username : 'غير معروف'}\nالحالة: ${b.active ? '🟢 فعال' : '🔴 متوقف'}`
-  );
-  await ctx.reply('🤖 قائمة البوتات:\n\n' + lines.join('\n\n'));
+  await showBots(ctx);
 });
 
 bot.command('stats', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply('⛔ غير مصرح لك.');
-  const bots = readDB().bots;
-  const active = bots.filter(b => b.active).length;
-  await ctx.reply(
-    `📊 إحصائيات النظام\n\n` +
-    `إجمالي البوتات: ${bots.length}\n` +
-    `البوتات الفعالة: ${active}\n` +
-    `البوتات المتوقفة: ${bots.length - active}`
-  );
+  await showStats(ctx);
 });
 
 bot.on('message:text', async (ctx) => {
-  if (!isAdmin(ctx)) return ctx.reply('⛔ غير مصرح لك باستخدام لوحة الإدارة.');
+  if (!isAdmin(ctx)) {
+    return ctx.reply('⛔ غير مصرح لك باستخدام لوحة الإدارة.');
+  }
 
   const text = ctx.message.text;
 
@@ -79,55 +92,48 @@ bot.on('message:text', async (ctx) => {
   }
 
   if (text === '🤖 البوتات') {
-    const bots = readDB().bots;
-    if (!bots.length) {
-      return ctx.reply(
-        '🤖 لا توجد بوتات مسجلة حالياً.\n\nسنضيف أول بوت نشاط بعد تجهيز التسجيل الآمن.',
-        { reply_markup: menu() }
-      );
-    }
-    const lines = bots.map((b, i) =>
-      `${i + 1}. ${b.name || 'بدون اسم'} — ${b.username ? '@' + b.username : 'غير معروف'} — ${b.active ? '🟢 فعال' : '🔴 متوقف'}`
-    );
-    return ctx.reply('🤖 البوتات المسجلة:\n\n' + lines.join('\n'));
+    return showBots(ctx);
   }
 
   if (text === '➕ إضافة بوت') {
     return ctx.reply(
       '➕ إضافة بوت نشاط جديد\n\n' +
       '1. أنشئ البوت من @BotFather.\n' +
-      '2. سنضيف الرمز من Termux بطريقة مخفية وآمنة.\n' +
+      '2. سنضيف الرمز بطريقة مخفية وآمنة.\n' +
       '3. بعد تسجيله سيظهر هنا ويمكن إدارته من تلغرام.\n\n' +
       'لا ترسل Token داخل هذه المحادثة حفاظاً على أمانه.'
     );
   }
 
   if (text === '📊 الإحصائيات') {
-    const bots = readDB().bots;
-    const active = bots.filter(b => b.active).length;
-    return ctx.reply(
-      `📊 إحصائيات BOSS BOT MASTER\n\n` +
-      `إجمالي البوتات: ${bots.length}\n` +
-      `الفعالة: ${active}\n` +
-      `المتوقفة: ${bots.length - active}`
-    );
+    return showStats(ctx);
   }
 
   if (text === '⚙️ الإعدادات') {
     return ctx.reply(
       '⚙️ إعدادات النظام\n\n' +
       `معرّف المدير: ${adminId}\n` +
-      `قاعدة البيانات: محلية وآمنة\n` +
-      `وضع الإدارة: المدير الرئيسي فقط\n` +
-      `محرك واتساب: منفصل عن تلغرام`
+      'قاعدة البيانات: Neon PostgreSQL\n' +
+      'وضع الإدارة: المدير الرئيسي فقط\n' +
+      'محرك واتساب: منفصل عن تلغرام'
     );
   }
 
   return ctx.reply('اختر أحد أزرار القائمة.', { reply_markup: menu() });
 });
 
-bot.catch((err) => console.error('Telegram error:', err.message));
+bot.catch((err) => {
+  console.error('Telegram error:', err.message);
+});
 
-bot.start({
-  onStart: (info) => console.log(`BOSS BOT MASTER يعمل: @${info.username}`)
+async function start() {
+  await initDatabase();
+  bot.start({
+    onStart: (info) => console.log(`BOSS BOT MASTER يعمل: @${info.username}`)
+  });
+}
+
+start().catch((err) => {
+  console.error('فشل تشغيل قاعدة البيانات أو البوت:', err.message);
+  process.exit(1);
 });
