@@ -259,25 +259,27 @@ async function start() {
   bot.start({
     onStart: (info) =>
       console.log(`BOSS BOT MASTER يعمل: @${info.username}`)
-  }).catch((err) => {
+  }).catch(async (err) => {
     console.error(
       'MASTER POLLING ERROR:',
       err.error_code || '',
       err.message || ''
     );
+
+    await shutdown('MASTER_POLLING_ERROR', 1);
   });
 }
 
 let shuttingDown = false;
 
-async function shutdown(signal) {
+async function shutdown(signal, exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
 
   console.log('Shutting down Telegram runtime:', signal);
 
   try {
-    bot.stop();
+    await bot.stop();
   } catch (err) {
     console.error('MASTER BOT STOP ERROR:', err.message);
   }
@@ -300,16 +302,17 @@ async function shutdown(signal) {
     console.error('DATABASE SHUTDOWN ERROR:', err.message);
   }
 
-  process.exit(0);
+  process.exit(exitCode);
 }
 
 process.once('SIGTERM', () => shutdown('SIGTERM'));
 process.once('SIGINT', () => shutdown('SIGINT'));
 
-start().catch((err) => {
+start().catch(async (err) => {
   console.error(
     'فشل تشغيل قاعدة البيانات أو البوت:',
     err.message
   );
-  process.exit(1);
+
+  await shutdown('STARTUP_ERROR', 1);
 });
