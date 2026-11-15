@@ -114,9 +114,27 @@ async function insertTelegramBot({ name, username, token }) {
   return result.rows[0];
 }
 
+
+async function getActiveTelegramBots() {
+  const result = await pool.query(`
+    SELECT id, name, username, token_ciphertext,
+           token_iv, token_auth_tag
+    FROM telegram_bots
+    WHERE active = TRUE
+      AND token_ciphertext IS NOT NULL
+    ORDER BY id ASC
+  `);
+
+  return result.rows.map(record => ({
+    ...record,
+    token: decryptToken(record)
+  }));
+}
+
 module.exports = {
   pool,
   initDatabase,
   insertTelegramBot,
+  getActiveTelegramBots,
   decryptToken
 };

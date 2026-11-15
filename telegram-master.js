@@ -7,6 +7,8 @@ const {
   insertTelegramBot
 } = require('./db');
 
+const { startBotRuntime } = require('./bot-runtime');
+
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const adminId = process.env.TELEGRAM_ADMIN_ID;
 
@@ -243,7 +245,7 @@ bot.catch((err) => {
 
 async function start() {
   await initDatabase();
-
+  await startBotRuntime();
   bot.start({
     onStart: (info) =>
       console.log(`BOSS BOT MASTER يعمل: @${info.username}`)
