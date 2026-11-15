@@ -159,7 +159,7 @@ async function beginProject(ctx) {
   );
 }
 
-async function startIntakeBot() {
+async function startIntakeBot(notifyAdmin = null) {
   const token = process.env.INTAKE_BOT_TOKEN;
 
   if (!token) {
@@ -329,12 +329,43 @@ async function startIntakeBot() {
         spec: session.data
       });
 
+      let adminNotified = false;
+
+      if (notifyAdmin) {
+        try {
+          let adminMessage = [
+            '📥 طلب مشروع جديد — يحتاج مراجعة الإدارة',
+            '',
+            `رقم المشروع: ${session.project_id}`,
+            `اسم العميل: ${ctx.from.first_name || 'غير محدد'}`,
+            `معرّف العميل: ${ctx.from.id}`,
+            `حساب العميل: ${ctx.from.username ? '@' + ctx.from.username : 'غير متوفر'}`,
+            '',
+            buildSummary(session.data),
+            '',
+            `نسخة المواصفات المعتمدة: ${result.version}`
+          ].join('\n');
+
+          if (adminMessage.length > 3500) {
+            adminMessage = adminMessage.slice(0, 3500) + '\n... تم اختصار بقية التفاصيل.';
+          }
+
+          await notifyAdmin({ text: adminMessage });
+          adminNotified = true;
+        } catch (notifyError) {
+          console.error('ADMIN PROJECT NOTIFICATION ERROR:', notifyError.message);
+        }
+      }
+
       await ctx.answerCallbackQuery({
         text: 'تم اعتماد المواصفات'
       });
 
       await ctx.reply(
-        `✅ تم اعتماد مواصفات مشروعك بنجاح.\n\nرقم المشروع: ${session.project_id}\nنسخة المواصفات: ${result.version}\n\nتم حفظ الطلب للمراجعة والانتقال إلى مراحل التطوير وفق خطة النظام.`
+        `✅ تم اعتماد مواصفات مشروعك بنجاح.\n\nرقم المشروع: ${session.project_id}\nنسخة المواصفات: ${result.version}\n\n` +
+        (adminNotified
+          ? '📨 تم إرسال طلبك إلى الإدارة للمراجعة.'
+          : 'تم حفظ طلبك، وسيتمكن المدير من مراجعته من قاعدة البيانات.')
       );
     } catch (error) {
       console.error('Project approval error:', error.message);

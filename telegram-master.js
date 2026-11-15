@@ -256,7 +256,9 @@ async function start() {
   }
 
   await startBotRuntime();
-  await startIntakeBot();
+  await startIntakeBot(async ({ text, extra }) => {
+    await bot.api.sendMessage(adminId, text, extra);
+  });
 
   bot.start({
     onStart: (info) =>
