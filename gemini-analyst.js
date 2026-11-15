@@ -54,6 +54,8 @@ async function analyzeProject({ project }) {
     model,
     input,
     system_instruction: systemInstruction
+  }, {
+    timeout_ms: 120000
   });
 
   const output = response.output_text;

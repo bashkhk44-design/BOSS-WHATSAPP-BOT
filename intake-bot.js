@@ -1,7 +1,8 @@
 const { Bot, InlineKeyboard } = require('grammy');
+const { pool } = require('./db');
 
 const {
-  createClientProject,
+  createClientProjectWithSession,
   setProjectBusinessType,
   updateClientProjectStatus,
   addConversationMessage,
@@ -13,6 +14,8 @@ const {
 
 let intakeBot = null;
 let pollingPromise = null;
+let intakeReadyPromise = null;
+let intakeStopping = false;
 
 const TYPES = [
   ['restaurant', '🍽️ مطعم'],
@@ -23,12 +26,6 @@ const TYPES = [
   ['support', '💬 خدمة عملاء'],
   ['payments', '💳 مدفوعات'],
   ['other', '✨ نشاط آخر']
-];
-
-const PLATFORMS = [
-  ['telegram', 'تيليغرام'],
-  ['whatsapp', 'واتساب'],
-  ['both', 'الاثنان']
 ];
 
 async function saveMessage(userId, projectId, role, content) {
@@ -62,16 +59,6 @@ function typeKeyboard() {
   return keyboard;
 }
 
-function platformKeyboard() {
-  const keyboard = new InlineKeyboard();
-
-  PLATFORMS.forEach(([key, label]) => {
-    keyboard.text(label, `platform:${key}`).row();
-  });
-
-  return keyboard;
-}
-
 function reviewKeyboard() {
   return new InlineKeyboard()
     .text('✅ اعتماد المواصفات', 'review:approve')
@@ -85,17 +72,13 @@ function typeName(key) {
   return TYPES.find(item => item[0] === key)?.[1] || key;
 }
 
-function platformName(key) {
-  return PLATFORMS.find(item => item[0] === key)?.[1] || key;
-}
-
 function buildSummary(data) {
   return [
     '📋 ملخص مشروعك في BOSS BOT MASTER',
     '',
     `📌 اسم المشروع: ${data.projectName || 'غير محدد'}`,
     `🏢 نوع النشاط: ${typeName(data.businessType)}`,
-    `📱 المنصة: ${platformName(data.platform)}`,
+    '📱 المنصة: تيليغرام فقط',
     '',
     `📝 فكرة المشروع:\n${data.description || 'غير محدد'}`,
     '',
@@ -134,6 +117,25 @@ async function askNext(ctx, session) {
       '➕ هل هناك شروط أو تفاصيل إضافية؟ اكتبها أو أرسل: لا يوجد.'
   };
 
+  if (session.step === 'business_type') {
+    await replySaved(
+      ctx,
+      session,
+      '🏢 ما نوع النشاط الذي تريد إنشاء البوت له؟',
+      { reply_markup: typeKeyboard() }
+    );
+    return;
+  }
+
+  if (session.step === 'correction') {
+    await replySaved(
+      ctx,
+      session,
+      '✏️ اكتب التعديل الذي تريد إضافته أو تصحيحه في مواصفات المشروع.'
+    );
+    return;
+  }
+
   if (session.step === 'review') {
     const summary = buildSummary(session.data);
     await replySaved(ctx, session, summary, {
@@ -151,15 +153,29 @@ async function askNext(ctx, session) {
 
 async function beginProject(ctx) {
   const userId = ctx.from.id;
+  const session = await getIntakeSession(userId);
 
-  await deleteIntakeSession(userId);
+  if (session) {
+    await pool.query(
+      `UPDATE client_projects p
+       SET status = 'cancelled', updated_at = NOW()
+       FROM clients c
+       WHERE p.client_id = c.id
+         AND p.id = $1
+         AND c.telegram_user_id = $2
+         AND p.status = 'collecting_requirements'`,
+      [session.project_id, String(userId)]
+    );
+
+    await deleteIntakeSession(userId);
+  }
 
   await ctx.reply(
     '🚀 لنبدأ إنشاء مشروعك الجديد.\n\nما اسم المشروع أو النشاط الذي تريد إنشاء بوت له؟'
   );
 }
 
-async function startIntakeBot(notifyAdmin = null) {
+async function startIntakeBot(notifyAdmin = null, onFatal = null) {
   const token = process.env.INTAKE_BOT_TOKEN;
 
   if (!token) {
@@ -167,14 +183,31 @@ async function startIntakeBot(notifyAdmin = null) {
     return null;
   }
 
-  if (intakeBot) return intakeBot;
+  if (intakeBot) {
+    if (intakeReadyPromise) await intakeReadyPromise;
+    return intakeBot;
+  }
 
-  intakeBot = new Bot(token);
+  intakeBot = new Bot(token, { client: { timeoutSeconds: 45 } });
 
   intakeBot.command('start', async (ctx) => {
-    const session = await getIntakeSession(ctx.from.id);
+    let session = await getIntakeSession(ctx.from.id);
 
     if (session) {
+      const data = { ...(session.data || {}), platform: 'telegram' };
+      const step = session.step === 'platform' ? 'description' : session.step;
+
+      if (session.step !== step || session.data?.platform !== 'telegram') {
+        session = { ...session, step, data };
+
+        await saveIntakeSession({
+          telegramUserId: ctx.from.id,
+          projectId: session.project_id,
+          step,
+          data
+        });
+      }
+
       await ctx.reply(
         'أهلاً بعودتك إلى BOSS BOT MASTER 👋\nوجدنا طلبك السابق وسنكمل من حيث توقفت.'
       );
@@ -246,18 +279,18 @@ async function startIntakeBot(notifyAdmin = null) {
     }
 
     const businessType = ctx.match[1];
-    const data = { ...session.data, businessType };
+    const data = { ...session.data, businessType, platform: 'telegram' };
 
-      await setProjectBusinessType({
-        telegramUserId: ctx.from.id,
-        projectId: session.project_id,
-        businessType
-      });
+    await setProjectBusinessType({
+      telegramUserId: ctx.from.id,
+      projectId: session.project_id,
+      businessType
+    });
 
     await saveIntakeSession({
       telegramUserId: ctx.from.id,
       projectId: session.project_id,
-      step: 'platform',
+      step: 'description',
       data
     });
 
@@ -269,8 +302,11 @@ async function startIntakeBot(notifyAdmin = null) {
     );
 
     await ctx.answerCallbackQuery();
-    await ctx.reply('📱 على أي منصة تريد تشغيل البوت؟', {
-      reply_markup: platformKeyboard()
+
+    await askNext(ctx, {
+      ...session,
+      step: 'description',
+      data
     });
   });
 
@@ -284,7 +320,8 @@ async function startIntakeBot(notifyAdmin = null) {
       return;
     }
 
-    const platform = ctx.match[1];
+    // الأزرار القديمة لا تغيّر المنصة: النظام أصبح Telegram فقط.
+    const platform = 'telegram';
     const data = { ...session.data, platform };
 
     await saveIntakeSession({
@@ -298,7 +335,7 @@ async function startIntakeBot(notifyAdmin = null) {
       ctx.from.id,
       session.project_id,
       'client',
-      `المنصة: ${platformName(platform)}`
+      'المنصة: تيليغرام فقط'
     );
 
     await ctx.answerCallbackQuery();
@@ -434,29 +471,22 @@ async function startIntakeBot(notifyAdmin = null) {
     let session = await getIntakeSession(userId);
 
     if (!session) {
-      const project = await createClientProject({
+      const result = await createClientProjectWithSession({
         telegramUserId: userId,
         telegramUsername: ctx.from.username || null,
         firstName: ctx.from.first_name || null,
         name: text
       });
 
-      const data = { projectName: text };
+      session = result.session;
 
-      await saveIntakeSession({
-        telegramUserId: userId,
-        projectId: project.id,
-        step: 'business_type',
-        data
-      });
-
-      session = {
-        project_id: project.id,
-        step: 'business_type',
-        data
-      };
-
-      await saveMessage(userId, project.id, 'client', text);
+      if (!result.created) {
+        await ctx.reply(
+          'وجدنا طلبك السابق، سنكمل من حيث توقفت.'
+        );
+        await askNext(ctx, session);
+        return;
+      }
 
       await replySaved(
         ctx,
@@ -545,30 +575,95 @@ async function startIntakeBot(notifyAdmin = null) {
     console.error('Intake bot error:', err.message);
   });
 
-  pollingPromise = intakeBot.start({
+  const currentBot = intakeBot;
+  intakeStopping = false;
+
+  let resolveReady;
+  let rejectReady;
+  let ready = false;
+
+  intakeReadyPromise = new Promise((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+
+  const reportFatal = (err) => {
+    if (intakeStopping || intakeBot !== currentBot) return;
+    if (typeof onFatal !== 'function') return;
+
+    Promise.resolve()
+      .then(() => onFatal(err))
+      .catch(error => {
+        console.error('INTAKE FATAL HANDLER ERROR:', error.message);
+      });
+  };
+
+  pollingPromise = currentBot.start({
     onStart: (info) => {
+      ready = true;
       console.log(`BOSS CLIENT INTAKE BOT يعمل: @${info.username}`);
+      resolveReady(currentBot);
     }
   });
 
-  pollingPromise.catch((err) => {
+  pollingPromise.then(() => {
+    if (ready) {
+      reportFatal(new Error('Intake bot polling stopped unexpectedly'));
+    }
+  }).catch((err) => {
     console.error('INTAKE BOT POLLING ERROR:', err.message);
+
+    if (!ready) {
+      rejectReady(err);
+    } else {
+      reportFatal(err);
+    }
   });
 
-  return intakeBot;
+  try {
+    await intakeReadyPromise;
+    return currentBot;
+  } catch (err) {
+    intakeStopping = true;
+
+    try {
+      await currentBot.stop();
+    } catch (_) {}
+
+    if (intakeBot === currentBot) {
+      intakeBot = null;
+      pollingPromise = null;
+      intakeReadyPromise = null;
+    }
+
+    throw err;
+  }
 }
 
 async function stopIntakeBot() {
-  if (!intakeBot) return;
+  const currentBot = intakeBot;
+  if (!currentBot) return;
+
+  intakeStopping = true;
 
   try {
-    await intakeBot.stop();
+    await currentBot.stop();
   } catch (error) {
     console.error('INTAKE BOT STOP ERROR:', error.message);
   }
 
-  intakeBot = null;
-  pollingPromise = null;
+  const currentPolling = pollingPromise;
+  if (currentPolling) {
+    try {
+      await currentPolling;
+    } catch (_) {}
+  }
+
+  if (intakeBot === currentBot) {
+    intakeBot = null;
+    pollingPromise = null;
+    intakeReadyPromise = null;
+  }
 }
 
 module.exports = {

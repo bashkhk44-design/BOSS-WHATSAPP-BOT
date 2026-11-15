@@ -19,7 +19,7 @@ function waitForRetry(ms, state) {
 }
 
 function createCustomerBot(record, token, state) {
-  const clientBot = new Bot(token);
+  const clientBot = new Bot(token, { client: { timeoutSeconds: 45 } });
 
   clientBot.command('start', async (ctx) => {
     await ctx.reply(

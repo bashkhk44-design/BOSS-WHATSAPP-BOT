@@ -6,7 +6,8 @@ const {
   initDatabase,
   insertTelegramBot,
   acquireTelegramRuntimeLock,
-  releaseTelegramRuntimeLock
+  releaseTelegramRuntimeLock,
+  setRuntimeLockFailureHandler
 } = require('./db');
 
 const { startBotRuntime, stopBotRuntime } = require('./bot-runtime');
@@ -14,7 +15,8 @@ const {
   createProjectAiJob,
   markProjectAiJobRunning,
   completeProjectAiJob,
-  failProjectAiJob
+  failProjectAiJob,
+  recoverInterruptedProjectAiJobs
 } = require('./project-db');
 const { startIntakeBot, stopIntakeBot } = require('./intake-bot');
 const { analyzeProject } = require('./gemini-analyst');
@@ -27,7 +29,7 @@ if (!token || !adminId) {
   process.exit(1);
 }
 
-const bot = new Bot(token);
+const bot = new Bot(token, { client: { timeoutSeconds: 45 } });
 const pendingAdds = new Map();
 
 function isAdmin(ctx) {
@@ -188,15 +190,33 @@ bot.callbackQuery(/^project:ai:(\d+)$/, async (ctx) => {
       'سأرسل التقرير عند انتهاء التحليل.'
     );
 
+    let analysis;
+
     try {
-      const analysis = await analyzeProject({ project });
+      analysis = await analyzeProject({ project });
 
       const saved = await completeProjectAiJob(job.id, analysis);
 
       if (!saved) {
         throw new Error('تعذر حفظ نتيجة التحليل في قاعدة البيانات.');
       }
+    } catch (error) {
+      try {
+        await failProjectAiJob(job.id, error.message);
+      } catch (dbError) {
+        console.error('AI JOB FAILURE SAVE ERROR:', dbError.message);
+      }
 
+      console.error('GEMINI ANALYSIS ERROR:', error.message);
+
+      await ctx.reply(
+        '❌ تعذر إكمال تحليل Gemini أو حفظ نتيجته.\n' +
+        'تم تسجيل فشل المهمة إن أمكن. تحقق من إعدادات Gemini وسجلات Render.'
+      );
+      return;
+    }
+
+    try {
       await ctx.reply(
         `✅ اكتمل تحليل المشروع رقم ${projectId}.\n` +
         `النموذج: ${analysis.model}\n` +
@@ -206,14 +226,17 @@ bot.callbackQuery(/^project:ai:(\d+)$/, async (ctx) => {
       for (let i = 0; i < analysis.text.length; i += 3500) {
         await ctx.reply(analysis.text.slice(i, i + 3500));
       }
-    } catch (error) {
-      await failProjectAiJob(job.id, error.message);
-      console.error('GEMINI ANALYSIS ERROR:', error.message);
+    } catch (deliveryError) {
+      console.error('AI REPORT DELIVERY ERROR:', deliveryError.message);
 
-      await ctx.reply(
-        '❌ تعذر إكمال تحليل Gemini أو حفظ نتيجته.\n' +
-        'تم تسجيل فشل المهمة. تحقق من إعدادات Gemini وسجلات Render.'
-      );
+      try {
+        await ctx.reply(
+          '✅ التحليل اكتمل وحُفظ بنجاح، لكن تعذر إرسال التقرير كاملاً. ' +
+          'يمكنك طلب التحليل مرة أخرى لاستعادة التقرير المحفوظ.'
+        );
+      } catch (noticeError) {
+        console.error('AI DELIVERY NOTICE ERROR:', noticeError.message);
+      }
     }
   } catch (error) {
     console.error('PROJECT AI HANDLER ERROR:', error.message);
@@ -278,7 +301,7 @@ bot.on('message:text', async (ctx) => {
       }
 
       try {
-        const candidate = new Bot(newToken);
+        const candidate = new Bot(newToken, { client: { timeoutSeconds: 45 } });
         const me = await candidate.api.getMe();
 
         const saved = await insertTelegramBot({
@@ -357,7 +380,7 @@ bot.on('message:text', async (ctx) => {
       'قاعدة البيانات: Neon PostgreSQL\n' +
       'تشفير رموز البوتات: AES-256-GCM\n' +
       'وضع الإدارة: المدير الرئيسي فقط\n' +
-      'محرك واتساب: منفصل عن تلغرام'
+      'المنصة: تيليغرام فقط'
     );
   }
 
@@ -371,6 +394,10 @@ bot.catch((err) => {
 });
 
 async function start() {
+  setRuntimeLockFailureHandler((err) =>
+    shutdown('RUNTIME_LOCK_FAILURE: ' + err.message, 1)
+  );
+
   await initDatabase();
 
   let locked = false;
@@ -389,14 +416,22 @@ async function start() {
     throw new Error('انتهت مهلة انتظار قفل تشغيل بوتات تلغرام بعد 10 دقائق');
   }
 
+  const recoveredJobs = await recoverInterruptedProjectAiJobs();
+  console.log(`Recovered ${recoveredJobs} interrupted AI job(s)`);
+
   await startBotRuntime();
-  await startIntakeBot(async ({ text, extra }) => {
-    await bot.api.sendMessage(adminId, text, extra);
-  });
+  await startIntakeBot(
+    async ({ text, extra }) => {
+      await bot.api.sendMessage(adminId, text, extra);
+    },
+    (err) => shutdown('INTAKE_BOT_FAILURE: ' + err.message, 1)
+  );
 
   bot.start({
-    onStart: (info) =>
-      console.log(`BOSS BOT MASTER يعمل: @${info.username}`)
+    onStart: (info) => {
+      console.log(`BOSS BOT MASTER يعمل: @${info.username}`);
+      process.emit('boss:runtime-ready');
+    }
   }).catch(async (err) => {
     console.error(
       'MASTER POLLING ERROR:',
@@ -413,6 +448,7 @@ let shuttingDown = false;
 async function shutdown(signal, exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
+  process.emit('boss:runtime-stopping', signal);
 
   console.log('Shutting down Telegram runtime:', signal);
 

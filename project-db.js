@@ -131,6 +131,95 @@ async function createClientProject({
   }
 }
 
+
+async function createClientProjectWithSession({
+  telegramUserId,
+  telegramUsername = null,
+  firstName = null,
+  name
+}) {
+  if (!telegramUserId || !name?.trim()) {
+    throw new Error('رقم العميل واسم المشروع مطلوبان');
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))',
+      [String(telegramUserId)]
+    );
+
+    const existing = await client.query(`
+      SELECT project_id, step, data
+      FROM client_intake_sessions
+      WHERE telegram_user_id = $1
+      FOR UPDATE
+    `, [String(telegramUserId)]);
+
+    if (existing.rowCount) {
+      await client.query('COMMIT');
+      return {
+        created: false,
+        session: existing.rows[0]
+      };
+    }
+
+    const savedClient = await client.query(`
+      INSERT INTO clients
+        (telegram_user_id, telegram_username, first_name)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (telegram_user_id)
+      DO UPDATE SET
+        telegram_username = COALESCE(EXCLUDED.telegram_username, clients.telegram_username),
+        first_name = COALESCE(EXCLUDED.first_name, clients.first_name)
+      RETURNING id
+    `, [String(telegramUserId), telegramUsername, firstName]);
+
+    const project = await client.query(`
+      INSERT INTO client_projects (client_id, name)
+      VALUES ($1, $2)
+      RETURNING id
+    `, [savedClient.rows[0].id, name.trim()]);
+
+    const data = {
+      projectName: name.trim(),
+      platform: 'telegram'
+    };
+
+    const session = await client.query(`
+      INSERT INTO client_intake_sessions
+        (telegram_user_id, project_id, step, data)
+      VALUES ($1, $2, 'business_type', $3::jsonb)
+      RETURNING project_id, step, data
+    `, [
+      String(telegramUserId),
+      project.rows[0].id,
+      JSON.stringify(data)
+    ]);
+
+    await client.query(`
+      INSERT INTO client_conversations
+        (project_id, role, content, metadata)
+      VALUES ($1, 'client', $2, '{}'::jsonb)
+    `, [project.rows[0].id, name.trim()]);
+
+    await client.query('COMMIT');
+
+    return {
+      created: true,
+      session: session.rows[0]
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function addConversationMessage({
   telegramUserId,
   projectId,
@@ -408,6 +497,7 @@ async function approveProjectSpec({
 module.exports = {
   initProjectDatabase,
   createClientProject,
+  createClientProjectWithSession,
   setProjectBusinessType,
   updateClientProjectStatus,
   addConversationMessage,

@@ -148,6 +148,44 @@ async function getActiveTelegramBots() {
 
 
 let runtimeLockClient = null;
+let runtimeLockFailureHandler = null;
+let runtimeLockFailureClient = null;
+let runtimeLockFailureError = null;
+let lockPoolEndPromise = null;
+
+function setRuntimeLockFailureHandler(handler) {
+  if (handler !== null && typeof handler !== 'function') {
+    throw new TypeError('Runtime lock failure handler must be a function or null');
+  }
+  runtimeLockFailureHandler = handler;
+}
+
+function notifyRuntimeLockFailure(client, err) {
+  if (runtimeLockClient !== client || runtimeLockFailureClient === client) return;
+
+  runtimeLockFailureClient = client;
+  const error = err instanceof Error
+    ? err
+    : new Error(String(err || 'Telegram runtime lock connection lost'));
+  runtimeLockFailureError = error;
+
+  console.error('TELEGRAM RUNTIME LOCK FAILURE:', error.message);
+
+  if (runtimeLockFailureHandler) {
+    Promise.resolve()
+      .then(() => runtimeLockFailureHandler(error))
+      .catch(handlerError => {
+        console.error('RUNTIME LOCK FAILURE HANDLER ERROR:', handlerError.message);
+      });
+  }
+}
+
+function closeLockPool() {
+  if (!lockPoolEndPromise) {
+    lockPoolEndPromise = lockPool.end();
+  }
+  return lockPoolEndPromise;
+}
 
 async function acquireTelegramRuntimeLock() {
   if (runtimeLockClient) return true;
@@ -166,42 +204,55 @@ async function acquireTelegramRuntimeLock() {
     }
 
     runtimeLockClient = client;
+    runtimeLockFailureClient = null;
+    runtimeLockFailureError = null;
 
     client.on('error', (err) => {
-      console.error('TELEGRAM RUNTIME LOCK CONNECTION LOST:', err.message);
-      process.exit(1);
+      notifyRuntimeLockFailure(client, err);
     });
 
     client.on('end', () => {
-      if (runtimeLockClient === client) {
-        console.error('TELEGRAM RUNTIME LOCK CONNECTION ENDED');
-        process.exit(1);
-      }
+      notifyRuntimeLockFailure(
+        client,
+        new Error('Telegram runtime lock connection ended')
+      );
     });
 
     console.log('Telegram runtime lock acquired using direct connection');
     return true;
   } catch (err) {
-    client.release();
+    client.release(err);
     throw err;
   }
 }
 
 async function releaseTelegramRuntimeLock() {
   const client = runtimeLockClient;
-  if (!client) return;
-
   runtimeLockClient = null;
 
+  let releaseError = runtimeLockFailureError;
+
   try {
-    await client.query(
-      'SELECT pg_advisory_unlock($1, $2)',
-      [20261115, 1]
-    );
-    console.log('Telegram runtime lock released');
+    if (client && !releaseError) {
+      await client.query(
+        'SELECT pg_advisory_unlock($1, $2)',
+        [20261115, 1]
+      );
+      console.log('Telegram runtime lock released');
+    }
+  } catch (err) {
+    releaseError = err;
+    console.error('RUNTIME LOCK UNLOCK ERROR:', err.message);
   } finally {
-    client.release();
-    await lockPool.end();
+    if (client) {
+      try {
+        client.release(releaseError || undefined);
+      } catch (err) {
+        console.error('RUNTIME LOCK CLIENT RELEASE ERROR:', err.message);
+      }
+    }
+
+    await closeLockPool();
   }
 }
 
@@ -212,5 +263,6 @@ module.exports = {
   getActiveTelegramBots,
   decryptToken,
   acquireTelegramRuntimeLock,
-  releaseTelegramRuntimeLock
+  releaseTelegramRuntimeLock,
+  setRuntimeLockFailureHandler
 };
