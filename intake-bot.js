@@ -350,7 +350,13 @@ async function startIntakeBot(notifyAdmin = null) {
             adminMessage = adminMessage.slice(0, 3500) + '\n... تم اختصار بقية التفاصيل.';
           }
 
-          await notifyAdmin({ text: adminMessage });
+          const adminKeyboard = new InlineKeyboard()
+            .text('🤖 إحالة إلى Gemini للتحليل', `project:ai:${session.project_id}`);
+
+          await notifyAdmin({
+            text: adminMessage,
+            extra: { reply_markup: adminKeyboard }
+          });
           adminNotified = true;
         } catch (notifyError) {
           console.error('ADMIN PROJECT NOTIFICATION ERROR:', notifyError.message);

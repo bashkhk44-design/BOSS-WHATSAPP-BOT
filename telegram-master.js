@@ -10,7 +10,14 @@ const {
 } = require('./db');
 
 const { startBotRuntime, stopBotRuntime } = require('./bot-runtime');
+const {
+  createProjectAiJob,
+  markProjectAiJobRunning,
+  completeProjectAiJob,
+  failProjectAiJob
+} = require('./project-db');
 const { startIntakeBot, stopIntakeBot } = require('./intake-bot');
+const { analyzeProject } = require('./gemini-analyst');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const adminId = process.env.TELEGRAM_ADMIN_ID;
@@ -97,6 +104,123 @@ bot.command('bots', async (ctx) => {
 bot.command('stats', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply('⛔ غير مصرح لك.');
   await showStats(ctx);
+});
+
+
+async function getApprovedProjectForAnalysis(projectId) {
+  const result = await pool.query(`
+    SELECT
+      p.id AS project_id,
+      p.name AS project_name,
+      p.business_type,
+      p.status,
+      c.telegram_user_id,
+      c.telegram_username,
+      c.first_name,
+      s.version AS spec_version,
+      s.spec
+    FROM client_projects p
+    JOIN clients c ON c.id = p.client_id
+    JOIN LATERAL (
+      SELECT version, spec
+      FROM project_specs
+      WHERE project_id = p.id AND status = 'approved'
+      ORDER BY version DESC
+      LIMIT 1
+    ) s ON TRUE
+    WHERE p.id = $1 AND p.status = 'spec_approved'
+  `, [projectId]);
+
+  return result.rows[0] || null;
+}
+
+bot.callbackQuery(/^project:ai:(\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) {
+    return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  }
+
+  const projectId = Number(ctx.match[1]);
+
+  await ctx.answerCallbackQuery({
+    text: 'جارٍ تجهيز تحليل المشروع...'
+  });
+
+  try {
+    const project = await getApprovedProjectForAnalysis(projectId);
+
+    if (!project) {
+      return ctx.reply(
+        'تعذر العثور على المشروع أو لا توجد مواصفات معتمدة له.'
+      );
+    }
+
+    const job = await createProjectAiJob({
+      projectId,
+      adminTelegramId: ctx.from.id
+    });
+
+    if (job.status === 'completed') {
+      const previousText = job.analysis && job.analysis.text;
+
+      if (previousText) {
+        await ctx.reply('هذا الإصدار محلل مسبقاً. التقرير المحفوظ:');
+        for (let i = 0; i < previousText.length; i += 3500) {
+          await ctx.reply(previousText.slice(i, i + 3500));
+        }
+      } else {
+        await ctx.reply('هذا الإصدار محلل مسبقاً، لكن لا يوجد نص تقرير محفوظ.');
+      }
+      return;
+    }
+
+    if (job.status === 'running') {
+      return ctx.reply('⏳ تحليل هذا المشروع قيد التنفيذ بالفعل.');
+    }
+
+    const claimed = await markProjectAiJobRunning(job.id);
+
+    if (!claimed) {
+      return ctx.reply('⏳ المهمة قيد المعالجة أو تغيرت حالتها. تحقق من قائمة المهام.');
+    }
+
+    await ctx.reply(
+      `🤖 بدأ AI ANALYST تحليل المشروع رقم ${projectId}.\n` +
+      'سأرسل التقرير عند انتهاء التحليل.'
+    );
+
+    try {
+      const analysis = await analyzeProject({ project });
+
+      const saved = await completeProjectAiJob(job.id, analysis);
+
+      if (!saved) {
+        throw new Error('تعذر حفظ نتيجة التحليل في قاعدة البيانات.');
+      }
+
+      await ctx.reply(
+        `✅ اكتمل تحليل المشروع رقم ${projectId}.\n` +
+        `النموذج: ${analysis.model}\n` +
+        'التقرير:'
+      );
+
+      for (let i = 0; i < analysis.text.length; i += 3500) {
+        await ctx.reply(analysis.text.slice(i, i + 3500));
+      }
+    } catch (error) {
+      await failProjectAiJob(job.id, error.message);
+      console.error('GEMINI ANALYSIS ERROR:', error.message);
+
+      await ctx.reply(
+        '❌ تعذر إكمال تحليل Gemini أو حفظ نتيجته.\n' +
+        'تم تسجيل فشل المهمة. تحقق من إعدادات Gemini وسجلات Render.'
+      );
+    }
+  } catch (error) {
+    console.error('PROJECT AI HANDLER ERROR:', error.message);
+    await ctx.reply(
+      '❌ تعذر تجهيز مهمة التحليل. تحقق من قاعدة البيانات وحالة اعتماد المشروع.'
+    );
+  }
 });
 
 bot.on('message:text', async (ctx) => {

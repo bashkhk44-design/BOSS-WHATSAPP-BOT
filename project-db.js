@@ -1,4 +1,5 @@
 const { pool } = require('./db');
+const projectAiJobs = require('./project-ai-jobs');
 
 async function initProjectDatabase() {
   await pool.query(`
@@ -81,6 +82,8 @@ async function initProjectDatabase() {
     CREATE INDEX IF NOT EXISTS project_events_project_idx
     ON project_events(project_id, created_at DESC)
   `);
+
+  await projectAiJobs.initProjectAiJobsDatabase();
 
   console.log('BOSS project database tables ready');
 }
@@ -415,5 +418,6 @@ module.exports = {
   getIntakeSession,
   saveIntakeSession,
   deleteIntakeSession,
-  approveProjectSpec
+  approveProjectSpec,
+  ...projectAiJobs
 };
