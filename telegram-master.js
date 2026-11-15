@@ -43,11 +43,58 @@ function designKeyboard(projectId) {
   return new InlineKeyboard().text('🎨 بدء AI DESIGNER', `project:design:${projectId}`);
 }
 
+async function showProjects(ctx) {
+  const result = await pool.query(`
+    SELECT
+      p.id, p.name, p.business_type, p.status,
+      c.first_name, c.telegram_username, c.telegram_user_id
+    FROM client_projects p
+    JOIN clients c ON c.id = p.client_id
+    ORDER BY p.created_at DESC
+    LIMIT 50
+  `);
+
+  if (!result.rows.length) {
+    return ctx.reply('📁 لا توجد مشاريع مسجلة حالياً.');
+  }
+
+  const { InlineKeyboard } = require('grammy');
+  const labels = {
+    collecting_requirements: 'يجمع المتطلبات',
+    spec_approved: 'المواصفات معتمدة',
+    completed: 'مكتمل',
+    cancelled: 'ملغى'
+  };
+
+  await ctx.reply(`📁 مشاريع العملاء (آخر ${result.rows.length} مشروع):`);
+
+  for (const p of result.rows) {
+    const client = p.first_name || p.telegram_username || p.telegram_user_id;
+    const status = labels[p.status] || p.status;
+    const message =
+      `📁 مشروع رقم ${p.id}\n` +
+      `الاسم: ${p.name}\n` +
+      `العميل: ${client}\n` +
+      `النشاط: ${p.business_type || 'غير محدد'}\n` +
+      `الحالة: ${status}`;
+
+    if (p.status === 'spec_approved') {
+      const keyboard = new InlineKeyboard()
+        .text('🧠 AI ANALYST', `project:ai:${p.id}`)
+        .text('🎨 AI DESIGNER', `project:design:${p.id}`);
+      await ctx.reply(message, { reply_markup: keyboard });
+    } else {
+      await ctx.reply(message);
+    }
+  }
+}
+
+
 function menu() {
   return new Keyboard()
-    .text('🤖 البوتات').text('➕ إضافة بوت').row()
-    .text('📊 الإحصائيات').text('⚙️ الإعدادات').row()
-    .text('🏠 الرئيسية')
+    .text('🤖 البوتات').text('📁 المشاريع').row()
+    .text('➕ إضافة بوت').text('📊 الإحصائيات').row()
+    .text('⚙️ الإعدادات').text('🏠 الرئيسية')
     .resized();
 }
 
@@ -455,6 +502,10 @@ bot.on('message:text', async (ctx) => {
 
   if (text === '🤖 البوتات') {
     return showBots(ctx);
+  }
+
+  if (text === '📁 المشاريع') {
+    return showProjects(ctx);
   }
 
   if (text === '➕ إضافة بوت') {
