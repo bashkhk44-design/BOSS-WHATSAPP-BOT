@@ -421,7 +421,11 @@ bot.callbackQuery(/^settings:(main|database|security|services|gemini|gemini:test
   }
 
   const section = ctx.match[1];
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery(
+    section === 'gemini:test'
+      ? { text: 'بدأ اختبار اتصال Gemini...' }
+      : {}
+  );
 
   if (section === 'main') {
     return showSettingsResult(
@@ -508,6 +512,11 @@ bot.callbackQuery(/^settings:(main|database|security|services|gemini|gemini:test
       return showSettingsResult(ctx, '❌ لا يوجد GEMINI_API_KEY مضبوط في إعدادات Render.');
     }
 
+    await showSettingsResult(
+      ctx,
+      '🧠 اختبار Gemini\n\n⏳ جارٍ الاتصال بخدمة Google Gemini...\nقد يستغرق الاختبار حتى دقيقتين.'
+    );
+
     try {
       const { GoogleGenAI } = await import('@google/genai');
       const ai = new GoogleGenAI({
@@ -520,7 +529,7 @@ bot.callbackQuery(/^settings:(main|database|security|services|gemini|gemini:test
         input: 'Reply with OK.',
         system_instruction: 'You are a connectivity test. Reply briefly.'
       }, {
-        timeout_ms: 30000
+        timeout_ms: 120000
       });
 
       if (!response.output_text || !response.output_text.trim()) {
@@ -532,7 +541,7 @@ bot.callbackQuery(/^settings:(main|database|security|services|gemini|gemini:test
         '🧠 اختبار Gemini\n\n✅ اتصال API ناجح واستلمنا رداً من النموذج.\nالنموذج: ' + model
       );
     } catch (error) {
-      console.error('SETTINGS GEMINI TEST:', error.message);
+      console.error('SETTINGS GEMINI TEST:', error.name, error.message, error.status || '');
       return showSettingsResult(
         ctx,
         '🧠 اختبار Gemini\n\n❌ فشل اختبار الاتصال. تحقق من المفتاح واسم النموذج وحالة الخدمة في إعدادات Render.'
