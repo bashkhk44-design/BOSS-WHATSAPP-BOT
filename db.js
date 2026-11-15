@@ -13,6 +13,18 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
+if (!process.env.DATABASE_DIRECT_URL) {
+  throw new Error('DATABASE_DIRECT_URL غير مضبوط في Render');
+}
+
+const lockPool = new Pool({
+  connectionString: process.env.DATABASE_DIRECT_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 1,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000
+});
+
 function getEncryptionKey() {
   const value = process.env.BOTS_ENCRYPTION_KEY || '';
 
@@ -137,7 +149,7 @@ let runtimeLockClient = null;
 async function acquireTelegramRuntimeLock() {
   if (runtimeLockClient) return true;
 
-  const client = await pool.connect();
+  const client = await lockPool.connect();
 
   try {
     const result = await client.query(
@@ -164,7 +176,7 @@ async function acquireTelegramRuntimeLock() {
       }
     });
 
-    console.log('Telegram runtime lock acquired');
+    console.log('Telegram runtime lock acquired using direct connection');
     return true;
   } catch (err) {
     client.release();
@@ -186,6 +198,7 @@ async function releaseTelegramRuntimeLock() {
     console.log('Telegram runtime lock released');
   } finally {
     client.release();
+    await lockPool.end();
   }
 }
 
