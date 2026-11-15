@@ -36,8 +36,12 @@ async function startBotRuntime() {
         );
       });
 
-      clientBot.catch(() => {
-        console.error(`Customer bot ${record.id}: update error`);
+      clientBot.catch((err) => {
+        console.error(
+          `CUSTOMER BOT ${record.id} UPDATE ERROR:`,
+          err.error_code || '',
+          err.message || ''
+        );
       });
 
       runningBots.set(String(record.id), clientBot);
@@ -48,9 +52,13 @@ async function startBotRuntime() {
             `Customer bot ${record.id} running: @${info.username}`
           );
         }
-      }).catch(() => {
+      }).catch((err) => {
         runningBots.delete(String(record.id));
-        console.error(`Customer bot ${record.id}: polling stopped`);
+        console.error(
+          `CUSTOMER BOT ${record.id} POLLING ERROR:`,
+          err.error_code || '',
+          err.message || ''
+        );
       });
 
     } catch (_) {

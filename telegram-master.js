@@ -249,6 +249,12 @@ async function start() {
   bot.start({
     onStart: (info) =>
       console.log(`BOSS BOT MASTER يعمل: @${info.username}`)
+  }).catch((err) => {
+    console.error(
+      'MASTER POLLING ERROR:',
+      err.error_code || '',
+      err.message || ''
+    );
   });
 }
 
