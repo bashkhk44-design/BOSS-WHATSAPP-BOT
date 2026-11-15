@@ -164,12 +164,17 @@ function notifyRuntimeLockFailure(client, err) {
   if (runtimeLockClient !== client || runtimeLockFailureClient === client) return;
 
   runtimeLockFailureClient = client;
+  runtimeLockClient = null;
   const error = err instanceof Error
     ? err
     : new Error(String(err || 'Telegram runtime lock connection lost'));
   runtimeLockFailureError = error;
 
   console.error('TELEGRAM RUNTIME LOCK FAILURE:', error.message);
+
+  try {
+    client.release(error);
+  } catch (_) {}
 
   if (runtimeLockFailureHandler) {
     Promise.resolve()
@@ -188,7 +193,18 @@ function closeLockPool() {
 }
 
 async function acquireTelegramRuntimeLock() {
-  if (runtimeLockClient) return true;
+  if (runtimeLockClient) {
+    const stillHeld = await isTelegramRuntimeLockHeld();
+    if (stillHeld) return true;
+
+    const staleClient = runtimeLockClient;
+    if (staleClient) {
+      runtimeLockClient = null;
+      try {
+        staleClient.release();
+      } catch (_) {}
+    }
+  }
 
   const client = await lockPool.connect();
 
@@ -223,6 +239,35 @@ async function acquireTelegramRuntimeLock() {
   } catch (err) {
     client.release(err);
     throw err;
+  }
+}
+
+async function isTelegramRuntimeLockHeld() {
+  const client = runtimeLockClient;
+
+  if (!client || runtimeLockFailureClient === client) {
+    return false;
+  }
+
+  try {
+    const result = await client.query(
+      `SELECT EXISTS (
+        SELECT 1
+        FROM pg_locks
+        WHERE locktype = 'advisory'
+          AND pid = pg_backend_pid()
+          AND classid = 20261115::oid
+          AND objid = 1::oid
+          AND objsubid = 2
+      ) AS locked`
+    );
+
+    return runtimeLockClient === client
+      && runtimeLockFailureClient !== client
+      && result.rows[0]?.locked === true;
+  } catch (err) {
+    notifyRuntimeLockFailure(client, err);
+    return false;
   }
 }
 
@@ -263,6 +308,7 @@ module.exports = {
   getActiveTelegramBots,
   decryptToken,
   acquireTelegramRuntimeLock,
+  isTelegramRuntimeLockHeld,
   releaseTelegramRuntimeLock,
   setRuntimeLockFailureHandler
 };

@@ -6,6 +6,7 @@ const {
   initDatabase,
   insertTelegramBot,
   acquireTelegramRuntimeLock,
+  isTelegramRuntimeLockHeld,
   releaseTelegramRuntimeLock,
   setRuntimeLockFailureHandler
 } = require('./db');
@@ -697,57 +698,212 @@ bot.catch((err) => {
   console.error('Telegram error:', err.message);
 });
 
-async function start() {
-  setRuntimeLockFailureHandler((err) =>
-    shutdown('RUNTIME_LOCK_FAILURE: ' + err.message, 1)
-  );
 
-  await initDatabase();
+let shuttingDown = false;
+let runtimeRecoveryPromise = null;
+let runtimeRecoveryRequested = false;
+let masterPollingPromise = null;
+let stoppingForRecovery = false;
 
-  let locked = false;
-  const lockDeadline = Date.now() + 600000;
+function recoveryDelay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-  while (!locked && Date.now() < lockDeadline) {
-    locked = await acquireTelegramRuntimeLock();
+async function stopTelegramServicesForRecovery() {
+  stoppingForRecovery = true;
 
-    if (!locked) {
-      console.log('نسخة أخرى ما زالت تشغّل بوتات تلغرام؛ إعادة المحاولة بعد 5 ثوانٍ');
-      await new Promise(resolve => setTimeout(resolve, 5000));
+  try {
+    try {
+      await stopIntakeBot();
+    } catch (err) {
+      console.error('RECOVERY INTAKE STOP ERROR:', err.message);
     }
-  }
 
-  if (!locked) {
-    throw new Error('انتهت مهلة انتظار قفل تشغيل بوتات تلغرام بعد 10 دقائق');
-  }
+    try {
+      await bot.stop();
+    } catch (err) {
+      console.error('RECOVERY MASTER STOP ERROR:', err.message);
+    }
 
-  const recoveredJobs = await recoverInterruptedProjectAiJobs();
-  console.log(`Recovered ${recoveredJobs} interrupted AI job(s)`);
+    const currentPolling = masterPollingPromise;
+    if (currentPolling) {
+      try {
+        await currentPolling;
+      } catch (err) {
+        console.error('RECOVERY MASTER POLLING WAIT ERROR:', err.message);
+      }
+    }
+
+    try {
+      await stopBotRuntime();
+    } catch (err) {
+      console.error('RECOVERY CUSTOMER BOTS STOP ERROR:', err.message);
+    }
+  } finally {
+    stoppingForRecovery = false;
+  }
+}
+
+let startupInProgress = false;
+
+function startMasterPolling() {
+  return new Promise((resolve, reject) => {
+    let started = false;
+
+    const polling = bot.start({
+      onStart: (info) => {
+        started = true;
+        console.log('BOSS BOT MASTER يعمل: @' + info.username);
+        resolve();
+      }
+    }).then(() => {
+      if (!started) {
+        reject(new Error('Master polling stopped before startup completed'));
+      } else if (!shuttingDown && !stoppingForRecovery) {
+        void shutdown('MASTER_POLLING_STOPPED_UNEXPECTEDLY', 1);
+      }
+    }).catch((err) => {
+      if (!started) {
+        reject(err);
+        return;
+      }
+
+      if (!shuttingDown && !stoppingForRecovery) {
+        console.error('MASTER POLLING ERROR:', err.message);
+        void shutdown('MASTER_POLLING_ERROR', 1);
+      }
+    }).finally(() => {
+      if (masterPollingPromise === polling) {
+        masterPollingPromise = null;
+      }
+    });
+
+    masterPollingPromise = polling;
+  });
+}
+
+async function runtimeLockIsSafe() {
+  if (shuttingDown || runtimeRecoveryRequested) return false;
+
+  const held = await isTelegramRuntimeLockHeld();
+
+  return held && !shuttingDown && !runtimeRecoveryRequested;
+}
+
+async function startTelegramServices() {
+  if (!(await runtimeLockIsSafe())) {
+    throw new Error('Runtime lock lost before Telegram services startup');
+  }
 
   await startBotRuntime();
+
+  if (!(await runtimeLockIsSafe())) {
+    throw new Error('Runtime lock lost after customer bots startup');
+  }
+
   await startIntakeBot(
     async ({ text, extra }) => {
       await bot.api.sendMessage(adminId, text, extra);
     },
-    (err) => shutdown('INTAKE_BOT_FAILURE: ' + err.message, 1)
+    (fatalError) => shutdown(
+      'INTAKE_BOT_FAILURE: ' + fatalError.message,
+      1
+    )
   );
 
-  bot.start({
-    onStart: (info) => {
-      console.log(`BOSS BOT MASTER يعمل: @${info.username}`);
-      process.emit('boss:runtime-ready');
-    }
-  }).catch(async (err) => {
-    console.error(
-      'MASTER POLLING ERROR:',
-      err.error_code || '',
-      err.message || ''
-    );
+  if (!(await runtimeLockIsSafe())) {
+    throw new Error('Runtime lock lost after intake bot startup');
+  }
 
-    await shutdown('MASTER_POLLING_ERROR', 1);
-  });
+  await startMasterPolling();
+
+  if (!(await runtimeLockIsSafe())) {
+    throw new Error('Runtime lock lost after master bot startup');
+  }
 }
 
-let shuttingDown = false;
+async function recoverRuntimeAfterLockLoss(err) {
+  if (shuttingDown) return;
+
+  console.error(
+    'FATAL: Telegram runtime lock was lost. Restarting service to acquire a fresh lock.',
+    err?.message || err || ''
+  );
+
+  await shutdown('TELEGRAM_RUNTIME_LOCK_LOST', 1);
+}
+
+async function start() {
+  startupInProgress = true;
+  setRuntimeLockFailureHandler(recoverRuntimeAfterLockLoss);
+
+  try {
+    await initDatabase();
+
+    let locked = false;
+    const lockDeadline = Date.now() + 600000;
+
+    while (!locked && Date.now() < lockDeadline && !shuttingDown) {
+      runtimeRecoveryRequested = false;
+
+      try {
+        locked = await acquireTelegramRuntimeLock();
+      } catch (lockError) {
+        console.error('INITIAL RUNTIME LOCK ERROR:', lockError.message);
+        await recoveryDelay(5000);
+        continue;
+      }
+
+      if (runtimeRecoveryRequested) {
+        await stopTelegramServicesForRecovery();
+        continue;
+      }
+
+      if (!locked) {
+        console.log('نسخة أخرى تشغّل بوتات تلغرام؛ إعادة المحاولة بعد 5 ثوانٍ');
+        await recoveryDelay(5000);
+        continue;
+      }
+
+      try {
+        if (!(await runtimeLockIsSafe())) {
+          await stopTelegramServicesForRecovery();
+          continue;
+        }
+
+        const recoveredJobs = await recoverInterruptedProjectAiJobs();
+        console.log('Recovered ' + recoveredJobs + ' interrupted AI job(s)');
+
+        await startTelegramServices();
+
+        if (!(await runtimeLockIsSafe())) {
+          await stopTelegramServicesForRecovery();
+          continue;
+        }
+
+        startupInProgress = false;
+        process.emit('boss:runtime-ready');
+        console.log('اكتمل التشغيل الأولي لخدمات Telegram.');
+        return;
+
+      } catch (startupError) {
+        await stopTelegramServicesForRecovery();
+
+        if (runtimeRecoveryRequested || !(await isTelegramRuntimeLockHeld())) {
+          console.error('إعادة محاولة التشغيل بعد فقدان القفل:', startupError.message);
+          continue;
+        }
+
+        throw startupError;
+      }
+    }
+
+    throw new Error('انتهت مهلة انتظار قفل تشغيل بوتات تلغرام بعد 10 دقائق');
+
+  } finally {
+    startupInProgress = false;
+  }
+}
 
 async function shutdown(signal, exitCode = 0) {
   if (shuttingDown) return;
