@@ -13,6 +13,7 @@ const {
 const { startBotRuntime, stopBotRuntime } = require('./bot-runtime');
 const {
   createProjectAiJob,
+  getLatestCompletedProjectAiJob,
   markProjectAiJobRunning,
   completeProjectAiJob,
   failProjectAiJob,
@@ -20,6 +21,7 @@ const {
 } = require('./project-db');
 const { startIntakeBot, stopIntakeBot } = require('./intake-bot');
 const { analyzeProject } = require('./gemini-analyst');
+const { designProject } = require('./ai-designer');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const adminId = process.env.TELEGRAM_ADMIN_ID;
@@ -34,6 +36,11 @@ const pendingAdds = new Map();
 
 function isAdmin(ctx) {
   return ctx.from && String(ctx.from.id) === String(adminId);
+}
+
+function designKeyboard(projectId) {
+  const { InlineKeyboard } = require('grammy');
+  return new InlineKeyboard().text('🎨 بدء AI DESIGNER', `project:design:${projectId}`);
 }
 
 function menu() {
@@ -169,6 +176,9 @@ bot.callbackQuery(/^project:ai:(\d+)$/, async (ctx) => {
         for (let i = 0; i < previousText.length; i += 3500) {
           await ctx.reply(previousText.slice(i, i + 3500));
         }
+        await ctx.reply('التحليل محفوظ. يمكنك الآن إنشاء تصميم المشروع:', {
+          reply_markup: designKeyboard(projectId)
+        });
       } else {
         await ctx.reply('هذا الإصدار محلل مسبقاً، لكن لا يوجد نص تقرير محفوظ.');
       }
@@ -226,6 +236,9 @@ bot.callbackQuery(/^project:ai:(\d+)$/, async (ctx) => {
       for (let i = 0; i < analysis.text.length; i += 3500) {
         await ctx.reply(analysis.text.slice(i, i + 3500));
       }
+      await ctx.reply('اكتمل التحليل. الخطوة التالية هي تصميم تجربة البوت:', {
+        reply_markup: designKeyboard(projectId)
+      });
     } catch (deliveryError) {
       console.error('AI REPORT DELIVERY ERROR:', deliveryError.message);
 
@@ -243,6 +256,91 @@ bot.callbackQuery(/^project:ai:(\d+)$/, async (ctx) => {
     await ctx.reply(
       '❌ تعذر تجهيز مهمة التحليل. تحقق من قاعدة البيانات وحالة اعتماد المشروع.'
     );
+  }
+});
+
+
+bot.callbackQuery(/^project:design:(\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) {
+    return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  }
+
+  const projectId = Number(ctx.match[1]);
+  await ctx.answerCallbackQuery({ text: 'جارٍ تجهيز التصميم...' });
+
+  try {
+    const project = await getApprovedProjectForAnalysis(projectId);
+    if (!project) {
+      return ctx.reply('تعذر العثور على مشروع معتمد.');
+    }
+
+    const analysisJob = await getLatestCompletedProjectAiJob({
+      projectId,
+      jobType: 'analysis'
+    });
+
+    if (!analysisJob || !analysisJob.analysis || !analysisJob.analysis.text) {
+      return ctx.reply('يجب إكمال AI ANALYST أولاً قبل بدء التصميم.');
+    }
+
+    const job = await createProjectAiJob({
+      projectId,
+      adminTelegramId: ctx.from.id,
+      jobType: 'design'
+    });
+
+    if (job.status === 'completed' && job.analysis?.text) {
+      await ctx.reply('🎨 التصميم محفوظ مسبقاً:');
+      for (let i = 0; i < job.analysis.text.length; i += 3500) {
+        await ctx.reply(job.analysis.text.slice(i, i + 3500));
+      }
+      return;
+    }
+
+    if (job.status === 'running') {
+      return ctx.reply('⏳ تصميم هذا المشروع قيد التنفيذ بالفعل.');
+    }
+
+    const claimed = await markProjectAiJobRunning(job.id);
+    if (!claimed) {
+      return ctx.reply('المهمة قيد المعالجة أو تغيرت حالتها. حاول التحقق لاحقاً.');
+    }
+
+    await ctx.reply('🎨 بدأ AI DESIGNER إعداد تجربة المشروع. سأرسل وثيقة التصميم عند اكتمالها.');
+
+    let design;
+    try {
+      design = await designProject({
+        project,
+        analysis: analysisJob.analysis
+      });
+
+      const saved = await completeProjectAiJob(job.id, design);
+      if (!saved) {
+        throw new Error('تعذر حفظ وثيقة التصميم في قاعدة البيانات.');
+      }
+    } catch (error) {
+      try {
+        await failProjectAiJob(job.id, error.message);
+      } catch (dbError) {
+        console.error('DESIGN JOB FAILURE SAVE ERROR:', dbError.message);
+      }
+
+      console.error('AI DESIGNER ERROR:', error.message);
+      await ctx.reply('❌ تعذر إكمال التصميم أو حفظه. تحقق من سجلات Render.');
+      return;
+    }
+
+    await ctx.reply(
+      `✅ اكتمل تصميم المشروع رقم ${projectId}.\nالنموذج: ${design.model}\nوثيقة التصميم:`
+    );
+
+    for (let i = 0; i < design.text.length; i += 3500) {
+      await ctx.reply(design.text.slice(i, i + 3500));
+    }
+  } catch (error) {
+    console.error('PROJECT DESIGN HANDLER ERROR:', error.message);
+    await ctx.reply('❌ تعذر تجهيز مهمة التصميم. تحقق من قاعدة البيانات وحالة التحليل.');
   }
 });
 

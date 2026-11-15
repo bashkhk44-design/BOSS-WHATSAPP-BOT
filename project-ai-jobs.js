@@ -22,12 +22,12 @@ async function initProjectAiJobsDatabase() {
   `);
 }
 
-async function createProjectAiJob({ projectId, adminTelegramId }) {
+async function createProjectAiJob({ projectId, adminTelegramId, jobType = 'analysis' }) {
   const result = await pool.query(`
     INSERT INTO project_ai_jobs
       (project_id, spec_version, job_type, status, requested_by_admin)
     SELECT
-      p.id, s.version, 'analysis', 'queued', $2
+      p.id, s.version, $3, 'queued', $2
     FROM client_projects p
     JOIN LATERAL (
       SELECT version
@@ -48,7 +48,7 @@ async function createProjectAiJob({ projectId, adminTelegramId }) {
       updated_at = NOW()
     WHERE project_ai_jobs.status = 'failed'
     RETURNING *
-  `, [projectId, String(adminTelegramId)]);
+  `, [projectId, String(adminTelegramId), jobType]);
 
   if (result.rows[0]) return result.rows[0];
 
@@ -67,14 +67,43 @@ async function createProjectAiJob({ projectId, adminTelegramId }) {
       LIMIT 1
     ) s ON s.version = j.spec_version
     WHERE j.project_id = $1
-      AND j.job_type = 'analysis'
+      AND j.job_type = $2
     ORDER BY j.id DESC
     LIMIT 1
-  `, [projectId]);
+  `, [projectId, jobType]);
 
   if (existing.rows[0]) return existing.rows[0];
 
   throw new Error('المشروع غير معتمد أو لا توجد مواصفات معتمدة');
+}
+
+
+async function getLatestCompletedProjectAiJob({
+  projectId,
+  jobType = 'analysis'
+}) {
+  const result = await pool.query(`
+    SELECT j.*
+    FROM project_ai_jobs j
+    JOIN client_projects p
+      ON p.id = j.project_id
+     AND p.status = 'spec_approved'
+    JOIN LATERAL (
+      SELECT version
+      FROM project_specs
+      WHERE project_id = p.id
+        AND status = 'approved'
+      ORDER BY version DESC
+      LIMIT 1
+    ) s ON s.version = j.spec_version
+    WHERE j.project_id = $1
+      AND j.job_type = $2
+      AND j.status = 'completed'
+    ORDER BY j.id DESC
+    LIMIT 1
+  `, [projectId, jobType]);
+
+  return result.rows[0] || null;
 }
 
 async function markProjectAiJobRunning(jobId) {
@@ -137,6 +166,7 @@ async function recoverInterruptedProjectAiJobs() {
 module.exports = {
   initProjectAiJobsDatabase,
   createProjectAiJob,
+  getLatestCompletedProjectAiJob,
   markProjectAiJobRunning,
   completeProjectAiJob,
   failProjectAiJob,
