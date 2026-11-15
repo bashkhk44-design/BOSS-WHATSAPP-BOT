@@ -250,6 +250,30 @@ async function addConversationMessage({
   return result.rows[0];
 }
 
+async function updateProjectName({ telegramUserId, projectId, name }) {
+  const cleanName = String(name || '').trim();
+  if (!cleanName || cleanName.length > 100) {
+    throw new Error('اسم المشروع مطلوب ويجب ألا يتجاوز 100 حرف');
+  }
+
+  const result = await pool.query(`
+    UPDATE client_projects p
+    SET name = $3, updated_at = NOW()
+    FROM clients c
+    WHERE p.client_id = c.id
+      AND p.id = $1
+      AND c.telegram_user_id = $2
+      AND p.status = 'collecting_requirements'
+    RETURNING p.*
+  `, [projectId, String(telegramUserId), cleanName]);
+
+  if (!result.rowCount) {
+    throw new Error('المشروع غير موجود أو لم يعد قابلاً للتعديل');
+  }
+
+  return result.rows[0];
+}
+
 async function setProjectBusinessType({ telegramUserId, projectId, businessType }) {
   const result = await pool.query(`
     UPDATE client_projects p
@@ -258,6 +282,7 @@ async function setProjectBusinessType({ telegramUserId, projectId, businessType 
     WHERE p.client_id = c.id
       AND p.id = $1
       AND c.telegram_user_id = $2
+      AND p.status = 'collecting_requirements'
     RETURNING p.*
   `, [projectId, String(telegramUserId), businessType]);
 
@@ -383,13 +408,34 @@ async function logProjectEvent({
 }
 
 async function getIntakeSession(telegramUserId) {
-  const result = await pool.query(`
-    SELECT project_id, step, data, updated_at
-    FROM client_intake_sessions
-    WHERE telegram_user_id = $1
-  `, [String(telegramUserId)]);
+  const userId = String(telegramUserId);
 
-  return result.rows[0] || null;
+  const result = await pool.query(`
+    SELECT s.project_id, s.step, s.data, s.updated_at
+    FROM client_intake_sessions s
+    JOIN client_projects p ON p.id = s.project_id
+    JOIN clients c ON c.id = p.client_id
+    WHERE s.telegram_user_id = $1
+      AND c.telegram_user_id = $1
+      AND p.status = 'collecting_requirements'
+  `, [userId]);
+
+  if (result.rows[0]) return result.rows[0];
+
+  await pool.query(`
+    DELETE FROM client_intake_sessions s
+    WHERE s.telegram_user_id = $1
+      AND NOT EXISTS (
+        SELECT 1
+        FROM client_projects p
+        JOIN clients c ON c.id = p.client_id
+        WHERE p.id = s.project_id
+          AND c.telegram_user_id = $1
+          AND p.status = 'collecting_requirements'
+      )
+  `, [userId]);
+
+  return null;
 }
 
 async function saveIntakeSession({
@@ -405,13 +451,21 @@ async function saveIntakeSession({
   const result = await pool.query(`
     INSERT INTO client_intake_sessions
       (telegram_user_id, project_id, step, data)
-    VALUES ($1, $2, $3, $4::jsonb)
+    SELECT $1, $2, $3, $4::jsonb
+    WHERE EXISTS (
+      SELECT 1
+      FROM client_projects p
+      JOIN clients c ON c.id = p.client_id
+      WHERE p.id = $2
+        AND c.telegram_user_id = $1
+        AND p.status = 'collecting_requirements'
+    )
     ON CONFLICT (telegram_user_id)
     DO UPDATE SET
-      project_id = EXCLUDED.project_id,
       step = EXCLUDED.step,
       data = EXCLUDED.data,
       updated_at = NOW()
+    WHERE client_intake_sessions.project_id = EXCLUDED.project_id
     RETURNING *
   `, [
     String(telegramUserId),
@@ -419,6 +473,10 @@ async function saveIntakeSession({
     step,
     JSON.stringify(data)
   ]);
+
+  if (!result.rowCount) {
+    throw new Error('المشروع غير متاح للتعديل أو لا يخص هذا العميل');
+  }
 
   return result.rows[0];
 }
@@ -499,6 +557,7 @@ module.exports = {
   createClientProject,
   createClientProjectWithSession,
   setProjectBusinessType,
+  updateProjectName,
   updateClientProjectStatus,
   addConversationMessage,
   getClientProjects,

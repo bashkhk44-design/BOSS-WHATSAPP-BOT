@@ -4,6 +4,7 @@ const { pool } = require('./db');
 const {
   createClientProjectWithSession,
   setProjectBusinessType,
+  updateProjectName,
   updateClientProjectStatus,
   addConversationMessage,
   getIntakeSession,
@@ -63,9 +64,28 @@ function reviewKeyboard() {
   return new InlineKeyboard()
     .text('✅ اعتماد المواصفات', 'review:approve')
     .row()
-    .text('✏️ إضافة تعديل', 'review:edit')
+    .text('✏️ تعديل المواصفات', 'review:edit')
     .row()
     .text('❌ إلغاء الطلب', 'review:cancel');
+}
+
+function editFieldsKeyboard() {
+  return new InlineKeyboard()
+    .text('📌 اسم المشروع', 'edit:field:projectName')
+    .text('🏢 نوع النشاط', 'edit:field:businessType')
+    .row()
+    .text('📝 فكرة المشروع', 'edit:field:description')
+    .row()
+    .text('⚙️ الميزات', 'edit:field:features')
+    .text('🔘 الأزرار', 'edit:field:buttons')
+    .row()
+    .text('💳 الدفع', 'edit:field:payments')
+    .row()
+    .text('🌐 اللغات والتصميم', 'edit:field:languagesDesign')
+    .row()
+    .text('➕ الإضافات', 'edit:field:extra')
+    .row()
+    .text('⬅️ العودة للملخص', 'edit:back');
 }
 
 function typeName(key) {
@@ -123,6 +143,16 @@ async function askNext(ctx, session) {
       session,
       '🏢 ما نوع النشاط الذي تريد إنشاء البوت له؟',
       { reply_markup: typeKeyboard() }
+    );
+    return;
+  }
+
+  if (session.step === 'edit_menu') {
+    await replySaved(
+      ctx,
+      session,
+      '✏️ اختر القسم الذي تريد تعديله:',
+      { reply_markup: editFieldsKeyboard() }
     );
     return;
   }
@@ -271,7 +301,7 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
   intakeBot.callbackQuery(/^type:(.+)$/, async (ctx) => {
     const session = await getIntakeSession(ctx.from.id);
 
-    if (!session || session.step !== 'business_type') {
+    if (!session || !['business_type', 'edit_business_type'].includes(session.step)) {
       await ctx.answerCallbackQuery({
         text: 'انتهت هذه الخطوة. أرسل /start للمتابعة.'
       });
@@ -287,10 +317,13 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
       businessType
     });
 
+    const editing = session.step === 'edit_business_type';
+    const nextStep = editing ? 'review' : 'description';
+
     await saveIntakeSession({
       telegramUserId: ctx.from.id,
       projectId: session.project_id,
-      step: 'description',
+      step: nextStep,
       data
     });
 
@@ -305,7 +338,7 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
 
     await askNext(ctx, {
       ...session,
-      step: 'description',
+      step: nextStep,
       data
     });
   });
@@ -423,22 +456,90 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
     const session = await getIntakeSession(ctx.from.id);
 
     if (!session || session.step !== 'review') {
-      await ctx.answerCallbackQuery();
+      await ctx.answerCallbackQuery({ text: 'لا يوجد طلب قابل للتعديل.' });
       return;
     }
 
     await saveIntakeSession({
       telegramUserId: ctx.from.id,
       projectId: session.project_id,
-      step: 'correction',
+      step: 'edit_menu',
+      data: session.data
+    });
+
+    await ctx.answerCallbackQuery();
+    await askNext(ctx, { ...session, step: 'edit_menu' });
+  });
+
+  intakeBot.callbackQuery('edit:back', async (ctx) => {
+    const session = await getIntakeSession(ctx.from.id);
+
+    if (!session || session.step !== 'edit_menu') {
+      await ctx.answerCallbackQuery({ text: 'انتهت جلسة التعديل.' });
+      return;
+    }
+
+    await saveIntakeSession({
+      telegramUserId: ctx.from.id,
+      projectId: session.project_id,
+      step: 'review',
+      data: session.data
+    });
+
+    await ctx.answerCallbackQuery();
+    await askNext(ctx, { ...session, step: 'review' });
+  });
+
+  intakeBot.callbackQuery(/^edit:field:(.+)$/, async (ctx) => {
+    const session = await getIntakeSession(ctx.from.id);
+
+    if (!session || session.step !== 'edit_menu') {
+      await ctx.answerCallbackQuery({ text: 'انتهت جلسة التعديل.' });
+      return;
+    }
+
+    const field = ctx.match[1];
+    const allowed = [
+      'projectName', 'businessType', 'description',
+      'features', 'buttons', 'payments',
+      'languagesDesign', 'extra'
+    ];
+
+    if (!allowed.includes(field)) {
+      await ctx.answerCallbackQuery({ text: 'هذا القسم غير صالح.' });
+      return;
+    }
+
+    const step = field === 'businessType' ? 'edit_business_type' : 'edit_' + field;
+
+    await saveIntakeSession({
+      telegramUserId: ctx.from.id,
+      projectId: session.project_id,
+      step,
       data: session.data
     });
 
     await ctx.answerCallbackQuery();
 
-    await ctx.reply(
-      '✏️ اكتب التعديل الذي تريد إضافته أو تصحيحه في مواصفات المشروع.'
-    );
+    if (field === 'businessType') {
+      await ctx.reply(
+        '🏢 اختر نوع النشاط الجديد:',
+        { reply_markup: typeKeyboard() }
+      );
+      return;
+    }
+
+    const prompts = {
+      projectName: '📌 اكتب اسم المشروع الجديد:',
+      description: '📝 اكتب فكرة المشروع الجديدة:',
+      features: '⚙️ اكتب الميزات المطلوبة بعد التعديل:',
+      buttons: '🔘 اكتب الأزرار والقوائم المطلوبة:',
+      payments: '💳 اكتب طريقة الدفع الجديدة، أو اكتب: لا يوجد.',
+      languagesDesign: '🌐 اكتب اللغات والتصميم المطلوبين:',
+      extra: '➕ اكتب الإضافات الجديدة، أو اكتب: لا يوجد.'
+    };
+
+    await ctx.reply(prompts[field]);
   });
 
   intakeBot.callbackQuery('review:cancel', async (ctx) => {
@@ -503,7 +604,55 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
       return;
     }
 
-    await saveMessage(userId, session.project_id, 'client', text);
+    if (!session.step.startsWith('edit_')) {
+      await saveMessage(userId, session.project_id, 'client', text);
+    }
+
+    if (session.step.startsWith('edit_')) {
+      const field = session.step.slice(5);
+      const data = { ...session.data };
+
+      if (field === 'projectName') {
+        await updateProjectName({
+          telegramUserId: userId,
+          projectId: session.project_id,
+          name: text
+        });
+        data.projectName = text;
+      } else {
+        const editableFields = [
+          'description', 'features', 'buttons',
+          'payments', 'languagesDesign', 'extra'
+        ];
+
+        if (!editableFields.includes(field)) {
+          await ctx.reply('تعذر تحديد القسم. أرسل /start للمتابعة.');
+          return;
+        }
+
+        data[field] = text;
+      }
+
+      await saveIntakeSession({
+        telegramUserId: userId,
+        projectId: session.project_id,
+        step: 'review',
+        data
+      });
+
+      await saveMessage(userId, session.project_id, 'client', text);
+
+      await saveMessage(
+        userId,
+        session.project_id,
+        'system',
+        'تم تعديل الحقل: ' + field
+      );
+
+      await ctx.reply('✅ تم حفظ التعديل في المواصفات.');
+      await askNext(ctx, { ...session, step: 'review', data });
+      return;
+    }
 
     if (session.step === 'correction') {
       const data = {
