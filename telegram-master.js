@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-const { Bot, Keyboard } = require('grammy');
+const { Bot, Keyboard, InlineKeyboard } = require('grammy');
 const {
   pool,
   initDatabase,
@@ -10,7 +10,7 @@ const {
   setRuntimeLockFailureHandler
 } = require('./db');
 
-const { startBotRuntime, stopBotRuntime } = require('./bot-runtime');
+const { startBotRuntime, stopBotRuntime, getRunningBotCount } = require('./bot-runtime');
 const {
   createProjectAiJob,
   getLatestCompletedProjectAiJob,
@@ -391,6 +391,156 @@ bot.callbackQuery(/^project:design:(\d+)$/, async (ctx) => {
   }
 });
 
+
+function settingsKeyboard() {
+  return new InlineKeyboard()
+    .text('🧠 Gemini', 'settings:gemini')
+    .text('🗄️ قاعدة البيانات', 'settings:database')
+    .row()
+    .text('🔐 الأمان والتشفير', 'settings:security')
+    .text('🤖 حالة البوتات', 'settings:services')
+    .row()
+    .text('🔄 تحديث المركز', 'settings:main');
+}
+
+async function showSettingsResult(ctx, message) {
+  try {
+    await ctx.editMessageText(message, {
+      reply_markup: settingsKeyboard()
+    });
+  } catch (_) {
+    await ctx.reply(message, {
+      reply_markup: settingsKeyboard()
+    });
+  }
+}
+
+bot.callbackQuery(/^settings:(main|database|security|services|gemini|gemini:test)$/, async (ctx) => {
+  if (!isAdmin(ctx)) {
+    return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  }
+
+  const section = ctx.match[1];
+  await ctx.answerCallbackQuery();
+
+  if (section === 'main') {
+    return showSettingsResult(
+      ctx,
+      '⚙️ مركز إعدادات BOSS BOT MASTER\nاختر القسم الذي تريد فحصه:'
+    );
+  }
+
+  if (section === 'database') {
+    try {
+      const result = await pool.query('SELECT NOW() AS server_time');
+      return showSettingsResult(
+        ctx,
+        '🗄️ فحص قاعدة البيانات\n\n' +
+        'الحالة: ✅ الاتصال ناجح\n' +
+        'الخادم: Neon PostgreSQL\n' +
+        'وقت استجابة الخادم: ' +
+        new Date(result.rows[0].server_time).toLocaleString('en-GB', { timeZone: 'UTC' }) +
+        ' UTC'
+      );
+    } catch (error) {
+      console.error('SETTINGS DATABASE CHECK:', error.message);
+      return showSettingsResult(
+        ctx,
+        '🗄️ فحص قاعدة البيانات\n\n❌ تعذر الاتصال بقاعدة البيانات. راجع إعداد DATABASE_URL وسجلات Render.'
+      );
+    }
+  }
+
+  if (section === 'security') {
+    const encryptionReady = /^[0-9a-fA-F]{64}$/.test(
+      process.env.BOTS_ENCRYPTION_KEY || ''
+    );
+    const adminReady = /^\d+$/.test(String(adminId || ''));
+
+    return showSettingsResult(
+      ctx,
+      '🔐 فحص الأمان\n\n' +
+      'معرّف المدير: ' + (adminReady ? '✅ مضبوط' : '❌ غير صالح') + '\n' +
+      'مفتاح تشفير AES-256: ' + (encryptionReady ? '✅ التنسيق صحيح' : '❌ غير مضبوط أو تنسيقه غير صحيح') + '\n' +
+      'حماية الرموز: AES-256-GCM\n' +
+      'عرض المفاتيح السرية: ممنوع'
+    );
+  }
+
+  if (section === 'services') {
+    let runningCount = 0;
+    try {
+      runningCount = getRunningBotCount();
+    } catch (_) {}
+
+    return showSettingsResult(
+      ctx,
+      '🤖 حالة الخدمات\n\n' +
+      'بوت المدير: ✅ يعمل (تم استقبال هذا الطلب)\n' +
+      'بوتات العملاء العاملة: ' + runningCount + '\n' +
+      'رمز بوت الاستقبال: ' +
+      (process.env.INTAKE_BOT_TOKEN ? '✅ مضبوط' : '⚠️ غير مضبوط') + '\n' +
+      'المنصة: Telegram فقط'
+    );
+  }
+
+  if (section === 'gemini') {
+    const configured = Boolean(process.env.GEMINI_API_KEY);
+    const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+
+    const keyboard = new InlineKeyboard()
+      .text('🧪 اختبار اتصال Gemini', 'settings:gemini:test')
+      .row()
+      .text('⬅️ العودة للإعدادات', 'settings:main');
+
+    return ctx.editMessageText(
+      '🧠 إعدادات Gemini\n\n' +
+      'مفتاح API: ' + (configured ? '✅ موجود (مخفي)' : '❌ غير مضبوط') + '\n' +
+      'النموذج: ' + model + '\n\n' +
+      'يمكنك اختبار الاتصال الفعلي بالضغط على الزر.\n' +
+      'لن يتم عرض المفتاح السري.',
+      { reply_markup: keyboard }
+    );
+  }
+
+  if (section === 'gemini:test') {
+    if (!process.env.GEMINI_API_KEY) {
+      return showSettingsResult(ctx, '❌ لا يوجد GEMINI_API_KEY مضبوط في إعدادات Render.');
+    }
+
+    try {
+      const { GoogleGenAI } = await import('@google/genai');
+      const ai = new GoogleGenAI({
+        apiKey: process.env.GEMINI_API_KEY
+      });
+      const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+
+      const response = await ai.interactions.create({
+        model,
+        input: 'Reply with OK.',
+        system_instruction: 'You are a connectivity test. Reply briefly.'
+      }, {
+        timeout_ms: 30000
+      });
+
+      if (!response.output_text || !response.output_text.trim()) {
+        throw new Error('Gemini returned an empty response');
+      }
+
+      return showSettingsResult(
+        ctx,
+        '🧠 اختبار Gemini\n\n✅ اتصال API ناجح واستلمنا رداً من النموذج.\nالنموذج: ' + model
+      );
+    } catch (error) {
+      console.error('SETTINGS GEMINI TEST:', error.message);
+      return showSettingsResult(
+        ctx,
+        '🧠 اختبار Gemini\n\n❌ فشل اختبار الاتصال. تحقق من المفتاح واسم النموذج وحالة الخدمة في إعدادات Render.'
+      );
+    }
+  }
+});
+
 bot.on('message:text', async (ctx) => {
   if (!isAdmin(ctx)) {
     return ctx.reply('⛔ غير مصرح لك باستخدام لوحة الإدارة.');
@@ -524,12 +674,8 @@ bot.on('message:text', async (ctx) => {
 
   if (text === '⚙️ الإعدادات') {
     return ctx.reply(
-      '⚙️ إعدادات النظام\n\n' +
-      `معرّف المدير: ${adminId}\n` +
-      'قاعدة البيانات: Neon PostgreSQL\n' +
-      'تشفير رموز البوتات: AES-256-GCM\n' +
-      'وضع الإدارة: المدير الرئيسي فقط\n' +
-      'المنصة: تيليغرام فقط'
+      '⚙️ مركز إعدادات BOSS BOT MASTER\nاختر القسم الذي تريد فحصه:',
+      { reply_markup: settingsKeyboard() }
     );
   }
 
