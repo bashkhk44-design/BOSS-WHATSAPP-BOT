@@ -548,119 +548,121 @@ bot.on('message:text', async (ctx) => {
 
   const text = ctx.message.text;
   const userId = ctx.from.id;
-  const pending = pendingAdds.get(userId);
 
-  if (pending) {
-    if (text === 'إلغاء' || text === 'الغاء') {
-      pendingAdds.delete(userId);
-      return ctx.reply('تم إلغاء الإضافة.', {
-        reply_markup: menu()
-      });
-    }
+  const menuCommands = [
+    '🏠 الرئيسية', '/menu',
+    '🤖 البوتات', '📁 المشاريع',
+    '➕ إضافة بوت', '📊 الإحصائيات',
+    '⚙️ الإعدادات'
+  ];
 
-    if (pending.step === 'name') {
-      const name = text.trim();
+  // أزرار القائمة لها الأولوية دائماً على حالة الإضافة المعلقة.
+  if (menuCommands.includes(text)) {
+    pendingAdds.delete(userId);
+  } else {
+    const pending = pendingAdds.get(userId);
 
-      if (name.length < 2 || name.length > 80) {
-        return ctx.reply('اكتب اسماً بين حرفين و80 حرفاً.');
-      }
-
-      pendingAdds.set(userId, {
-        step: 'token',
-        name
-      });
-
-      return ctx.reply(
-        '🔐 أرسل Token البوت الآن برسالة واحدة.\n\n' +
-        'سيحاول النظام حذف رسالة الرمز فور استلامها.\n' +
-        'لا ترسل أي رمز إلا في المحادثة الخاصة مع بوت المدير.'
-      );
-    }
-
-    if (pending.step === 'token') {
-      const newToken = text.trim();
-
-      // محاولة حذف رسالة الرمز فوراً
-      try {
-        await ctx.deleteMessage();
-      } catch (_) {
-        // لا نسجل الرمز في السجلات
-      }
-
-      if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(newToken)) {
+    if (pending) {
+      if (text === 'إلغاء' || text === 'الغاء') {
         pendingAdds.delete(userId);
-        return ctx.reply(
-          '❌ صيغة Token غير صحيحة. ابدأ الإضافة من جديد.',
-          { reply_markup: menu() }
-        );
-      }
-
-      try {
-        const candidate = new Bot(newToken, { client: { timeoutSeconds: 45 } });
-        const me = await candidate.api.getMe();
-
-        const saved = await insertTelegramBot({
-          name: pending.name,
-          username: me.username || null,
-          token: newToken
+        return ctx.reply('تم إلغاء الإضافة.', {
+          reply_markup: menu()
         });
+      }
 
-        pendingAdds.delete(userId);
+      if (pending.step === 'name') {
+        const name = text.trim();
+
+        if (name.length < 2 || name.length > 80) {
+          return ctx.reply('اكتب اسماً بين حرفين و80 حرفاً.');
+        }
+
+        pendingAdds.set(userId, { step: 'token', name });
 
         return ctx.reply(
-          `✅ تمت إضافة البوت بنجاح!\n\n` +
-          `الاسم: ${saved.name}\n` +
-          `الحساب: @${me.username}\n` +
-          `رقم التسجيل: ${saved.id}\n` +
-          `الحالة: 🟢 مسجل في قاعدة البيانات\n\n` +
-          'تم حفظ الرمز بصورة مشفرة.',
-          { reply_markup: menu() }
+          '🔐 أرسل Token البوت الآن برسالة واحدة.\n\n' +
+          'سيحاول النظام حذف رسالة الرمز فور استلامها.\n' +
+          'لا ترسل أي رمز إلا في المحادثة الخاصة مع بوت المدير.'
         );
+      }
 
-      } catch (err) {
-        pendingAdds.delete(userId);
+      if (pending.step === 'token') {
+        const newToken = text.trim();
 
-        if (err.code === '23505') {
+        try {
+          await ctx.deleteMessage();
+        } catch (_) {}
+
+        if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(newToken)) {
+          pendingAdds.delete(userId);
           return ctx.reply(
-            '⚠️ هذا البوت مسجل مسبقاً.',
+            '❌ صيغة Token غير صحيحة. ابدأ الإضافة من جديد.',
             { reply_markup: menu() }
           );
         }
 
-        if (err.error_code || err.description) {
+        try {
+          const candidate = new Bot(newToken, {
+            client: { timeoutSeconds: 45 }
+          });
+          const me = await candidate.api.getMe();
+
+          const saved = await insertTelegramBot({
+            name: pending.name,
+            username: me.username || null,
+            token: newToken
+          });
+
+          pendingAdds.delete(userId);
+
           return ctx.reply(
-            '❌ تعذر التحقق من Token. تأكد من صحته ومن BotFather، ثم أعد المحاولة.',
+            `✅ تمت إضافة البوت بنجاح!\n\n` +
+            `الاسم: ${saved.name}\n` +
+            `الحساب: @${me.username}\n` +
+            `رقم التسجيل: ${saved.id}\n` +
+            `الحالة: 🟢 مسجل في قاعدة البيانات\n\n` +
+            'تم حفظ الرمز بصورة مشفرة.',
+            { reply_markup: menu() }
+          );
+        } catch (err) {
+          pendingAdds.delete(userId);
+
+          if (err.code === '23505') {
+            return ctx.reply('⚠️ هذا البوت مسجل مسبقاً.', {
+              reply_markup: menu()
+            });
+          }
+
+          if (err.error_code || err.description) {
+            return ctx.reply(
+              '❌ تعذر التحقق من Token. تأكد من صحته ومن BotFather، ثم أعد المحاولة.',
+              { reply_markup: menu() }
+            );
+          }
+
+          console.error('Bot registration failed:', err.code || 'unknown');
+
+          return ctx.reply(
+            '❌ تعذر حفظ البوت. تحقق من إعدادات التشفير وقاعدة البيانات.',
             { reply_markup: menu() }
           );
         }
-
-        console.error('Bot registration failed:', err.code || 'unknown');
-
-        return ctx.reply(
-          '❌ تعذر حفظ البوت. تحقق من إعدادات التشفير وقاعدة البيانات.',
-          { reply_markup: menu() }
-        );
       }
     }
   }
 
+  // معالجة أزرار القائمة الرئيسية بعد إنهاء حالة الانتظار.
   if (text === '🏠 الرئيسية' || text === '/menu') {
     return ctx.reply('👑 القائمة الرئيسية', {
       reply_markup: menu()
     });
   }
 
-  if (text === '🤖 البوتات') {
-    return showBots(ctx);
-  }
-
-  if (text === '📁 المشاريع') {
-    return showProjects(ctx);
-  }
+  if (text === '🤖 البوتات') return showBots(ctx);
+  if (text === '📁 المشاريع') return showProjects(ctx);
 
   if (text === '➕ إضافة بوت') {
     pendingAdds.set(userId, { step: 'name' });
-
     return ctx.reply(
       '➕ إضافة بوت جديد\n\n' +
       'أرسل اسم البوت الذي تريد تسجيله.\n\n' +
@@ -668,9 +670,7 @@ bot.on('message:text', async (ctx) => {
     );
   }
 
-  if (text === '📊 الإحصائيات') {
-    return showStats(ctx);
-  }
+  if (text === '📊 الإحصائيات') return showStats(ctx);
 
   if (text === '⚙️ الإعدادات') {
     return ctx.reply(
