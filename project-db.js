@@ -150,7 +150,7 @@ async function createClientProject({
     await client.query('ROLLBACK');
     throw error;
   } finally {
-    client.release();
+    await client.release();
   }
 }
 
@@ -239,7 +239,7 @@ async function createClientProjectWithSession({
     await client.query('ROLLBACK');
     throw error;
   } finally {
-    client.release();
+    await client.release();
   }
 }
 
@@ -399,7 +399,7 @@ async function saveProjectSpec({
     await client.query('ROLLBACK');
     throw error;
   } finally {
-    client.release();
+    await client.release();
   }
 }
 
@@ -570,7 +570,7 @@ async function approveProjectSpec({
     await client.query('ROLLBACK');
     throw error;
   } finally {
-    client.release();
+    await client.release();
   }
 }
 
