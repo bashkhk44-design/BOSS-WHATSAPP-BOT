@@ -215,6 +215,44 @@ export default {
       });
     }
 
+    if (url.pathname === "/db-healthz" && request.method === "GET") {
+      if (!env.HYPERDRIVE?.connectionString) {
+        return json({ ok: false, error: "hyperdrive_not_configured" }, 503);
+      }
+
+      let client;
+      try {
+        const pgModule = await import("pg");
+        const Client = pgModule.Client || pgModule.default?.Client;
+        if (!Client) throw new Error("node-postgres Client export is unavailable");
+
+        client = new Client({
+          connectionString: env.HYPERDRIVE.connectionString
+        });
+        await client.connect();
+
+        const result = await client.query(`
+          SELECT current_database() AS database_name,
+                 current_user AS database_user,
+                 current_setting('server_version') AS server_version
+        `);
+
+        return json({
+          ok: true,
+          connected: true,
+          database: result.rows[0].database_name,
+          serverVersion: result.rows[0].server_version
+        });
+      } catch (error) {
+        console.error("STAGING DATABASE HEALTH CHECK FAILED:", error?.message || "unknown error");
+        return json({ ok: false, connected: false, error: "database_connection_failed" }, 503);
+      } finally {
+        if (client) {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+    }
+
     const isMaster = url.pathname === "/telegram/master";
     const isIntake = url.pathname === "/telegram/intake";
     const customerMatch = url.pathname.match(/^\/telegram\/customer\/(\d+)$/);
