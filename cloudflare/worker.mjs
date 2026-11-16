@@ -185,6 +185,34 @@ export default {
       return json({ ok: false, error: "method_not_allowed" }, 405);
     }
 
+    if (
+      !env.TELEGRAM_BOT_TOKEN ||
+      !env.TELEGRAM_ADMIN_ID ||
+      !env.MASTER_WEBHOOK_SECRET
+    ) {
+      return json({
+        ok: false,
+        error: "worker_secrets_missing",
+        required: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ADMIN_ID", "MASTER_WEBHOOK_SECRET"]
+      }, 503);
+    }
+
+    if (!env.HYPERDRIVE?.connectionString) {
+      return json({
+        ok: false,
+        error: "hyperdrive_not_configured",
+        required: ["HYPERDRIVE binding to a Neon staging branch"]
+      }, 503);
+    }
+
+    if (isIntake && (!env.INTAKE_BOT_TOKEN || !env.INTAKE_WEBHOOK_SECRET)) {
+      return json({
+        ok: false,
+        error: "intake_secrets_missing",
+        required: ["INTAKE_BOT_TOKEN", "INTAKE_WEBHOOK_SECRET"]
+      }, 503);
+    }
+
     const contentLength = Number(request.headers.get("content-length") || 0);
     if (contentLength > MAX_UPDATE_BYTES) {
       return json({ ok: false, error: "payload_too_large" }, 413);
