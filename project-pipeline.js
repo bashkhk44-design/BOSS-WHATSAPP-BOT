@@ -96,6 +96,12 @@ async function runProjectPipeline({
   adminTelegramId,
   onProgress
 }) {
+  if (process.env.BOSS_WEBHOOK_MODE === 'true') {
+    throw new Error(
+      'تم إيقاف البناء في نسخة Cloudflare التجريبية: مرحلة الاختبار تحتاج منفّذ Node.js معزولاً. لم يبدأ توليد الحزمة ولم يتم إعلان نجاح أي اختبار.'
+    );
+  }
+
   if (!project || !project.project_id || !project.spec) {
     throw new Error('المشروع غير مكتمل أو لا يملك مواصفات معتمدة.');
   }
