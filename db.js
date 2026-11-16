@@ -1,25 +1,71 @@
-const { Pool } = require('pg');
+const { Pool, Client } = require('pg');
 const crypto = require('crypto');
 
 if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL غير مضبوط في متغيرات البيئة');
 }
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-  max: 3,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000
-});
+const WORKER_WEBHOOK_MODE = process.env.BOSS_WEBHOOK_MODE === 'true';
 
-const lockPool = new Pool({
-  connectionString: process.env.DATABASE_DIRECT_URL || process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-  max: 1,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000
-});
+function createWorkerDatabaseAdapter(connectionString) {
+  // Hyperdrive owns the reusable connection pool. Open a lightweight pg Client
+  // for each operation/request instead of keeping a process-wide pg Pool.
+  return {
+    async query(...args) {
+      const client = new Client({ connectionString });
+      await client.connect();
+      try {
+        return await client.query(...args);
+      } finally {
+        await client.end();
+      }
+    },
+
+    async connect() {
+      const client = new Client({ connectionString });
+      await client.connect();
+      let released = false;
+
+      return {
+        query: (...args) => client.query(...args),
+        release: async () => {
+          if (released) return;
+          released = true;
+          await client.end();
+        }
+      };
+    },
+
+    async end() {
+      // Connections are closed after each query/transaction.
+    }
+  };
+}
+
+const pool = WORKER_WEBHOOK_MODE
+  ? createWorkerDatabaseAdapter(process.env.DATABASE_URL)
+  : new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+      max: 3,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000
+    });
+
+const lockPool = WORKER_WEBHOOK_MODE
+  ? {
+      async connect() {
+        throw new Error('Long-lived PostgreSQL advisory locks are disabled in Cloudflare webhook mode.');
+      },
+      async end() {}
+    }
+  : new Pool({
+      connectionString: process.env.DATABASE_DIRECT_URL || process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+      max: 1,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000
+    });
 
 function getEncryptionKey() {
   const value = process.env.BOTS_ENCRYPTION_KEY || '';
