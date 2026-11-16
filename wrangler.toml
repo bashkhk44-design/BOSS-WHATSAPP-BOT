@@ -1,8 +1,9 @@
 name = "boss-bot-master-staging"
 main = "cloudflare/worker.mjs"
 compatibility_date = "2026-11-16"
+compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
-# Configure a Hyperdrive binding named HYPERDRIVE in the Cloudflare dashboard.
-# It MUST point to a separate Neon staging branch, never the production database.
-# Do not commit Telegram tokens, webhook secrets, encryption keys, or database URLs.
+# Add the Hyperdrive ID only after creating it against the dedicated empty Neon staging project.
+# Never point this binding at the Render production database.
+# Secrets are configured in the Cloudflare dashboard and must never be committed.
