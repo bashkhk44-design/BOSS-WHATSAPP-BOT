@@ -2,6 +2,7 @@ import { Bot, webhookCallback } from "grammy";
 
 const MAX_UPDATE_BYTES = 1024 * 1024;
 let cachedToken = null;
+let cachedSecret = null;
 let cachedHandler = null;
 
 function json(data, status = 200) {
@@ -19,7 +20,7 @@ function getMasterWebhookHandler(env) {
     throw new Error("MASTER_BOT_TOKEN and MASTER_WEBHOOK_SECRET must be configured as Worker secrets.");
   }
 
-  if (cachedHandler && cachedToken === env.MASTER_BOT_TOKEN) {
+  if (cachedHandler && cachedToken === env.MASTER_BOT_TOKEN && cachedSecret === env.MASTER_WEBHOOK_SECRET) {
     return cachedHandler;
   }
 
@@ -42,6 +43,7 @@ function getMasterWebhookHandler(env) {
   });
 
   cachedToken = env.MASTER_BOT_TOKEN;
+  cachedSecret = env.MASTER_WEBHOOK_SECRET;
   cachedHandler = webhookCallback(bot, "cloudflare-mod", {
     secretToken: env.MASTER_WEBHOOK_SECRET
   });
