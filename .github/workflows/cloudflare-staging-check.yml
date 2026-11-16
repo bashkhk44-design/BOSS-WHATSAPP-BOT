@@ -1,0 +1,27 @@
+name: Cloudflare staging checks
+
+on:
+  push:
+    branches:
+      - cloudflare-webhook-prep
+  pull_request:
+    branches:
+      - audit-hardening
+
+jobs:
+  worker-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run Worker tests
+        run: npm test
+      - name: Validate Cloudflare Worker bundle
+        run: npx --yes wrangler@latest deploy --dry-run
