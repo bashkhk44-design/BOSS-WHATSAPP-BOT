@@ -1,10 +1,11 @@
 'use strict';
-const FREE_GEMINI_MODELS = new Set(['gemini-2.5-flash', 'gemini-2.5-flash-lite']);
+const FREE_GEMINI_MODELS = new Set(['gemini-3.8-flash']);
 function providers() {
   const list = [];
   if (process.env.GEMINI_API_KEY) {
-    const requested = process.env.GEMINI_FREE_MODEL || 'gemini-2.5-flash';
-    list.push({ id:'gemini', key:process.env.GEMINI_API_KEY, model:FREE_GEMINI_MODELS.has(requested) ? requested : 'gemini-2.5-flash' });
+    // Pin to the currently available free-tier Flash model; ignore stale/unsafe overrides.
+    const requested = process.env.GEMINI_FREE_MODEL || 'gemini-3.8-flash';
+    list.push({ id:'gemini', key:process.env.GEMINI_API_KEY, model:FREE_GEMINI_MODELS.has(requested) ? requested : 'gemini-3.8-flash' });
   }
   if (process.env.GROQ_API_KEY && process.env.AI_ENABLE_GROQ_FREE === 'true') list.push({ id:'groq', key:process.env.GROQ_API_KEY, model:'openai/gpt-oss-120b' });
   if (process.env.OPENROUTER_API_KEY) list.push({ id:'openrouter', key:process.env.OPENROUTER_API_KEY, model:'openrouter/free' });
