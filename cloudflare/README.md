@@ -87,5 +87,7 @@ Supply the matching `secret_token` parameter to Telegram's `setWebhook` call. Do
 4. The code has not yet been run in Cloudflare's runtime; bundling/runtime compatibility of the existing AI SDK and all pipeline dependencies still needs validation.
 5. The intake and master flows need end-to-end acceptance testing against the separate staging database.
 6. Customer bots currently retain only their existing basic `/start` and `/help` behavior; the AI-built per-business runtime is a separate migration stage.
-7. Production remains on Render. Do not merge this branch into `audit-hardening`, deploy it as production, rotate production tokens, or change production webhooks until the staging acceptance checklist passes.
+7. AI Analyst, AI Designer, Gemini connectivity tests, and the full project pipeline are deliberately gated in webhook mode until an asynchronous job queue is added. These handlers can take longer than a Telegram webhook request should remain open.
+8. The existing project tester uses Node.js filesystem operations and `child_process.spawnSync`. Its Node-only imports are deferred, but Worker mode explicitly blocks the full pipeline until a separate isolated Node.js test runner is connected. Deployment precheck remains blocked without successful tests.
+9. Production remains on Render. Do not merge this branch into `audit-hardening`, deploy it as production, rotate production tokens, or change production webhooks until the staging acceptance checklist passes.
 
