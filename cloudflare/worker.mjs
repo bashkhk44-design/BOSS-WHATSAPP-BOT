@@ -5,6 +5,7 @@ let runtimePromise = null;
 let masterWebhook = null;
 let intakeWebhook = null;
 let databaseReady = false;
+const customerWebhookCache = new Map();
 
 function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
@@ -45,6 +46,10 @@ async function initializeRuntime(env) {
 
   const masterModule = await import("../telegram-master.js");
   const master = masterModule.default || masterModule;
+  const runtimeModule = await import("../bot-runtime.js");
+  const runtime = runtimeModule.default || runtimeModule;
+  const dbModule = await import("../db.js");
+  const db = dbModule.default || dbModule;
 
   await master.initDatabase();
 
@@ -84,7 +89,7 @@ async function initializeRuntime(env) {
   }
 
   databaseReady = true;
-  return { master };
+  return { master, runtime, db };
 }
 
 async function getRuntime(env) {
@@ -95,6 +100,37 @@ async function getRuntime(env) {
     });
   }
   return runtimePromise;
+}
+
+async function getCustomerWebhook(master, runtime, db, env, customerId) {
+  if (!env.CUSTOMER_WEBHOOK_SECRET || !env.BOTS_ENCRYPTION_KEY) {
+    throw new Error("CUSTOMER_WEBHOOK_SECRET and BOTS_ENCRYPTION_KEY are required.");
+  }
+
+  const result = await master.pool.query(`
+    SELECT id, name, username, active, token_ciphertext,
+           token_iv, token_auth_tag, token_fingerprint
+    FROM telegram_bots
+    WHERE id = $1 AND active = TRUE
+      AND token_ciphertext IS NOT NULL
+    LIMIT 1
+  `, [customerId]);
+
+  const record = result.rows[0];
+  if (!record) return null;
+
+  const cacheKey = String(record.id) + ":" + String(record.token_fingerprint || "");
+  const cached = customerWebhookCache.get(String(customerId));
+  if (cached && cached.cacheKey === cacheKey) return cached.handler;
+
+  const token = db.decryptToken(record);
+  const bot = runtime.createCustomerBot(record, token, {});
+  const handler = webhookCallback(bot, "cloudflare-mod", {
+    secretToken: env.CUSTOMER_WEBHOOK_SECRET
+  });
+
+  customerWebhookCache.set(String(customerId), { cacheKey, handler });
+  return handler;
 }
 
 async function dispatchIdempotently(master, botKey, request, handler) {
@@ -177,8 +213,11 @@ export default {
 
     const isMaster = url.pathname === "/telegram/master";
     const isIntake = url.pathname === "/telegram/intake";
+    const customerMatch = url.pathname.match(/^\\/telegram\\/customer\\/(\\d+)$/);
+    const isCustomer = Boolean(customerMatch);
+    const customerId = isCustomer ? Number(customerMatch[1]) : null;
 
-    if (!isMaster && !isIntake) {
+    if (!isMaster && !isIntake && !isCustomer) {
       return json({ ok: false, error: "not_found" }, 404);
     }
     if (request.method !== "POST") {
@@ -213,13 +252,21 @@ export default {
       }, 503);
     }
 
+    if (isCustomer && (!env.CUSTOMER_WEBHOOK_SECRET || !env.BOTS_ENCRYPTION_KEY)) {
+      return json({
+        ok: false,
+        error: "customer_webhook_secrets_missing",
+        required: ["CUSTOMER_WEBHOOK_SECRET", "BOTS_ENCRYPTION_KEY"]
+      }, 503);
+    }
+
     const contentLength = Number(request.headers.get("content-length") || 0);
     if (contentLength > MAX_UPDATE_BYTES) {
       return json({ ok: false, error: "payload_too_large" }, 413);
     }
 
     try {
-      const { master } = await getRuntime(env);
+      const { master, runtime, db } = await getRuntime(env);
 
       if (isIntake && !intakeWebhook) {
         return json({
@@ -227,6 +274,21 @@ export default {
           error: "intake_webhook_not_configured",
           required: ["INTAKE_BOT_TOKEN", "INTAKE_WEBHOOK_SECRET"]
         }, 503);
+      }
+
+      if (isCustomer) {
+        const customerHandler = await getCustomerWebhook(
+          master, runtime, db, env, customerId
+        );
+        if (!customerHandler) {
+          return json({ ok: false, error: "customer_bot_not_active" }, 404);
+        }
+        return await dispatchIdempotently(
+          master,
+          "customer:" + customerId,
+          request,
+          customerHandler
+        );
       }
 
       return await dispatchIdempotently(
