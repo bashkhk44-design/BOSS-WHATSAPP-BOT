@@ -1,9 +1,5 @@
 'use strict';
 
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { spawnSync } = require('node:child_process');
 const { validateBundle } = require('./ai-builder');
 
 function validateManifest(manifest, packageData) {
@@ -117,6 +113,25 @@ function scanForEmbeddedSecrets(files) {
 }
 
 async function testProjectBundle({ bundle }) {
+  if (process.env.BOSS_WEBHOOK_MODE === 'true') {
+    return {
+      passed: false,
+      checks: [{
+        name: 'runtime-execution',
+        passed: false,
+        details: 'Cloudflare Workers cannot run the current local Node.js filesystem/child_process test runner. A separate isolated Node.js test runner must be connected before this stage can pass.'
+      }],
+      manifest: null,
+      summary: 'تم إيقاف الاختبار بأمان: يلزم ربط منفّذ اختبارات Node.js خارجي قبل متابعة البناء أو النشر.'
+    };
+  }
+
+  // Load Node-only modules only in the original Node.js host runtime.
+  const fs = module.require('node:fs');
+  const os = module.require('node:os');
+  const path = module.require('node:path');
+  const { spawnSync } = module.require('node:child_process');
+
   const checks = [];
   const add = (name, passed, details = '') => {
     checks.push({ name, passed, details });
