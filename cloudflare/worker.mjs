@@ -136,7 +136,11 @@ async function getCustomerWebhook(master, runtime, db, env, customerId) {
 async function dispatchIdempotently(master, botKey, request, handler) {
   let update;
   try {
-    update = await request.clone().json();
+    const rawBody = await request.clone().text();
+    if (new TextEncoder().encode(rawBody).byteLength > MAX_UPDATE_BYTES) {
+      return json({ ok: false, error: "payload_too_large" }, 413);
+    }
+    update = JSON.parse(rawBody);
   } catch (_) {
     return json({ ok: false, error: "invalid_json" }, 400);
   }
