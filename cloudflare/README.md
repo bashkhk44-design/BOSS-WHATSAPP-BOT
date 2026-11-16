@@ -27,7 +27,8 @@ All changes in this branch are isolated from `audit-hardening`. Render productio
 - Each route uses grammY's Cloudflare adapter and Telegram webhook secret-token validation.
 - A PostgreSQL table records update IDs by bot and provides duplicate-update protection with retryable failed states.
 - The Worker rejects wrong HTTP methods, invalid update IDs, missing configuration, and oversized declared request bodies.
-- Wrangler's compatibility date is set to 2026-11-16 for the Node.js compatibility behavior required by the existing CommonJS modules and `pg`.
+- Wrangler explicitly enables `nodejs_compat`; Hyperdrive's `pg` driver requires Node.js compatibility.
+- In webhook mode, `db.js` uses request-scoped `pg.Client` connections through Hyperdrive instead of creating a process-wide `pg.Pool`; transaction clients are closed after use. Long-lived PostgreSQL advisory runtime locks are disabled in this mode.
 
 ## Critical staging isolation — do not skip
 
@@ -42,6 +43,42 @@ Before testing, create:
 4. A new random staging-only AES-256 key for `BOTS_ENCRYPTION_KEY`.
 
 Register only newly created test customer bots inside the staging database. Do not register production customer tokens in this staging system.
+
+## Neon staging database preparation
+
+A guarded one-time initializer is included at `cloudflare/init-staging-db.cjs`. It calls the project's existing database initializer, which creates the BOSS tables for Telegram bots, clients, projects, conversations, specifications, AI jobs, attempts, approvals, project secrets, and webhook update deduplication.
+
+**The script only runs when all of these checks pass:**
+- `BOSS_STAGING_DATABASE_CONFIRM=CREATE_SCHEMA_IN_EMPTY_NEON_STAGING_DATABASE`
+- `BOSS_STAGING_DATABASE_LABEL=boss-bot-staging`
+- `DATABASE_URL` points to a Neon hostname ending in `.neon.tech`
+- The target database has zero tables in the `public` schema
+
+Do not use a production connection string. Create a completely separate Neon project for staging, not a branch containing copied production bot tokens or customer data. The empty-database check is an additional safety guard, not proof that a database is non-production.
+
+### Initialize the staging schema from Termux or another Node.js shell
+
+After creating the dedicated empty Neon staging project, copy its connection string into your own terminal environment (never paste it into GitHub or this repository), then run:
+
+```sh
+export DATABASE_URL='YOUR_NEW_STAGING_NEON_CONNECTION_STRING'
+export BOSS_STAGING_DATABASE_LABEL='boss-bot-staging'
+export BOSS_STAGING_DATABASE_CONFIRM='CREATE_SCHEMA_IN_EMPTY_NEON_STAGING_DATABASE'
+node cloudflare/init-staging-db.cjs
+```
+
+The connection string above is a placeholder. Keep the real value private. The initializer prints only the database name, not the connection string or password.
+
+### Create the Hyperdrive binding
+
+1. In Neon, create a new role such as `hyperdrive_user` in the staging project and save its password privately.
+2. In Neon connection details, select the staging branch, database and role. Choose the direct `psql` connection string and turn off the connection-pooling option.
+3. In Cloudflare Dashboard, open Workers & Pages → Hyperdrive → Create configuration.
+4. Name it `boss-bot-master-staging` and enter the staging-only direct connection string.
+5. Copy the generated Hyperdrive configuration ID into the `[[hyperdrive]]` binding in `wrangler.toml`, with binding name `HYPERDRIVE`.
+6. Do not configure any production database or production Telegram token here.
+
+Once the Worker is deployed to a staging-only URL, `GET /db-healthz` checks the Hyperdrive connection and returns only the database name and PostgreSQL server version. It does not expose credentials.
 
 ## Cloudflare bindings and secrets
 
@@ -82,7 +119,7 @@ Supply the matching `secret_token` parameter to Telegram's `setWebhook` call. Do
 ## Not yet production-approved
 
 1. No Cloudflare deployment has been performed from this branch.
-2. No Hyperdrive binding or staging secrets have been configured.
+2. No Hyperdrive binding or staging secrets have been configured. The repository now includes a guarded empty-database schema initializer and a `/db-healthz` connectivity check, but neither has been run against a real Neon staging project.
 3. No Telegram webhook has been set for any bot.
 4. The code has not yet been run in Cloudflare's runtime; bundling/runtime compatibility of the existing AI SDK and all pipeline dependencies still needs validation.
 5. The intake and master flows need end-to-end acceptance testing against the separate staging database.
