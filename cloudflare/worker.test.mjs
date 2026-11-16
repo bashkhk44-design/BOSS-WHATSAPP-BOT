@@ -12,7 +12,8 @@ test("health endpoint reports staging mode without exposing secrets", async () =
   assert.equal(response.status, 200);
   assert.equal(body.ok, true);
   assert.equal(body.mode, "telegram-webhooks");
-  assert.equal(body.configured, false);
+  assert.equal(body.hyperdriveConfigured, false);
+  assert.equal(body.masterConfigured, false);
   assert.equal(JSON.stringify(body).includes("TOKEN"), false);
 });
 
