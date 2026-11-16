@@ -3,6 +3,7 @@
 const {
   createProjectAiJob,
   getLatestCompletedProjectAiJob,
+  getProjectApprovalState,
   startProjectAiJobAttempt,
   completeProjectAiJobAttempt,
   failProjectAiJobAttempt,
@@ -100,6 +101,25 @@ async function runProjectPipeline({
   }
 
   const projectId = Number(project.project_id);
+
+  const designJob = await getLatestCompletedProjectAiJob({
+    projectId,
+    jobType: 'design'
+  });
+
+  if (!designJob || Number(designJob.spec_version) !== Number(project.spec_version)) {
+    throw new Error('يجب إكمال تصميم المشروع الحالي أولاً قبل التنفيذ.');
+  }
+
+  const approvals = await getProjectApprovalState({
+    projectId,
+    specVersion: project.spec_version,
+    designJobId: designJob.id
+  });
+
+  if (!approvals?.construction_points_approved || !approvals?.design_approved) {
+    throw new Error('التنفيذ محظور حتى اعتماد نقاط البناء ووثيقة التصميم من أزرار الاعتماد في بوت المدير.');
+  }
 
   const lock = await acquireProjectPipelineLock(projectId);
 

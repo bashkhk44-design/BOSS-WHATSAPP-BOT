@@ -18,7 +18,9 @@ const {
   markProjectAiJobRunning,
   completeProjectAiJob,
   failProjectAiJob,
-  recoverInterruptedProjectAiJobs
+  recoverInterruptedProjectAiJobs,
+  getProjectApprovalState,
+  approveProjectMilestone
 } = require('./project-db');
 const { startIntakeBot, stopIntakeBot } = require('./intake-bot');
 const { analyzeProject } = require('./gemini-analyst');
@@ -41,8 +43,37 @@ function isAdmin(ctx) {
 }
 
 function designKeyboard(projectId) {
-  const { InlineKeyboard } = require('grammy');
   return new InlineKeyboard().text('🎨 بدء AI DESIGNER', `project:design:${projectId}`);
+}
+
+function projectApprovalKeyboard(projectId, designJobId, approvals) {
+  const pointsApproved = approvals?.construction_points_approved === true;
+  const designApproved = approvals?.design_approved === true;
+  const keyboard = new InlineKeyboard()
+    .text((pointsApproved ? '✅ ' : '⬜ ') + 'اعتماد نقاط البناء', `project:approve:points:${projectId}:${designJobId}`)
+    .row()
+    .text((designApproved ? '✅ ' : '⬜ ') + 'اعتماد التصميم', `project:approve:design:${projectId}:${designJobId}`);
+
+  if (pointsApproved && designApproved) {
+    keyboard.row().text('🚀 تنفيذ المشروع بالكامل', `project:pipeline:${projectId}`);
+  }
+  return keyboard;
+}
+
+async function sendProjectApprovalPanel(ctx, projectId, designJob) {
+  const approvals = await getProjectApprovalState({
+    projectId,
+    specVersion: designJob.spec_version,
+    designJobId: designJob.id
+  });
+
+  await ctx.reply(
+    '📋 اعتماد المشروع قبل التنفيذ\n\n' +
+    '1. نقاط البناء: ' + (approvals?.construction_points_approved ? '✅ معتمدة' : '⏳ بانتظار اعتمادك') + '\n' +
+    '2. وثيقة التصميم: ' + (approvals?.design_approved ? '✅ معتمدة' : '⏳ بانتظار اعتمادك') + '\n\n' +
+    'لن يبدأ التنفيذ الكامل إلا بعد اعتماد النقطتين.',
+    { reply_markup: projectApprovalKeyboard(projectId, designJob.id, approvals) }
+  );
 }
 
 async function showProjects(ctx) {
@@ -345,6 +376,7 @@ bot.callbackQuery(/^project:design:(\d+)$/, async (ctx) => {
       for (let i = 0; i < job.analysis.text.length; i += 3500) {
         await ctx.reply(job.analysis.text.slice(i, i + 3500));
       }
+      await sendProjectApprovalPanel(ctx, projectId, job);
       return;
     }
 
@@ -389,6 +421,7 @@ bot.callbackQuery(/^project:design:(\d+)$/, async (ctx) => {
     for (let i = 0; i < design.text.length; i += 3500) {
       await ctx.reply(design.text.slice(i, i + 3500));
     }
+    await sendProjectApprovalPanel(ctx, projectId, job);
   } catch (error) {
     console.error('PROJECT DESIGN HANDLER ERROR:', error.message);
     await ctx.reply('❌ تعذر تجهيز مهمة التصميم. تحقق من قاعدة البيانات وحالة التحليل.');
@@ -397,13 +430,51 @@ bot.callbackQuery(/^project:design:(\d+)$/, async (ctx) => {
 
 
 
+
+bot.callbackQuery(/^project:approve:(points|design):(\d+):(\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) {
+    return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  }
+
+  const approvalType = ctx.match[1] === 'points' ? 'construction_points' : 'design';
+  const projectId = Number(ctx.match[2]);
+  const designJobId = Number(ctx.match[3]);
+
+  await ctx.answerCallbackQuery({ text: 'جارٍ حفظ الاعتماد...' });
+
+  try {
+    const approved = await approveProjectMilestone({
+      projectId,
+      designJobId,
+      approvalType,
+      adminTelegramId: ctx.from.id
+    });
+
+    const pointsApproved = approved.construction_points_approved === true;
+    const designApproved = approved.design_approved === true;
+
+    await ctx.reply(
+      '✅ تم حفظ الاعتماد في قاعدة البيانات.\n\n' +
+      'نقاط البناء: ' + (pointsApproved ? '✅ معتمدة' : '⏳ بانتظار الاعتماد') + '\n' +
+      'التصميم: ' + (designApproved ? '✅ معتمد' : '⏳ بانتظار الاعتماد') + '\n\n' +
+      (pointsApproved && designApproved
+        ? 'اكتمل الاعتمادان. أصبح بإمكانك بدء التنفيذ الكامل.'
+        : 'اعتمد النقطة المتبقية لإتاحة التنفيذ الكامل.'),
+      { reply_markup: projectApprovalKeyboard(projectId, designJobId, approved) }
+    );
+  } catch (error) {
+    console.error('PROJECT APPROVAL ERROR:', error.message);
+    await ctx.reply('❌ لم يتم حفظ الاعتماد: ' + String(error.message || error).slice(0, 1000));
+  }
+});
+
 bot.callbackQuery(/^project:pipeline:(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) {
     return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   }
 
   const projectId = Number(ctx.match[1]);
-  await ctx.answerCallbackQuery({ text: 'بدأ التنفيذ التلقائي.' });
+  await ctx.answerCallbackQuery({ text: 'جارٍ التحقق من الاعتمادات...' });
 
   try {
     const project = await getApprovedProjectForAnalysis(projectId);
