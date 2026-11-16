@@ -63,3 +63,15 @@ test("webhook rejects an invalid Telegram secret before loading database runtime
   assert.equal(response.status, 401);
   assert.equal(body.error, "invalid_webhook_secret");
 });
+
+test("database health endpoint stays disabled without Hyperdrive", async () => {
+  const response = await worker.fetch(
+    new Request("https://example.workers.dev/db-healthz"),
+    {}
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(body.ok, false);
+  assert.equal(body.error, "hyperdrive_not_configured");
+});
