@@ -260,6 +260,19 @@ export default {
       }, 503);
     }
 
+    const expectedSecret = isMaster
+      ? env.MASTER_WEBHOOK_SECRET
+      : isIntake
+        ? env.INTAKE_WEBHOOK_SECRET
+        : env.CUSTOMER_WEBHOOK_SECRET;
+
+    if (
+      !expectedSecret ||
+      request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== expectedSecret
+    ) {
+      return json({ ok: false, error: "invalid_webhook_secret" }, 401);
+    }
+
     const contentLength = Number(request.headers.get("content-length") || 0);
     if (contentLength > MAX_UPDATE_BYTES) {
       return json({ ok: false, error: "payload_too_large" }, 413);
