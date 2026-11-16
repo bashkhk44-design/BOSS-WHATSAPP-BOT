@@ -211,6 +211,7 @@ function getRunningBotCount() {
 }
 
 module.exports = {
+  createCustomerBot,
   startBotRuntime,
   stopBotRuntime,
   getRunningBotCount
