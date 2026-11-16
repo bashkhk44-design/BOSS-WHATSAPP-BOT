@@ -229,6 +229,10 @@ bot.callbackQuery(/^project:ai:(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) {
     return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   }
+  if (process.env.BOSS_WEBHOOK_MODE === 'true') {
+    await ctx.answerCallbackQuery({ text: 'مهام AI ستُفعّل بعد ربط طابور المهام.' });
+    return ctx.reply('🧠 مهام AI ANALYST متوقفة مؤقتاً في نسخة Cloudflare التجريبية. نحتاج نقلها إلى طابور مهام غير متزامن حتى لا تنقطع طلبات Telegram أثناء انتظار مزود الذكاء الاصطناعي.');
+  }
 
   const projectId = Number(ctx.match[1]);
 
@@ -345,6 +349,10 @@ bot.callbackQuery(/^project:ai:(\d+)$/, async (ctx) => {
 bot.callbackQuery(/^project:design:(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) {
     return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  }
+  if (process.env.BOSS_WEBHOOK_MODE === 'true') {
+    await ctx.answerCallbackQuery({ text: 'مهام AI ستُفعّل بعد ربط طابور المهام.' });
+    return ctx.reply('🎨 مهام AI DESIGNER متوقفة مؤقتاً في نسخة Cloudflare التجريبية. نحتاج نقلها إلى طابور مهام غير متزامن قبل تشغيلها بأمان.');
   }
 
   const projectId = Number(ctx.match[1]);
@@ -472,6 +480,10 @@ bot.callbackQuery(/^project:pipeline:(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) {
     return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   }
+  if (process.env.BOSS_WEBHOOK_MODE === 'true') {
+    await ctx.answerCallbackQuery({ text: 'التنفيذ متوقف في النسخة التجريبية.' });
+    return ctx.reply('🚧 التنفيذ الكامل متوقف في Cloudflare staging حتى نربط طابور AI ومنفّذ اختبارات Node.js معزولاً. لم يبدأ بناء المشروع.');
+  }
 
   const projectId = Number(ctx.match[1]);
   await ctx.answerCallbackQuery({ text: 'جارٍ التحقق من الاعتمادات...' });
@@ -547,6 +559,13 @@ bot.callbackQuery(/^settings:(main|database|security|services|gemini|gemini:test
       ? { text: 'بدأ اختبار اتصال Gemini...' }
       : {}
   );
+
+  if (section === 'gemini:test' && process.env.BOSS_WEBHOOK_MODE === 'true') {
+    return showSettingsResult(
+      ctx,
+      '🧠 اختبار Gemini متوقف مؤقتاً في نسخة Cloudflare حتى ننقل مهام AI إلى طابور غير متزامن.'
+    );
+  }
 
   if (section === 'main') {
     return showSettingsResult(
