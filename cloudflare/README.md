@@ -1,38 +1,47 @@
 # Cloudflare Workers Migration Preparation
 
-Status: PREPARATION ONLY — do not deploy this repository to Workers yet.
+Status: STAGING SCAFFOLD ONLY — not production-ready and do not connect production bot tokens.
 
-This branch is isolated from `audit-hardening`. The production Render service and its environment variables are not changed.
+This work is isolated on branch `cloudflare-webhook-prep`. The Render production service, its environment variables, Telegram polling sessions, and Neon database have not been changed.
 
-## Current runtime facts
+## What is implemented
 
-- `host.js` starts a Node.js HTTP health server and then loads `telegram-master.js`.
-- `telegram-master.js`, `intake-bot.js`, and `bot-runtime.js` use grammY long polling via `bot.start()`.
-- `db.js` uses `pg` pools, a second direct PostgreSQL pool, and a PostgreSQL advisory lock held by a long-lived connection.
-- The AI pipeline is invoked from Telegram handlers and must be checked for Node-only APIs before moving it to an isolate.
-- The current service expects a continuously running process. A Worker is request/event driven and must not be treated as a drop-in replacement for this process.
+- Root `wrangler.toml` points Wrangler to `cloudflare/worker.mjs`.
+- A Cloudflare Module Worker exposes `GET /healthz`.
+- A staging-only grammY webhook endpoint is available at `POST /telegram/master`.
+- grammY's `cloudflare-mod` adapter validates Telegram's webhook secret token.
+- The endpoint rejects non-POST requests, unknown paths, oversized declared payloads, and missing Worker secrets.
+- The staging bot only responds to `/start` and `/health`. This verifies the webhook transport; it does not yet implement the BOSS BOT MASTER product features.
+- Basic tests cover health, unknown paths, and disabled webhook configuration.
 
-## Why the default Cloudflare Git integration settings are unsafe
+## Required staging secrets
 
-The default build command `npx wrangler deploy` does not convert the existing Node.js polling application into a Worker. Deploying the repository as-is would not start the current Telegram polling loops or preserve the current runtime-lock behavior.
+Use a brand-new Telegram test bot, not any bot currently running on Render.
 
-## Required migration work
+Set these as Cloudflare Worker secrets (never as plain vars and never in Git):
 
-1. Keep Render as the production runtime until the replacement passes tests.
-2. Convert each Telegram bot from long polling to authenticated Telegram webhooks. Validate the webhook secret token and reject malformed or oversized updates.
-3. Introduce Worker-compatible request handlers using grammY's webhook adapter. Do not call `bot.start()` in a Worker.
-4. Replace the long-lived PostgreSQL advisory-lock design with an event/request-safe coordination design. Review all database queries and connection lifetimes.
-5. Configure Cloudflare Hyperdrive (or another explicitly supported database transport) for Neon PostgreSQL; do not place database credentials in source code.
-6. Audit AI SDK usage, timeouts, retries, payload sizes, and execution limits.
-7. Add idempotency and duplicate-update protection before enabling webhooks.
-8. Test master, intake, and customer bot flows separately, including callbacks, media, retries, AI jobs, and failure recovery.
-9. Use a separate Cloudflare Worker and separate webhook endpoints/secrets for staging. Do not change the production Telegram webhook URLs until a complete acceptance test passes.
-10. Cut over one bot at a time with a documented rollback to Render.
+- `MASTER_BOT_TOKEN`
+- `MASTER_WEBHOOK_SECRET`
 
-## Compatibility boundary
+The webhook secret should be a random 1–256 character string using only letters, digits, underscore, and hyphen. Do not set the Telegram webhook yet until a separate staging Worker has been deployed and its health endpoint has been checked.
 
-Cloudflare Workers can host the webhook-facing parts after refactoring. They are not a drop-in host for the existing always-on Node.js process. Any feature that requires a persistent process, unsupported Node API, or long-lived database connection must be redesigned or remain on a suitable Node.js host.
+## Local checks
 
-## Safe next step
+- `npm test`
+- `npm run cloudflare:dev`
 
-Implement a staging-only Worker adapter and compatibility tests on this branch. No production bot tokens, database URLs, encryption keys, or other secrets belong in this file or in Git.
+Wrangler must be available through npx and dependencies must be installed.
+
+## Important limitations — work still required
+
+1. This is a transport smoke-test, not a port of the existing master bot commands or AI workflow.
+2. The intake bot and customer bots are not yet migrated.
+3. Persistent update idempotency / duplicate-update protection is not implemented yet.
+4. The existing PostgreSQL pools and long-lived advisory lock in `db.js` are not Worker-compatible as-is. Neon access needs a reviewed Hyperdrive or other supported design.
+5. The AI analyst, designer, builder, fixer, project pipeline, approvals, and customer intake state machine still need to be moved behind Worker-compatible handlers and storage.
+6. Each existing bot needs a separate migration and acceptance test. Do not point existing production Telegram bots at this staging Worker.
+7. Do not merge this branch into `audit-hardening` or deploy it as production until all above items are completed and verified.
+
+## Production safety
+
+Render remains the only production runtime for now. Do not stop it, change its environment variables, rotate its bot tokens, or call Telegram `setWebhook` for a production bot as part of this staging work.
