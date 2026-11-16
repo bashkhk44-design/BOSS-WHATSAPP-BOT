@@ -217,7 +217,7 @@ export default {
 
     const isMaster = url.pathname === "/telegram/master";
     const isIntake = url.pathname === "/telegram/intake";
-    const customerMatch = url.pathname.match(/^\\/telegram\\/customer\\/(\\d+)$/);
+    const customerMatch = url.pathname.match(/^\/telegram\/customer\/(\d+)$/);
     const isCustomer = Boolean(customerMatch);
     const customerId = isCustomer ? Number(customerMatch[1]) : null;
 
