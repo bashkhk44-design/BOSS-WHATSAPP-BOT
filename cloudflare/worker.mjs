@@ -1,54 +1,162 @@
-import { Bot, webhookCallback } from "grammy";
+import { webhookCallback } from "grammy";
 
 const MAX_UPDATE_BYTES = 1024 * 1024;
-let cachedToken = null;
-let cachedSecret = null;
-let cachedHandler = null;
+let runtimePromise = null;
+let masterWebhook = null;
+let intakeWebhook = null;
+let databaseReady = false;
 
-function json(data, status = 200) {
+function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store"
+      "cache-control": "no-store",
+      ...extraHeaders
     }
   });
 }
 
-function getMasterWebhookHandler(env) {
-  if (!env.MASTER_BOT_TOKEN || !env.MASTER_WEBHOOK_SECRET) {
-    throw new Error("MASTER_BOT_TOKEN and MASTER_WEBHOOK_SECRET must be configured as Worker secrets.");
+async function initializeRuntime(env) {
+  if (!env.HYPERDRIVE?.connectionString) {
+    throw new Error("Cloudflare Hyperdrive binding HYPERDRIVE is not configured.");
+  }
+  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_ADMIN_ID) {
+    throw new Error("TELEGRAM_BOT_TOKEN and TELEGRAM_ADMIN_ID Worker secrets are required.");
+  }
+  if (!env.MASTER_WEBHOOK_SECRET) {
+    throw new Error("MASTER_WEBHOOK_SECRET Worker secret is required.");
   }
 
-  if (cachedHandler && cachedToken === env.MASTER_BOT_TOKEN && cachedSecret === env.MASTER_WEBHOOK_SECRET) {
-    return cachedHandler;
-  }
+  // Populate the legacy Node-style configuration before loading modules that
+  // create their PostgreSQL pool or register Telegram handlers.
+  process.env.BOSS_WEBHOOK_MODE = "true";
+  process.env.DATABASE_URL = env.HYPERDRIVE.connectionString;
+  process.env.TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
+  process.env.TELEGRAM_ADMIN_ID = String(env.TELEGRAM_ADMIN_ID);
+  process.env.BOTS_ENCRYPTION_KEY = env.BOTS_ENCRYPTION_KEY || "";
+  process.env.GEMINI_API_KEY = env.GEMINI_API_KEY || "";
+  process.env.GEMINI_MODEL = env.GEMINI_MODEL || "gemini-3.8-flash";
+  process.env.GEMINI_FREE_MODEL = env.GEMINI_FREE_MODEL || "gemini-3.8-flash";
+  process.env.GROQ_API_KEY = env.GROQ_API_KEY || "";
+  process.env.AI_ENABLE_GROQ_FREE = env.AI_ENABLE_GROQ_FREE || "false";
+  process.env.OPENROUTER_API_KEY = env.OPENROUTER_API_KEY || "";
+  process.env.OPENROUTER_SITE_URL = env.OPENROUTER_SITE_URL || "https://boss-whatsapp-bot.workers.dev";
 
-  const bot = new Bot(env.MASTER_BOT_TOKEN);
-  // Staging smoke-test only. Production handlers depend on Node polling,
-  // PostgreSQL pools, and a long-lived advisory lock, so they are not imported.
-  const safe = bot.errorBoundary((err) => {
-    console.error("STAGING TELEGRAM UPDATE ERROR:", err.error?.message || "unknown error");
-  });
+  const masterModule = await import("../telegram-master.js");
+  const master = masterModule.default || masterModule;
 
-  safe.command("start", async (ctx) => {
-    await ctx.reply(
-      "BOSS BOT MASTER — Cloudflare staging webhook is connected.\n\n" +
-      "This is a migration test endpoint; production features remain on Render."
-    );
-  });
+  await master.initDatabase();
 
-  safe.command("health", async (ctx) => {
-    await ctx.reply("Cloudflare staging webhook is receiving Telegram updates.");
-  });
+  await master.pool.query(`
+    CREATE TABLE IF NOT EXISTS telegram_webhook_updates (
+      bot_key TEXT NOT NULL,
+      update_id BIGINT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('processing', 'done', 'failed')),
+      attempts INTEGER NOT NULL DEFAULT 1,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (bot_key, update_id)
+    )
+  `);
 
-  cachedToken = env.MASTER_BOT_TOKEN;
-  cachedSecret = env.MASTER_WEBHOOK_SECRET;
-  cachedHandler = webhookCallback(bot, "cloudflare-mod", {
+  masterWebhook = webhookCallback(master.bot, "cloudflare-mod", {
     secretToken: env.MASTER_WEBHOOK_SECRET
   });
 
-  return cachedHandler;
+  if (env.INTAKE_BOT_TOKEN && env.INTAKE_WEBHOOK_SECRET) {
+    process.env.INTAKE_BOT_TOKEN = env.INTAKE_BOT_TOKEN;
+    const intakeModule = await import("../intake-bot.js");
+    const intake = intakeModule.default || intakeModule;
+
+    const intakeBot = await intake.startIntakeBot(
+      async ({ text, extra }) => {
+        await master.bot.api.sendMessage(master.adminId, text, extra);
+      },
+      null,
+      { webhook: true }
+    );
+
+    if (intakeBot) {
+      intakeWebhook = webhookCallback(intakeBot, "cloudflare-mod", {
+        secretToken: env.INTAKE_WEBHOOK_SECRET
+      });
+    }
+  }
+
+  databaseReady = true;
+  return { master };
+}
+
+async function getRuntime(env) {
+  if (!runtimePromise) {
+    runtimePromise = initializeRuntime(env).catch((error) => {
+      runtimePromise = null;
+      throw error;
+    });
+  }
+  return runtimePromise;
+}
+
+async function dispatchIdempotently(master, botKey, request, handler) {
+  let update;
+  try {
+    update = await request.clone().json();
+  } catch (_) {
+    return json({ ok: false, error: "invalid_json" }, 400);
+  }
+
+  if (!Number.isSafeInteger(update?.update_id) || update.update_id < 0) {
+    return json({ ok: false, error: "invalid_update_id" }, 400);
+  }
+
+  const claim = await master.pool.query(`
+    INSERT INTO telegram_webhook_updates (bot_key, update_id, status)
+    VALUES ($1, $2, 'processing')
+    ON CONFLICT (bot_key, update_id)
+    DO UPDATE SET
+      status = 'processing',
+      attempts = telegram_webhook_updates.attempts + 1,
+      updated_at = NOW()
+    WHERE telegram_webhook_updates.status = 'failed'
+       OR telegram_webhook_updates.updated_at < NOW() - INTERVAL '2 minutes'
+    RETURNING update_id
+  `, [botKey, update.update_id]);
+
+  if (!claim.rowCount) {
+    const existing = await master.pool.query(
+      "SELECT status FROM telegram_webhook_updates WHERE bot_key = $1 AND update_id = $2",
+      [botKey, update.update_id]
+    );
+
+    if (existing.rows[0]?.status === "done") {
+      return json({ ok: true, duplicate: true });
+    }
+
+    return json(
+      { ok: false, error: "update_already_processing" },
+      503,
+      { "retry-after": "3" }
+    );
+  }
+
+  try {
+    const response = await handler(request);
+    if (!response || !response.ok) {
+      throw new Error("Telegram webhook handler returned a non-success response.");
+    }
+
+    await master.pool.query(
+      "UPDATE telegram_webhook_updates SET status = 'done', updated_at = NOW() WHERE bot_key = $1 AND update_id = $2",
+      [botKey, update.update_id]
+    );
+    return response;
+  } catch (error) {
+    await master.pool.query(
+      "UPDATE telegram_webhook_updates SET status = 'failed', updated_at = NOW() WHERE bot_key = $1 AND update_id = $2",
+      [botKey, update.update_id]
+    );
+    throw error;
+  }
 }
 
 export default {
@@ -59,15 +167,20 @@ export default {
       return json({
         ok: true,
         service: "BOSS BOT MASTER Cloudflare staging",
-        mode: "webhook-staging",
-        configured: Boolean(env.MASTER_BOT_TOKEN && env.MASTER_WEBHOOK_SECRET)
+        mode: "telegram-webhooks",
+        hyperdriveConfigured: Boolean(env.HYPERDRIVE?.connectionString),
+        masterConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_ADMIN_ID && env.MASTER_WEBHOOK_SECRET),
+        intakeConfigured: Boolean(env.INTAKE_BOT_TOKEN && env.INTAKE_WEBHOOK_SECRET),
+        runtimeInitialized: databaseReady
       });
     }
 
-    if (url.pathname !== "/telegram/master") {
+    const isMaster = url.pathname === "/telegram/master";
+    const isIntake = url.pathname === "/telegram/intake";
+
+    if (!isMaster && !isIntake) {
       return json({ ok: false, error: "not_found" }, 404);
     }
-
     if (request.method !== "POST") {
       return json({ ok: false, error: "method_not_allowed" }, 405);
     }
@@ -77,19 +190,25 @@ export default {
       return json({ ok: false, error: "payload_too_large" }, 413);
     }
 
-    if (!env.MASTER_BOT_TOKEN || !env.MASTER_WEBHOOK_SECRET) {
-      return json({
-        ok: false,
-        error: "worker_secrets_missing",
-        required: ["MASTER_BOT_TOKEN", "MASTER_WEBHOOK_SECRET"]
-      }, 503);
-    }
-
     try {
-      const handler = getMasterWebhookHandler(env);
-      return await handler(request);
+      const { master } = await getRuntime(env);
+
+      if (isIntake && !intakeWebhook) {
+        return json({
+          ok: false,
+          error: "intake_webhook_not_configured",
+          required: ["INTAKE_BOT_TOKEN", "INTAKE_WEBHOOK_SECRET"]
+        }, 503);
+      }
+
+      return await dispatchIdempotently(
+        master,
+        isMaster ? "master" : "intake",
+        request,
+        isMaster ? masterWebhook : intakeWebhook
+      );
     } catch (error) {
-      console.error("STAGING WEBHOOK FAILURE:", error?.message || "unknown error");
+      console.error("CLOUDFLARE TELEGRAM WEBHOOK ERROR:", error?.message || "unknown error");
       return json({ ok: false, error: "webhook_processing_failed" }, 500);
     }
   }
