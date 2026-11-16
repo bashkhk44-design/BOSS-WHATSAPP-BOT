@@ -6,7 +6,7 @@ function providers() {
     const requested = process.env.GEMINI_FREE_MODEL || 'gemini-2.5-flash';
     list.push({ id:'gemini', key:process.env.GEMINI_API_KEY, model:FREE_GEMINI_MODELS.has(requested) ? requested : 'gemini-2.5-flash' });
   }
-  if (process.env.GROQ_API_KEY) list.push({ id:'groq', key:process.env.GROQ_API_KEY, model:'openai/gpt-oss-120b' });
+  if (process.env.GROQ_API_KEY && process.env.AI_ENABLE_GROQ_FREE === 'true') list.push({ id:'groq', key:process.env.GROQ_API_KEY, model:'openai/gpt-oss-120b' });
   if (process.env.OPENROUTER_API_KEY) list.push({ id:'openrouter', key:process.env.OPENROUTER_API_KEY, model:'openrouter/free' });
   return list;
 }
@@ -42,7 +42,9 @@ async function callCompatible(provider, systemInstruction, input, timeoutMs) {
       error.status = response.status;
       throw error;
     }
-    const output = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+    const choice = data.choices && data.choices[0];
+    if (choice && choice.finish_reason === 'length') throw new Error(provider.id + ' response reached its output limit; trying another free provider.');
+    const output = choice && choice.message && choice.message.content;
     if (typeof output !== 'string' || !output.trim()) throw new Error(provider.id + ' returned an empty response.');
     return { text:output, model:provider.model, interactionId:null };
   } catch (error) {
