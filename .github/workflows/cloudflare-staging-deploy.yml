@@ -2,6 +2,11 @@ name: Deploy Cloudflare staging Worker
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/cloudflare-staging-deploy.yml
 
 permissions:
   contents: read
