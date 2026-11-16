@@ -1,13 +1,15 @@
 'use strict';
 
+const { generateText } = require('./ai-router');
+
 const MAX_FILES = 50;
 const MAX_TOTAL_BYTES = 1024 * 1024;
 
 function parseJson(text) {
   const cleaned = String(text || '')
     .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/, '');
+    .replace(/^\x60{3}(?:json)?\s*/i, '')
+    .replace(/\s*\x60{3}$/, '');
 
   return JSON.parse(cleaned);
 }
@@ -80,21 +82,9 @@ function validateBundle(bundle) {
 }
 
 async function buildProject({ project, analysis, design }) {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY غير مضبوط.');
-  }
-
   if (!project || !project.spec || !analysis?.text || !design?.text) {
     throw new Error('يلزم وجود المواصفات والتحليل والتصميم قبل البناء.');
   }
-
-  const { GoogleGenAI } = await import('@google/genai');
-
-  const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY
-  });
-
-  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 
   const systemInstruction = `
 أنت AI BUILDER في منصة BOSS BOT MASTER.
@@ -150,32 +140,18 @@ async function buildProject({ project, analysis, design }) {
     designDocument: design.text
   });
 
-  const response = await ai.interactions.create({
-    model,
-    input,
-    system_instruction: systemInstruction
-  }, {
-    timeout_ms: 180000
-  });
-
-  if (!response.output_text || !response.output_text.trim()) {
-    throw new Error('Gemini لم يُرجع ملفات البناء.');
-  }
-
+  const response = await generateText({ systemInstruction, input, stage:'build', timeoutMs:180000 });
   let parsed;
-
-  try {
-    parsed = parseJson(response.output_text);
-  } catch {
-    throw new Error('AI BUILDER أعاد نتيجة ليست JSON صالحاً.');
-  }
+  try { parsed = parseJson(response.text); }
+  catch { throw new Error('AI BUILDER أعاد نتيجة ليست JSON صالحاً من ' + response.provider + '.'); }
 
   const bundle = validateBundle(parsed);
 
   return {
     ...bundle,
-    model,
-    interactionId: response.id || null,
+    model:response.model,
+    provider:response.provider,
+    interactionId:response.interactionId || null,
     generatedAt: new Date().toISOString()
   };
 }

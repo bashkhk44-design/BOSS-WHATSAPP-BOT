@@ -1,20 +1,11 @@
 'use strict';
 
-async function analyzeProject({ project }) {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY غير مضبوط في إعدادات Render.');
-  }
+const { generateText } = require('./ai-router');
 
+async function analyzeProject({ project }) {
   if (!project || !project.spec) {
     throw new Error('لا توجد مواصفات معتمدة لتحليلها.');
   }
-
-  const { GoogleGenAI } = await import('@google/genai');
-  const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY
-  });
-
-  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 
   const systemInstruction = `
 أنت AI ANALYST في منصة BOSS BOT MASTER لبناء وإدارة البوتات.
@@ -50,25 +41,8 @@ async function analyzeProject({ project }) {
     specification: project.spec
   });
 
-  const response = await ai.interactions.create({
-    model,
-    input,
-    system_instruction: systemInstruction
-  }, {
-    timeout_ms: 120000
-  });
-
-  const output = response.output_text;
-
-  if (!output || !output.trim()) {
-    throw new Error('Gemini لم يرجع تقرير تحليل صالحاً.');
-  }
-
-  return {
-    text: output.trim().slice(0, 20000),
-    model,
-    interactionId: response.id || null
-  };
+  const response = await generateText({ systemInstruction, input, stage:'analysis', timeoutMs:120000 });
+  return { text:response.text.trim().slice(0,20000), model:response.model, provider:response.provider, interactionId:response.interactionId || null };
 }
 
 module.exports = { analyzeProject };

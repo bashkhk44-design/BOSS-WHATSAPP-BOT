@@ -1,13 +1,14 @@
 'use strict';
 
+const { generateText } = require('./ai-router');
 const { validateBundle } = require('./ai-builder');
 const { testProjectBundle } = require('./ai-tester');
 
 function parseJson(text) {
   const cleaned = String(text || '')
     .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/, '');
+    .replace(/^\x60{3}(?:json)?\s*/i, '')
+    .replace(/\s*\x60{3}$/, '');
 
   return JSON.parse(cleaned);
 }
@@ -35,10 +36,6 @@ async function fixProject({
   bundle,
   maxAttempts = 2
 }) {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY غير مضبوط.');
-  }
-
   if (!project || !analysis?.text || !design?.text) {
     throw new Error('يلزم وجود المشروع والتحليل والتصميم.');
   }
@@ -49,13 +46,6 @@ async function fixProject({
 
   const limit = Math.max(1, Math.min(2, Number(maxAttempts) || 2));
   const attempts = [];
-
-  const { GoogleGenAI } = await import('@google/genai');
-  const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY
-  });
-
-  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 
   const systemInstruction = `
 أنت AI FIXER في منصة BOSS BOT MASTER.
@@ -126,25 +116,12 @@ async function fixProject({
     });
 
     try {
-      const response = await ai.interactions.create({
-        model,
-        input,
-        system_instruction: systemInstruction
-      }, {
-        timeout_ms: 180000
-      });
-
-      if (!response.output_text?.trim()) {
-        throw new Error('Gemini لم يُرجع ملفات الإصلاح.');
-      }
-
+      const response = await generateText({ systemInstruction, input, stage:'fix', timeoutMs:180000 });
       let repaired;
-
-      try {
-        repaired = parseJson(response.output_text);
-      } catch {
-        throw new Error('نتيجة AI FIXER ليست JSON صالحاً.');
-      }
+      try { repaired = parseJson(response.text); }
+      catch { throw new Error('نتيجة AI FIXER ليست JSON صالحاً.'); }
+      attemptInfo.provider = response.provider;
+      attemptInfo.model = response.model;
 
       const nextBundle = validateBundle(repaired);
       assertOriginalFilesPreserved(originalBundle, nextBundle);
