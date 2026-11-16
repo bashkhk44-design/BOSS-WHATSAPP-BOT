@@ -205,7 +205,7 @@ async function beginProject(ctx) {
   );
 }
 
-async function startIntakeBot(notifyAdmin = null, onFatal = null) {
+async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) {
   const token = process.env.INTAKE_BOT_TOKEN;
 
   if (!token) {
@@ -723,6 +723,12 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
   intakeBot.catch((err) => {
     console.error('Intake bot error:', err.message);
   });
+
+  // Webhook mode returns the registered bot without starting long polling.
+  if (options.webhook === true) {
+    intakeStopping = false;
+    return intakeBot;
+  }
 
   const currentBot = intakeBot;
   intakeStopping = false;
