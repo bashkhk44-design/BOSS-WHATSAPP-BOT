@@ -292,7 +292,7 @@ async function acquireTelegramRuntimeLock() {
     if (staleClient) {
       runtimeLockClient = null;
       try {
-        staleClient.release();
+        await staleClient.release();
       } catch (_) {}
     }
   }
@@ -306,7 +306,7 @@ async function acquireTelegramRuntimeLock() {
     );
 
     if (!result.rows[0].locked) {
-      client.release();
+      await client.release();
       return false;
     }
 
@@ -328,7 +328,7 @@ async function acquireTelegramRuntimeLock() {
     console.log('Telegram runtime lock acquired using direct connection');
     return true;
   } catch (err) {
-    client.release(err);
+    await client.release(err);
     throw err;
   }
 }
@@ -382,7 +382,7 @@ async function releaseTelegramRuntimeLock() {
   } finally {
     if (client) {
       try {
-        client.release(releaseError || undefined);
+        await client.release(releaseError || undefined);
       } catch (err) {
         console.error('RUNTIME LOCK CLIENT RELEASE ERROR:', err.message);
       }
