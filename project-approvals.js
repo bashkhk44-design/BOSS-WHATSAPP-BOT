@@ -16,7 +16,7 @@ const CONSTRUCTION_POINTS = {
 };
 
 async function initProjectApprovalsDatabase() {
-  await pool.query(\`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS project_build_approvals (
       id BIGSERIAL PRIMARY KEY,
       project_id BIGINT NOT NULL REFERENCES client_projects(id) ON DELETE CASCADE,
@@ -33,23 +33,23 @@ async function initProjectApprovalsDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (project_id, spec_version, design_job_id)
     )
-  \`);
+  `);
 
-  await pool.query(\`
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS project_build_approvals_project_idx
     ON project_build_approvals(project_id, spec_version)
-  \`);
+  `);
 }
 
 async function getProjectApprovalState({ projectId, specVersion, designJobId }) {
-  const result = await pool.query(\`
+  const result = await pool.query(`
     SELECT *
     FROM project_build_approvals
     WHERE project_id = $1
       AND spec_version = $2
       AND design_job_id = $3
     LIMIT 1
-  \`, [projectId, specVersion, designJobId]);
+  `, [projectId, specVersion, designJobId]);
 
   return result.rows[0] || null;
 }
@@ -70,7 +70,7 @@ async function approveProjectMilestone({
     throw new Error('بيانات الاعتماد غير صحيحة.');
   }
 
-  const result = await pool.query(\`
+  const result = await pool.query(`
     INSERT INTO project_build_approvals (
       project_id,
       spec_version,
@@ -139,7 +139,7 @@ async function approveProjectMilestone({
       ),
       updated_at = NOW()
     RETURNING *
-  \`, [
+  `, [
     projectId,
     designJobId,
     JSON.stringify(CONSTRUCTION_POINTS),
