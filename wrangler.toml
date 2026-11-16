@@ -4,6 +4,7 @@ compatibility_date = "2026-11-16"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
-# Add the Hyperdrive ID only after creating it against the dedicated empty Neon staging project.
-# Never point this binding at the Render production database.
-# Secrets are configured in the Cloudflare dashboard and must never be committed.
+# Staging database only. Never use production credentials.
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "cd5e3271174a425c914d3c25da64e816"
