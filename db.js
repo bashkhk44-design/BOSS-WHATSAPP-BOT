@@ -13,12 +13,8 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
-if (!process.env.DATABASE_DIRECT_URL) {
-  throw new Error('DATABASE_DIRECT_URL غير مضبوط في Render');
-}
-
 const lockPool = new Pool({
-  connectionString: process.env.DATABASE_DIRECT_URL,
+  connectionString: process.env.DATABASE_DIRECT_URL || process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
   max: 1,
   idleTimeoutMillis: 30000,
@@ -73,6 +69,55 @@ function decryptToken(record) {
 
   decrypted += decipher.final('utf8');
   return decrypted;
+}
+
+
+function encryptSecret(value) {
+  if (typeof value !== 'string' || !value.length) {
+    throw new Error('قيمة السر يجب أن تكون نصاً غير فارغ.');
+  }
+
+  const key = getEncryptionKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+
+  const ciphertext = Buffer.concat([
+    cipher.update(value, 'utf8'),
+    cipher.final()
+  ]).toString('base64');
+
+  return {
+    ciphertext,
+    iv: iv.toString('hex'),
+    authTag: cipher.getAuthTag().toString('hex')
+  };
+}
+
+function decryptSecret(record) {
+  if (
+    !record ||
+    !record.secret_ciphertext ||
+    !record.secret_iv ||
+    !record.secret_auth_tag
+  ) {
+    throw new Error('بيانات السر المشفر غير مكتملة.');
+  }
+
+  const key = getEncryptionKey();
+  const decipher = crypto.createDecipheriv(
+    'aes-256-gcm',
+    key,
+    Buffer.from(record.secret_iv, 'hex')
+  );
+
+  decipher.setAuthTag(Buffer.from(record.secret_auth_tag, 'hex'));
+
+  const decrypted = Buffer.concat([
+    decipher.update(record.secret_ciphertext, 'base64'),
+    decipher.final()
+  ]);
+
+  return decrypted.toString('utf8');
 }
 
 async function initDatabase() {
@@ -307,6 +352,8 @@ module.exports = {
   insertTelegramBot,
   getActiveTelegramBots,
   decryptToken,
+  encryptSecret,
+  decryptSecret,
   acquireTelegramRuntimeLock,
   isTelegramRuntimeLockHeld,
   releaseTelegramRuntimeLock,

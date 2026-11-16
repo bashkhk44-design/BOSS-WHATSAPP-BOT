@@ -1,4 +1,4 @@
-const { pool } = require('./db');
+const { pool, encryptSecret, decryptSecret } = require('./db');
 const projectAiJobs = require('./project-ai-jobs');
 
 async function initProjectDatabase() {
@@ -81,6 +81,27 @@ async function initProjectDatabase() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS project_events_project_idx
     ON project_events(project_id, created_at DESC)
+  `);
+
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS project_secrets (
+      id BIGSERIAL PRIMARY KEY,
+      project_id BIGINT NOT NULL REFERENCES client_projects(id) ON DELETE CASCADE,
+      env_name TEXT NOT NULL,
+      secret_ciphertext TEXT NOT NULL,
+      secret_iv TEXT NOT NULL,
+      secret_auth_tag TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (project_id, env_name),
+      CHECK (env_name ~ '^[A-Z][A-Z0-9_]*$')
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS project_secrets_project_idx
+    ON project_secrets(project_id)
   `);
 
   await projectAiJobs.initProjectAiJobsDatabase();
@@ -552,8 +573,124 @@ async function approveProjectSpec({
 }
 
 
+
+function validateProjectSecretInput({ telegramUserId, projectId, envName, value }) {
+  if (!telegramUserId || !/^\d+$/.test(String(projectId || ''))) {
+    throw new Error('بيانات العميل أو المشروع غير صحيحة.');
+  }
+  if (typeof envName !== 'string' || !/^[A-Z][A-Z0-9_]{0,99}$/.test(envName)) {
+    throw new Error('اسم متغير البيئة غير صالح.');
+  }
+  if (typeof value !== 'string' || !value.length || value.length > 10000) {
+    throw new Error('قيمة السر فارغة أو تتجاوز الحد المسموح.');
+  }
+}
+
+async function setProjectSecret({ telegramUserId, projectId, envName, value }) {
+  validateProjectSecretInput({ telegramUserId, projectId, envName, value });
+
+  const encrypted = encryptSecret(value);
+
+  const result = await pool.query(`
+    INSERT INTO project_secrets
+      (project_id, env_name, secret_ciphertext, secret_iv, secret_auth_tag)
+    SELECT p.id, $3, $4, $5, $6
+    FROM client_projects p
+    JOIN clients c ON c.id = p.client_id
+    WHERE p.id = $1 AND c.telegram_user_id = $2
+    ON CONFLICT (project_id, env_name)
+    DO UPDATE SET
+      secret_ciphertext = EXCLUDED.secret_ciphertext,
+      secret_iv = EXCLUDED.secret_iv,
+      secret_auth_tag = EXCLUDED.secret_auth_tag,
+      updated_at = NOW()
+    RETURNING env_name, updated_at
+  `, [
+    projectId,
+    String(telegramUserId),
+    envName,
+    encrypted.ciphertext,
+    encrypted.iv,
+    encrypted.authTag
+  ]);
+
+  if (!result.rowCount) {
+    throw new Error('المشروع غير موجود أو لا يخص هذا العميل.');
+  }
+
+  return result.rows[0];
+}
+
+async function deleteProjectSecret({ telegramUserId, projectId, envName }) {
+  if (!telegramUserId || !/^\d+$/.test(String(projectId || ''))) {
+    throw new Error('بيانات العميل أو المشروع غير صحيحة.');
+  }
+  if (typeof envName !== 'string' || !/^[A-Z][A-Z0-9_]{0,99}$/.test(envName)) {
+    throw new Error('اسم متغير البيئة غير صالح.');
+  }
+
+  const result = await pool.query(`
+    DELETE FROM project_secrets ps
+    USING client_projects p, clients c
+    WHERE ps.project_id = p.id
+      AND p.client_id = c.id
+      AND ps.project_id = $1
+      AND c.telegram_user_id = $2
+      AND ps.env_name = $3
+    RETURNING ps.env_name
+  `, [projectId, String(telegramUserId), envName]);
+
+  return result.rowCount > 0;
+}
+
+async function getProjectSecretNames({ telegramUserId, projectId }) {
+  if (!telegramUserId || !/^\d+$/.test(String(projectId || ''))) {
+    throw new Error('بيانات العميل أو المشروع غير صحيحة.');
+  }
+
+  const result = await pool.query(`
+    SELECT ps.env_name
+    FROM project_secrets ps
+    JOIN client_projects p ON p.id = ps.project_id
+    JOIN clients c ON c.id = p.client_id
+    WHERE ps.project_id = $1
+      AND c.telegram_user_id = $2
+    ORDER BY ps.env_name
+  `, [projectId, String(telegramUserId)]);
+
+  return result.rows.map(row => row.env_name);
+}
+
+async function getProjectSecrets({ telegramUserId, projectId }) {
+  if (!telegramUserId || !/^\d+$/.test(String(projectId || ''))) {
+    throw new Error('بيانات العميل أو المشروع غير صحيحة.');
+  }
+
+  const result = await pool.query(`
+    SELECT ps.env_name, ps.secret_ciphertext,
+           ps.secret_iv, ps.secret_auth_tag
+    FROM project_secrets ps
+    JOIN client_projects p ON p.id = ps.project_id
+    JOIN clients c ON c.id = p.client_id
+    WHERE ps.project_id = $1
+      AND c.telegram_user_id = $2
+    ORDER BY ps.env_name
+  `, [projectId, String(telegramUserId)]);
+
+  const secrets = {};
+  for (const record of result.rows) {
+    secrets[record.env_name] = decryptSecret(record);
+  }
+
+  return secrets;
+}
+
 module.exports = {
   initProjectDatabase,
+  setProjectSecret,
+  deleteProjectSecret,
+  getProjectSecretNames,
+  getProjectSecrets,
   createClientProject,
   createClientProjectWithSession,
   setProjectBusinessType,

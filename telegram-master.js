@@ -23,6 +23,7 @@ const {
 const { startIntakeBot, stopIntakeBot } = require('./intake-bot');
 const { analyzeProject } = require('./gemini-analyst');
 const { designProject } = require('./ai-designer');
+const { runProjectPipeline } = require('./project-pipeline');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const adminId = process.env.TELEGRAM_ADMIN_ID;
@@ -82,7 +83,9 @@ async function showProjects(ctx) {
     if (p.status === 'spec_approved') {
       const keyboard = new InlineKeyboard()
         .text('🧠 AI ANALYST', `project:ai:${p.id}`)
-        .text('🎨 AI DESIGNER', `project:design:${p.id}`);
+        .text('🎨 AI DESIGNER', `project:design:${p.id}`)
+        .row()
+        .text('🚀 تنفيذ المشروع بالكامل', `project:pipeline:${p.id}`);
       await ctx.reply(message, { reply_markup: keyboard });
     } else {
       await ctx.reply(message);
@@ -392,6 +395,52 @@ bot.callbackQuery(/^project:design:(\d+)$/, async (ctx) => {
   }
 });
 
+
+
+bot.callbackQuery(/^project:pipeline:(\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) {
+    return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  }
+
+  const projectId = Number(ctx.match[1]);
+  await ctx.answerCallbackQuery({ text: 'بدأ التنفيذ التلقائي.' });
+
+  try {
+    const project = await getApprovedProjectForAnalysis(projectId);
+
+    if (!project) {
+      return ctx.reply('تعذر العثور على مشروع ذي مواصفات معتمدة.');
+    }
+
+    await ctx.reply('🚀 بدأ التنفيذ الكامل للمشروع رقم ' + projectId);
+
+    const result = await runProjectPipeline({
+      project,
+      adminTelegramId: ctx.from.id,
+      onProgress: async (message) => {
+        await ctx.reply('⚙️ ' + message);
+      }
+    });
+
+    if (!result.completed) {
+      return ctx.reply(
+        '❌ توقف التنفيذ قبل النشر.\n' + result.summary
+      );
+    }
+
+    await ctx.reply(
+      '✅ اكتمل البناء والاختبار للمشروع رقم ' + projectId +
+      '\n' + result.summary +
+      '\nحالة النشر: لم يُنشر بعد، وينتظر ربط الاستضافة وموافقة المدير.'
+    );
+  } catch (error) {
+    console.error('PROJECT PIPELINE ERROR:', error);
+    await ctx.reply(
+      '❌ تعذر إكمال التنفيذ: ' +
+      String(error.message || error).slice(0, 2000)
+    );
+  }
+});
 
 function settingsKeyboard() {
   return new InlineKeyboard()
