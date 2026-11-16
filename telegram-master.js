@@ -1,4 +1,4 @@
-require('dotenv').config();
+if (process.env.BOSS_WEBHOOK_MODE !== 'true') require('dotenv').config();
 
 const { Bot, Keyboard, InlineKeyboard } = require('grammy');
 const {
@@ -1065,14 +1065,20 @@ async function shutdown(signal, exitCode = 0) {
   process.exit(exitCode);
 }
 
-process.once('SIGTERM', () => shutdown('SIGTERM'));
-process.once('SIGINT', () => shutdown('SIGINT'));
+if (process.env.BOSS_WEBHOOK_MODE === 'true') {
+  // Export the fully registered grammY bot without starting long polling.
+  // Cloudflare invokes this bot through webhookCallback instead.
+  module.exports = { bot, pool, initDatabase, adminId };
+} else {
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
 
-start().catch(async (err) => {
-  console.error(
-    'فشل تشغيل قاعدة البيانات أو البوت:',
-    err.message
-  );
+  start().catch(async (err) => {
+    console.error(
+      'فشل تشغيل قاعدة البيانات أو البوت:',
+      err.message
+    );
 
-  await shutdown('STARTUP_ERROR', 1);
-});
+    await shutdown('STARTUP_ERROR', 1);
+  });
+}
