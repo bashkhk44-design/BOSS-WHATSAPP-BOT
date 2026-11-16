@@ -198,7 +198,7 @@ async function startProjectAiJobAttempt(jobId, { allowCompleted = false } = {}) 
     await client.query('ROLLBACK');
     throw error;
   } finally {
-    client.release();
+    await client.release();
   }
 }
 
@@ -243,7 +243,7 @@ async function completeProjectAiJobAttempt(attemptId, jobId, result) {
     await client.query('ROLLBACK');
     throw error;
   } finally {
-    client.release();
+    await client.release();
   }
 }
 
@@ -286,7 +286,7 @@ async function failProjectAiJobAttempt(attemptId, jobId, error) {
     await client.query('ROLLBACK');
     throw failure;
   } finally {
-    client.release();
+    await client.release();
   }
 }
 
@@ -367,7 +367,7 @@ async function recoverInterruptedProjectAiJobs() {
     await client.query('ROLLBACK');
     throw error;
   } finally {
-    client.release();
+    await client.release();
   }
 }
 
@@ -383,13 +383,13 @@ async function acquireProjectPipelineLock(projectId) {
     `, [String(projectId)]);
 
     if (!result.rows[0].locked) {
-      client.release();
+      await client.release();
       return null;
     }
 
     return client;
   } catch (error) {
-    client.release();
+    await client.release();
     throw error;
   }
 }
@@ -405,7 +405,7 @@ async function releaseProjectPipelineLock(client, projectId) {
       )
     `, [String(projectId)]);
   } finally {
-    client.release();
+    await client.release();
   }
 }
 
