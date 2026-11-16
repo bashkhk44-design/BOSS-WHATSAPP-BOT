@@ -75,7 +75,7 @@ Supply the matching `secret_token` parameter to Telegram's `setWebhook` call. Do
 - Run `npm test` for the basic Worker routing/preflight tests.
 - Run `npm run cloudflare:dev` after the Hyperdrive binding and staging secrets are configured for local/remote development.
 - Validate the Worker build with Wrangler before any deployment.
-- Test master commands, customer intake from start to approved specification, project notifications, customer bot start/help, AI calls, approval gates, and pipeline failure/retry behavior.
+- Test master commands, customer intake from start to approved specification, project notifications, and customer bot start/help. AI stages and the full pipeline remain gated until the async queue and isolated test runner are connected.
 - Confirm that webhook retries do not duplicate projects, AI jobs, approvals, or customer messages.
 - Inspect Cloudflare logs and Neon staging records before considering any production cutover.
 
