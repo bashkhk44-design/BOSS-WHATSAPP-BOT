@@ -1,0 +1,8 @@
+name = "boss-bot-master-staging"
+main = "cloudflare/worker.mjs"
+compatibility_date = "2026-11-16"
+workers_dev = true
+
+# Configure with Wrangler secrets; never add token values here.
+# MASTER_BOT_TOKEN
+# MASTER_WEBHOOK_SECRET
