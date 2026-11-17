@@ -1,5 +1,6 @@
 const { Pool } = require('pg');
 const crypto = require('crypto');
+const { getPostgresSslConfig } = require('./postgres-ssl');
 
 if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL غير مضبوط في متغيرات البيئة');
@@ -7,7 +8,7 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: getPostgresSslConfig(),
   max: 3,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000
@@ -15,7 +16,7 @@ const pool = new Pool({
 
 const lockPool = new Pool({
   connectionString: process.env.DATABASE_DIRECT_URL || process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: getPostgresSslConfig(),
   max: 1,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000
