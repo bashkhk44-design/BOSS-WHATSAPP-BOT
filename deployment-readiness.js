@@ -19,6 +19,11 @@ function isNumericId(value) {
   return /^\d+$/.test(String(value ?? ''));
 }
 
+function isNonNegativeSafeInteger(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0;
+}
+
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
@@ -30,7 +35,7 @@ function stableJson(value) {
       JSON.stringify(key) + ':' + stableJson(value[key])
     ).join(',') + '}';
   }
-  return JSON.stringify(value);
+  return JSON.stringify(value) ?? 'null';
 }
 
 function evaluateDeploymentReadiness({
@@ -57,16 +62,26 @@ function evaluateDeploymentReadiness({
 
   const report = release?.artifact?.report;
   const summary = report?.tests?.summary;
+  const validTestCounts = Boolean(summary) &&
+    isNonNegativeSafeInteger(summary.tests) &&
+    isNonNegativeSafeInteger(summary.passed) &&
+    isNonNegativeSafeInteger(summary.failed ?? 0) &&
+    isNonNegativeSafeInteger(summary.skipped ?? 0) &&
+    isNonNegativeSafeInteger(summary.todo ?? 0) &&
+    isNonNegativeSafeInteger(summary.cancelled ?? 0) &&
+    Number(summary.tests) > 0 &&
+    Number(summary.passed) === Number(summary.tests) &&
+    Number(summary.failed ?? 0) === 0 &&
+    Number(summary.skipped ?? 0) === 0 &&
+    Number(summary.todo ?? 0) === 0 &&
+    Number(summary.cancelled ?? 0) === 0;
+
   if (report?.tests?.status !== 'passed' ||
       report?.tests?.executionStatus !== 'completed' ||
-      !summary || Number(summary.tests) < 1 ||
-      Number(summary.passed) !== Number(summary.tests) ||
-      Number(summary.failed || 0) !== 0 ||
-      Number(summary.skipped || 0) !== 0 ||
-      Number(summary.todo || 0) !== 0 ||
-      Number(summary.cancelled || 0) !== 0 ||
+      !validTestCounts ||
       !Array.isArray(report.tests.acceptanceTests) ||
       report.tests.acceptanceTests.length < 1 ||
+      report.tests.acceptanceTests.length > 1000 ||
       !report.tests.acceptanceTests.every(item => item && item.passed === true)) {
     blockers.push('release_test_evidence_incomplete');
   }
@@ -121,16 +136,54 @@ function evaluateDeploymentReadiness({
   const uniqueBlockers = [...new Set(blockers)];
   const ready = uniqueBlockers.length === 0;
   const readinessPayload = {
-    releaseId: String(release?.id ?? ''),
-    artifactSha256: release?.artifact_sha256 || null,
-    deploymentAuthorizationId: String(authorization?.id ?? ''),
-    authorizationSha256: authorization?.authorization_sha256 || null,
-    target: validTarget ? {
-      provider: target.provider,
-      serviceId: target.serviceId,
-      environment: target.environment
+    release: {
+      id: String(release?.id ?? ''),
+      status: release?.status ?? null,
+      artifactSha256: release?.artifact_sha256 || null,
+      testEvidence: {
+        status: report?.tests?.status ?? null,
+        executionStatus: report?.tests?.executionStatus ?? null,
+        summary: summary ? {
+          tests: summary.tests ?? null,
+          passed: summary.passed ?? null,
+          failed: summary.failed ?? null,
+          skipped: summary.skipped ?? null,
+          todo: summary.todo ?? null,
+          cancelled: summary.cancelled ?? null
+        } : null,
+        acceptanceTests: Array.isArray(report?.tests?.acceptanceTests)
+          ? report.tests.acceptanceTests.map(item => ({
+            id: String(item?.id ?? ''),
+            name: String(item?.name ?? ''),
+            passed: item?.passed === true
+          }))
+          : null
+      }
+    },
+    authorization: {
+      id: String(authorization?.id ?? ''),
+      releaseId: String(authorization?.release_id ?? ''),
+      authorizedBy: String(authorization?.authorized_by ?? ''),
+      status: authorization?.status ?? null,
+      authorizationSha256: authorization?.authorization_sha256 || null
+    },
+    target: target ? {
+      provider: target.provider ?? null,
+      serviceId: target.serviceId ?? null,
+      environment: target.environment ?? null,
+      artifactSha256: target.artifactSha256 ?? null,
+      confirmed: target.confirmed === true
     } : null,
-    executionApprovalSha256: executionApproval?.approvalSha256 || null,
+    executionApproval: {
+      status: executionApproval?.status ?? null,
+      approvedBy: String(executionApproval?.approvedBy ?? ''),
+      approvalSha256: executionApproval?.approvalSha256 || null,
+      releaseId: String(executionApproval?.releaseId ?? ''),
+      artifactSha256: executionApproval?.artifactSha256 || null,
+      provider: executionApproval?.provider ?? null,
+      serviceId: executionApproval?.serviceId ?? null,
+      environment: executionApproval?.environment ?? null
+    },
     checks: suppliedChecks.map(item => ({
       name: String(item?.name || ''),
       passed: item?.passed === true,
