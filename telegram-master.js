@@ -731,7 +731,12 @@ bot.callbackQuery(/^project:release:customer:(approved|rejected):(\d+)$/, async 
           adminId,
           '📋 موافقة العميل وصلت للإصدار R' + decision.release_version +
           ' للمشروع #' + decision.project_id +
-          '.\nيمكنك مراجعة الإصدار واعتماده أو رفضه.',
+          '.\nالمواصفات: ' + JSON.stringify((await getReleaseCandidate(decision.id)).artifact.report.approvals.customerSpec.details).slice(0, 700) +
+          '\nالاختبارات: ' + (await getReleaseCandidate(decision.id)).artifact.report.tests.summary.passed + '/' +
+            (await getReleaseCandidate(decision.id)).artifact.report.tests.summary.tests +
+          '\nالمخاطر: ' + (await getReleaseCandidate(decision.id)).artifact.report.risks.length +
+          '\nبصمة SHA-256: ' + (await getReleaseCandidate(decision.id)).artifact_sha256 +
+          '\nيمكنك مراجعة الإصدار واعتماده أو رفضه.',
           { reply_markup: new InlineKeyboard()
             .text('✅ اعتماد المدير', 'project:release:manager:approved:' + decision.id)
             .row()
