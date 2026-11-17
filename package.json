@@ -11,7 +11,8 @@
     "worker": "node worker.js",
     "start:worker": "node worker.js",
     "start:webhook": "node webhook.js",
-    "start:customer-worker": "node customer-bot-worker.js"
+    "start:customer-worker": "node customer-bot-worker.js",
+    "start:monitor": "node runtime-monitor.js"
   },
   "keywords": [],
   "type": "commonjs",

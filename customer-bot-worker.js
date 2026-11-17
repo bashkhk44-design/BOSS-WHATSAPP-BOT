@@ -78,7 +78,10 @@ function createCustomerBotWorker({
       const result = await client.query(`
         SELECT c.id, c.bot_id, c.action, c.target_worker_id
         FROM bot_runtime_commands c
-        WHERE c.status = 'queued'
+        WHERE (
+            c.status = 'queued'
+            OR (c.status = 'processing' AND (c.claimed_at IS NULL OR c.claimed_at < NOW() - ($2::int * INTERVAL '1 second')))
+          )
           AND (
             c.target_worker_id IS NULL
             OR c.target_worker_id = $1
@@ -100,9 +103,9 @@ function createCustomerBotWorker({
       const command = result.rows[0];
       await client.query(`
         UPDATE bot_runtime_commands
-        SET status = 'processing', attempts = attempts + 1
+        SET status = 'processing', claimed_by = $2, claimed_at = NOW(), attempts = attempts + 1
         WHERE id = $1
-      `, [command.id]);
+      `, [command.id, workerId]);
       await client.query('COMMIT');
       return command;
     } catch (error) {
@@ -192,15 +195,38 @@ function createCustomerBotWorker({
     }
   }
 
+  async function publishWorkerHeartbeat(status) {
+    await pool.query(`
+      INSERT INTO bot_worker_status (worker_id, status, capacity, last_heartbeat_at, started_at, stopped_at)
+      VALUES ($1, $2, $3, NOW(), CASE WHEN $2 = 'running' THEN NOW() ELSE NULL END,
+        CASE WHEN $2 = 'stopped' THEN NOW() ELSE NULL END)
+      ON CONFLICT (worker_id) DO UPDATE SET
+        status = EXCLUDED.status,
+        capacity = EXCLUDED.capacity,
+        last_heartbeat_at = NOW(),
+        started_at = CASE WHEN EXCLUDED.status = 'running' AND bot_worker_status.status <> 'running'
+          THEN NOW() ELSE bot_worker_status.started_at END,
+        stopped_at = CASE WHEN EXCLUDED.status = 'stopped' THEN NOW() ELSE NULL END,
+        updated_at = NOW()
+    `, [workerId, status, capacity]);
+  }
+
   async function run() {
-    while (!stopping) {
-      try {
+    try {
+      await publishWorkerHeartbeat('running');
+      while (!stopping) {
+        try {
+          await publishWorkerHeartbeat('running');
         const didWork = await runOnce();
         if (!didWork && !stopping) await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
       } catch (error) {
         logger.error('Customer bot worker loop error:', error.message);
         if (!stopping) await new Promise(resolve => setTimeout(resolve, Math.max(pollIntervalMs, 5000)));
+        }
       }
+    } finally {
+      try { await publishWorkerHeartbeat('stopped'); }
+      catch (error) { logger.error('Could not publish worker shutdown status:', error.message); }
     }
   }
 
