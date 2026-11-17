@@ -66,7 +66,7 @@ test('secret scanner detects embedded Telegram credentials', () => {
     { path: 'index.js', content: 'const token = "12345678:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk";' }
   ]);
   assert.equal(findings.length, 1);
-  assert.equal(findings[0].type, 'TELEGRAM_BOT_TOKEN');
+  assert.equal(findings[0].name, 'TELEGRAM_BOT_TOKEN');
 });
 
 test('project bundle static checks pass for a valid minimal bundle', async () => {
