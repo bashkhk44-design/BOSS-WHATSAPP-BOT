@@ -5,6 +5,7 @@ on:
     branches:
       - feature/ai-suite-hardening
       - foundation/durable-queue-workers-v1
+      - feat/runtime-health-monitor
   pull_request:
     branches:
       - audit-hardening
