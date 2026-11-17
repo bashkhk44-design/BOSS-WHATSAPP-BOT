@@ -50,7 +50,7 @@ test('migration runner applies pending files once and skips recorded versions', 
   assert.deepEqual(first.applied, ['001_test_foundation']);
   assert.deepEqual(second.skipped, ['001_test_foundation']);
   assert.equal(mock.applied.size, 1);
-  assert.equal(mock.calls.filter((call) => call.sql.includes('BEGIN; SELECT 1; COMMIT;')).length, 1);
+  assert.equal(mock.calls.filter((call) => call.sql && call.sql.includes('BEGIN; SELECT 1; COMMIT;')).length, 1);
   assert.equal(mock.calls.filter((call) => call.released).length, 2);
 });
 
