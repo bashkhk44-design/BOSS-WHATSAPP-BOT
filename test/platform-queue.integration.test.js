@@ -105,6 +105,8 @@ const integrationTest = test('PostgreSQL queue integration: idempotency, claims,
     const repeated = await enqueueTelegramUpdate(pool, { botId, update });
     assert.equal(accepted.duplicate, false);
     assert.equal(repeated.duplicate, true);
+    // The update was only used to verify durable enqueue/deduplication above.
+    await pool.query("DELETE FROM platform_jobs WHERE bot_id = $1 AND job_type = 'telegram.update'", [botId]);
 
     // Synthetic queue-only concurrency check; this does not contact Telegram.
     for (const workerCount of [5, 10, 25, 50, 100]) {
