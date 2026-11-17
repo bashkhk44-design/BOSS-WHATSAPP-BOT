@@ -7,7 +7,11 @@ const { Pool } = require('pg');
 const { createQueueWorker } = require('./queue-worker');
 const { createTelegramUpdateHandler } = require('./telegram-update-handler');
 
-function getWorkerSslConfig(env = process.env) {\n  return env.DATABASE_SSL === 'disable' ? false : true;\n}\n\nfunction validateWorkerEnvironment(env = process.env) {
+function getWorkerSslConfig(env = process.env) {
+  return env.DATABASE_SSL === 'disable' ? false : true;
+}
+
+function validateWorkerEnvironment(env = process.env) {
   if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
   if (!/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL)) {
     throw new Error('DATABASE_URL must use the PostgreSQL protocol');
