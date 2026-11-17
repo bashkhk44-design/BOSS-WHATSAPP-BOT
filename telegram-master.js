@@ -204,7 +204,7 @@ async function showStats(ctx) {
     'إجمالي البوتات: ' + bots.length + '\n' +
     'مفعّلة في قاعدة البيانات: ' + active + '\n' +
     'تعمل فعلياً في هذه العملية: ' + running + '\n' +
-    'المتوقفة أو غير المحمّلة: ' + Math.max(0, active - running) + '\n' +
+    'غير العاملة فعلياً حالياً: ' + Math.max(0, active - running) + '\n' +
     'الحد التشغيلي الحالي: 100 بوت'
   );
 }
@@ -240,7 +240,7 @@ bot.command('stats', async (ctx) => {
   await showStats(ctx);
 });
 
-bot.callbackQuery(/^bots:page:(\\d+)$/, async (ctx) => {
+bot.callbackQuery(/^bots:page:(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   await ctx.answerCallbackQuery();
   return showBots(ctx, Number(ctx.match[1]));
