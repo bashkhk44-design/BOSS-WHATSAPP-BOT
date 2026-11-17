@@ -41,9 +41,11 @@ function validatePackageManifest(packageData) {
         : nameParts.length === 2 && nameParts[0].startsWith('@') &&
           /^[a-z0-9._-]+$/i.test(nameParts[0].slice(1)) && /^[a-z0-9._-]+$/i.test(nameParts[1]);
       if (!validName) errors.push('Invalid npm dependency name: ' + name);
-      if (typeof spec !== 'string' || !spec.trim() ||
-          forbiddenPrefixes.some(prefix => spec.trim().toLowerCase().startsWith(prefix))) {
-        errors.push('Only npm registry dependency specifications are allowed: ' + name);
+      const normalizedSpec = typeof spec === 'string' ? spec.trim() : '';
+      if (!normalizedSpec ||
+          forbiddenPrefixes.some(prefix => normalizedSpec.toLowerCase().startsWith(prefix)) ||
+          normalizedSpec.includes('/')) {
+        errors.push('Only npm registry version, range, or tag specifications are allowed: ' + name);
       }
     }
   }
