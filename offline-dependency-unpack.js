@@ -226,13 +226,18 @@ function unpackVerifiedDependencies({ artifactDir, lockfilePath, outputDir, limi
   for (const key of Object.keys(DEFAULT_LIMITS)) {
     if (!Number.isSafeInteger(cap[key]) || cap[key] < 1) fail('Invalid unpack limit: ' + key);
   }
+  const artifactLstat = fs.lstatSync(artifactDir);
+  const lockLstat = fs.lstatSync(lockfilePath);
+  if (artifactLstat.isSymbolicLink() || !artifactLstat.isDirectory() ||
+      lockLstat.isSymbolicLink() || !lockLstat.isFile()) fail('Artifact directory and lockfile must be real directory/file paths.');
   const artifactRoot = fs.realpathSync(artifactDir);
   const lockReal = fs.realpathSync(lockfilePath);
-  if (!fs.statSync(artifactRoot).isDirectory() || !fs.statSync(lockReal).isFile()) fail('Artifact directory and lockfile must exist.');
-  const outputParent = path.resolve(path.dirname(outputDir));
+  const outputParent = path.resolve(path.dirname(path.resolve(outputDir)));
   if (!fs.existsSync(outputParent) || !fs.statSync(outputParent).isDirectory()) fail('Output parent directory must already exist.');
   const outputRealParent = fs.realpathSync(outputParent);
-  const finalOutput = path.join(outputRealParent, path.basename(outputDir));
+  const requestedOutput = path.resolve(outputDir);
+  if (path.basename(requestedOutput) === '.' || path.basename(requestedOutput) === '..') fail('Output directory path is invalid.');
+  const finalOutput = path.join(outputRealParent, path.basename(requestedOutput));
   if (fs.existsSync(finalOutput)) fail('Output directory already exists; refusing to overwrite.');
   if (finalOutput === artifactRoot || finalOutput.startsWith(artifactRoot + path.sep) ||
       artifactRoot.startsWith(finalOutput + path.sep)) fail('Output directory must not overlap the artifact directory.');
@@ -240,6 +245,9 @@ function unpackVerifiedDependencies({ artifactDir, lockfilePath, outputDir, limi
     fail('Output directory must not overlap the lockfile.');
   }
 
+  const packagesRoot = path.join(artifactRoot, 'packages');
+  const packagesRootStat = fs.lstatSync(packagesRoot);
+  if (packagesRootStat.isSymbolicLink() || !packagesRootStat.isDirectory()) fail('Artifact packages path must be a real directory.');
   const manifestPath = path.join(artifactRoot, 'artifact-manifest.json');
   const manifestStat = fs.lstatSync(manifestPath);
   if (manifestStat.isSymbolicLink() || !manifestStat.isFile()) fail('Artifact manifest must be a regular file.');
@@ -259,14 +267,22 @@ function unpackVerifiedDependencies({ artifactDir, lockfilePath, outputDir, limi
   if (expectedEntries.length !== manifest.packages.length) fail('Manifest package count does not match package-lock.json.');
 
   const artifactByPath = new Map();
+  const artifactFiles = new Set();
+  let manifestBytes = 0;
   for (const item of manifest.packages) {
     if (!item || typeof item.lockPath !== 'string' || artifactByPath.has(item.lockPath) ||
         typeof item.file !== 'string' || !/^[0-9]{4}\.tgz$/.test(item.file) ||
         !Number.isSafeInteger(item.size) || item.size < 1 ||
-        typeof item.sha512 !== 'string' || !/^[a-f0-9]{128}$/.test(item.sha512)) {
+        typeof item.sha512 !== 'string' || !/^[a-f0-9]{128}$/.test(item.sha512) ||
+      artifactFiles.has(item.file)) {
       fail('Malformed package entry in offline dependency manifest.');
     }
+    artifactFiles.add(item.file);
+    manifestBytes += item.size;
     artifactByPath.set(item.lockPath, item);
+  }
+  if (!Number.isSafeInteger(manifest.totalBytes) || manifest.totalBytes !== manifestBytes) {
+    fail('Manifest total archive size does not match its package entries.');
   }
   for (const [lockPath, entry] of expectedEntries) {
     const item = artifactByPath.get(lockPath);
