@@ -794,7 +794,7 @@ bot.callbackQuery(/^project:release:manager:(approved|rejected):(\d+)$/, async (
 });
 
 
-bot.callbackQuery(/^project:deploy-auth:authorize:(\\d+)$/, async (ctx) => {
+bot.callbackQuery(/^project:deploy-auth:authorize:(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   try {
     const authorization = await authorizeDeployment({
@@ -803,9 +803,9 @@ bot.callbackQuery(/^project:deploy-auth:authorize:(\\d+)$/, async (ctx) => {
     });
     await ctx.answerCallbackQuery({ text: 'تم إصدار تصريح النشر المستقل.' });
     await ctx.reply(
-      '🔐 تصريح النشر رقم #' + authorization.id + ' أصبح معتمداً.\\n' +
-      'الإصدار: #' + authorization.release_id + '\\n' +
-      'بصمة التصريح SHA-256: ' + authorization.authorization_sha256 + '\\n\\n' +
+      '🔐 تصريح النشر رقم #' + authorization.id + ' أصبح معتمداً.\n' +
+      'الإصدار: #' + authorization.release_id + '\n' +
+      'بصمة التصريح SHA-256: ' + authorization.authorization_sha256 + '\n\n' +
       'تنبيه: هذا التصريح لا ينفّذ النشر تلقائياً. لم يتم الاتصال بـ Render أو تغيير الإنتاج.'
     );
   } catch (error) {
