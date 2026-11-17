@@ -76,3 +76,43 @@ test('release artifact enforces bounded storage size', () => {
     report, bundle: { files: [{ path: 'large.txt', content: 'x'.repeat(4 * 1024 * 1024) }] }
   }), /4 ميغابايت/);
 });
+
+test('release report rejects skipped acceptance tests and incomplete summaries', () => {
+  assert.throws(() => buildReleaseReport({
+    project, spec: {}, design,
+    testResult: {
+      passed: true,
+      sandbox: {
+        executionStatus: 'completed',
+        testSummary: { tests: 2, passed: 1, failed: 0, skipped: 1 },
+        acceptanceTests: [{ acceptanceTestId: 'menu', passed: true }]
+      }
+    },
+    deployment: {}
+  }), /ملخص الاختبارات/);
+  assert.throws(() => buildReleaseReport({
+    project, spec: {}, design,
+    testResult: {
+      passed: true,
+      sandbox: {
+        executionStatus: 'completed',
+        testSummary: { tests: 1, passed: 1 },
+        acceptanceTests: [{ acceptanceTestId: 'menu', passed: false }]
+      }
+    },
+    deployment: {}
+  }), /ملخص الاختبارات/);
+});
+
+test('release artifact rejects Windows paths and duplicate paths', () => {
+  const report = buildReleaseReport({ project, spec: {}, design, testResult, deployment: {} });
+  assert.throws(() => createImmutableReleaseArtifact({
+    report, bundle: { files: [{ path: 'C:\\secret.txt', content: 'x' }] }
+  }), /مسار ملف غير آمن/);
+  assert.throws(() => createImmutableReleaseArtifact({
+    report, bundle: { files: [
+      { path: 'same.js', content: 'one' },
+      { path: 'same.js', content: 'two' }
+    ] }
+  }), /مسار مكرر/);
+});
