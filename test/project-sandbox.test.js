@@ -23,6 +23,18 @@ const TAP_PASS = [
   '# todo 0'
 ].join('\n');
 const IMAGE = 'node:22-alpine@sha256:' + 'a'.repeat(64);
+const TAP_FAIL = [
+  'TAP version 13',
+  'not ok 1 - [BOSS_ACCEPTANCE:main] approved scenario',
+  '  error: expected order to be saved',
+  '1..1',
+  '# tests 1',
+  '# pass 0',
+  '# fail 1',
+  '# cancelled 0',
+  '# skipped 0',
+  '# todo 0'
+].join('\\n');
 
 test('sandbox requires immutable image digest', () => {
   assert.throws(() => validateSandboxImage('node:22-alpine'), /sha256 digest/);
@@ -67,6 +79,8 @@ test('runner invokes isolated docker container without passing secrets', () => {
     assert.ok(invocation.args.includes('--test-reporter=tap'));
     assert.equal(invocation.options.env.BOTS_ENCRYPTION_KEY, undefined);
     assert.equal(result.status, 'passed');
+    assert.equal(result.executionStatus, 'completed');
+    assert.equal(result.repairable, false);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 test('runtime mount point rejects bundled node_modules content', () => {
@@ -102,6 +116,8 @@ test('runner reports container failure', () => {
       spawn: () => ({ status: 125, stdout: '', stderr: 'image unavailable' })
     });
     assert.equal(result.status, 'failed');
+    assert.equal(result.executionStatus, 'not_confirmed');
+    assert.equal(result.repairable, false);
     assert.equal(result.passed, false);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
@@ -233,4 +249,43 @@ test('sandbox rejects a passing suite that omitted an approved acceptance test',
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+
+test('a completed TAP suite with failing assertions is repairable', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-sandbox-'));
+  try {
+    const result = runSandboxTests({
+      projectDir: dir,
+      files: [{ path: 'test/app.test.js' }],
+      image: IMAGE,
+      requiredAcceptanceTests: [{
+        acceptanceTestId: 'main',
+        marker: '[BOSS_ACCEPTANCE:main]',
+        testName: '[BOSS_ACCEPTANCE:main] approved scenario'
+      }],
+      spawn: () => ({ status: 1, stdout: TAP_FAIL, stderr: '' })
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.executionStatus, 'completed');
+    assert.equal(result.repairable, true);
+    assert.equal(result.failureKind, 'test_cases_failed_or_not_run');
+    assert.equal(result.testSummary.failed, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('skipped acceptance tests do not count as passing', () => {
+  const skipped = TAP_PASS
+    .replace('ok 1 - [BOSS_ACCEPTANCE:main] approved scenario',
+      'ok 1 - [BOSS_ACCEPTANCE:main] approved scenario # SKIP')
+    .replace('# pass 1', '# pass 0')
+    .replace('# skipped 0', '# skipped 1');
+  const result = verifyAcceptanceTestCases(skipped, [{
+    acceptanceTestId: 'main',
+    marker: '[BOSS_ACCEPTANCE:main]',
+    testName: '[BOSS_ACCEPTANCE:main] approved scenario'
+  }]);
+  assert.equal(result.passed, false);
 });
