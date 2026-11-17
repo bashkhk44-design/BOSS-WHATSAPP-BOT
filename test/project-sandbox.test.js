@@ -175,10 +175,18 @@ test('TAP summary requires a non-empty fully passing test suite', () => {
 });
 
 test('every approved acceptance marker must appear exactly once as a passing TAP test', () => {
-  const required = [{ acceptanceTestId: 'main', marker: '[BOSS_ACCEPTANCE:main]' }];
+  const required = [{
+    acceptanceTestId: 'main',
+    marker: '[BOSS_ACCEPTANCE:main]',
+    testName: '[BOSS_ACCEPTANCE:main] approved scenario'
+  }];
   assert.equal(verifyAcceptanceTestCases(TAP_PASS, required).passed, true);
   assert.equal(verifyAcceptanceTestCases(TAP_PASS, [
-    { acceptanceTestId: 'missing', marker: '[BOSS_ACCEPTANCE:missing]' }
+    {
+      acceptanceTestId: 'missing',
+      marker: '[BOSS_ACCEPTANCE:missing]',
+      testName: '[BOSS_ACCEPTANCE:missing] missing scenario'
+    }
   ]).passed, false);
 
   const failed = TAP_PASS.replace(
@@ -215,7 +223,8 @@ test('sandbox rejects a passing suite that omitted an approved acceptance test',
       image: IMAGE,
       requiredAcceptanceTests: [{
         acceptanceTestId: 'missing',
-        marker: '[BOSS_ACCEPTANCE:missing]'
+        marker: '[BOSS_ACCEPTANCE:missing]',
+        testName: '[BOSS_ACCEPTANCE:missing] missing scenario'
       }],
       spawn: () => ({ status: 0, stdout: TAP_PASS, stderr: '' })
     });
