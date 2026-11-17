@@ -21,7 +21,7 @@ const TAP_PASS = [
   '# cancelled 0',
   '# skipped 0',
   '# todo 0'
-].join('\\n');
+].join('\n');
 const IMAGE = 'node:22-alpine@sha256:' + 'a'.repeat(64);
 
 test('sandbox requires immutable image digest', () => {
