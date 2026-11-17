@@ -25,9 +25,9 @@ test('loads a verified dependency and executes its generated bin wrapper inside 
       bin: { 'demo-cli': './bin/cli.js' }
     }));
     fs.writeFileSync(path.join(packageDir, 'index.js'),
-      "module.exports = { value: 'dependency-ok' };\\n");
+      "module.exports = { value: 'dependency-ok' };\n");
     fs.writeFileSync(path.join(packageDir, 'bin', 'cli.js'),
-      "process.stdout.write('bin-ok:' + process.argv.slice(2).join(','));\\n");
+      "process.stdout.write('bin-ok:' + process.argv.slice(2).join(','));\n");
     fs.writeFileSync(lockfilePath, JSON.stringify({
       name: 'fixture',
       version: '1.0.0',
@@ -49,7 +49,7 @@ test('loads a verified dependency and executes its generated bin wrapper inside 
       "  const wrapper = path.join(__dirname, 'node_modules', '.bin', 'demo-cli');",
       "  assert.equal(execFileSync(wrapper, ['from-container'], { encoding: 'utf8' }), 'bin-ok:from-container');",
       "});"
-    ].join('\\n'));
+    ].join('\n'));
     const runtime = prepareRuntimeDependencyTree({ outputDir, lockfilePath });
     fs.chmodSync(projectDir, 0o755);
     const result = runSandboxTests({
