@@ -52,8 +52,8 @@ test('Telegram update ingestion acknowledges duplicate updates without inserting
   inserted = false;
   const second = await enqueueTelegramUpdate(pool, { botId: 7, update: { update_id: 1234, message: {} } });
 
-  assert.deepEqual(first, { accepted: true, duplicate: false, id: 44 });
-  assert.deepEqual(second, { accepted: true, duplicate: true, id: null });
+  assert.deepEqual(first, { accepted: true, duplicate: false, id: 44, jobId: null });
+  assert.deepEqual(second, { accepted: true, duplicate: true, id: null, jobId: null });
 });
 
 test('queue worker dispatches claimed jobs and records completion', async () => {
