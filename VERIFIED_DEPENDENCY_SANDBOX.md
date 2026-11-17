@@ -2,7 +2,7 @@
 
 The customer-project tester can now accept a prebuilt offline dependency artifact directory as an explicit input. When sandbox runtime tests are enabled and the customer's lockfile declares packages, the tester requires that artifact, verifies it against the exact package-lock file, and unpacks it with `offline-dependency-unpack.js` before invoking Docker.
 
-The resulting `node_modules` directory is mounted read-only at `/workspace/node_modules`. The project source remains a separate read-only mount. The container continues to use a digest-pinned image, `--network=none`, read-only root filesystem, bounded memory/CPU/PIDs, non-root UID, dropped capabilities, no-new-privileges, and a bounded timeout.
+The resulting `node_modules` directory is mounted read-only at `/workspace/node_modules`. Before Docker starts, the tester creates an empty, real `node_modules` mountpoint inside its temporary project copy; non-empty or symlinked project mountpoints are rejected. The project source remains a separate read-only mount. The container continues to use a digest-pinned image, `--network=none`, read-only root filesystem, bounded memory/CPU/PIDs, non-root UID, dropped capabilities, no-new-privileges, and a bounded timeout.
 
 ## Fail-closed behavior
 
