@@ -178,10 +178,14 @@ async function createClientProjectWithSession({
     );
 
     const existing = await client.query(`
-      SELECT project_id, step, data
-      FROM client_intake_sessions
-      WHERE telegram_user_id = $1
-      FOR UPDATE
+      SELECT s.project_id, s.step, s.data
+      FROM client_intake_sessions s
+      JOIN client_projects p ON p.id = s.project_id
+      JOIN clients c ON c.id = p.client_id
+      WHERE s.telegram_user_id = $1
+        AND c.telegram_user_id = $1
+        AND p.status = 'collecting_requirements'
+      FOR UPDATE OF s
     `, [String(telegramUserId)]);
 
     if (existing.rowCount) {
@@ -191,6 +195,20 @@ async function createClientProjectWithSession({
         session: existing.rows[0]
       };
     }
+
+    // Never reuse a stale or mismatched session that is not owned by this Telegram user.
+    await client.query(`
+      DELETE FROM client_intake_sessions s
+      WHERE s.telegram_user_id = $1
+        AND NOT EXISTS (
+          SELECT 1
+          FROM client_projects p
+          JOIN clients c ON c.id = p.client_id
+          WHERE p.id = s.project_id
+            AND c.telegram_user_id = $1
+            AND p.status = 'collecting_requirements'
+        )
+    `, [String(telegramUserId)]);
 
     const savedClient = await client.query(`
       INSERT INTO clients
