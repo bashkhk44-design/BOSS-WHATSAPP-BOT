@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { validateBundle } = require('./ai-builder');
+const { runSandboxTests } = require('./project-sandbox');
 
 function validateManifest(manifest, packageData) {
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
@@ -255,15 +256,18 @@ async function testProjectBundle({ bundle }) {
       }
     }
 
-    const passed = syntaxPassed && jsonPassed &&
-      checks.every(check => check.passed);
+    let sandbox = { status: 'disabled', passed: null };
+    if (process.env.BOSS_SANDBOX_ENABLED === 'YES') {
+      sandbox = runSandboxTests({ projectDir: tempDir, files: validated.files, image: process.env.BOSS_SANDBOX_IMAGE });
+      if (sandbox.status === 'failed') add('sandbox-runtime-tests', false, sandbox.details);
+      else if (sandbox.status === 'passed') add('sandbox-runtime-tests', true, sandbox.details);
+    }
 
+    const passed = syntaxPassed && jsonPassed && checks.every(check => check.passed) && sandbox.status !== 'failed';
     return {
-      passed,
-      checks,
-      manifest: manifest || null,
+      passed, checks, manifest: manifest || null, sandbox,
       summary: passed
-        ? 'نجحت الاختبارات الأساسية وملف manifest.'
+        ? (sandbox.status === 'passed' ? 'نجحت الفحوص الأساسية واختبارات التشغيل المعزولة.' : 'نجحت الفحوص الأساسية فقط؛ الاختبار المعزول غير مفعّل أو لا توجد ملفات اختبار.')
         : 'فشلت بعض الاختبارات؛ يجب إصلاح الأخطاء وإعادة الاختبار.'
     };
   } finally {
