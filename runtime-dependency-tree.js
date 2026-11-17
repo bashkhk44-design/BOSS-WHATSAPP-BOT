@@ -63,9 +63,10 @@ function createBinWrapper({ binDir, command, target }) {
     '#!/usr/bin/env node',
     "'use strict';",
     "const path = require('node:path');",
+    "const { pathToFileURL } = require('node:url');",
     'const target = path.resolve(__dirname, ' + JSON.stringify(relativeTarget) + ');',
     'process.argv[1] = target;',
-    'require(target);',
+    'import(pathToFileURL(target).href).catch(error => { console.error(error); process.exitCode = 1; });',
     ''
   ].join('\n');
   fs.mkdirSync(binDir, { recursive: true, mode: 0o755 });
