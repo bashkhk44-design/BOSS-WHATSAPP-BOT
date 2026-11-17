@@ -96,6 +96,8 @@ jobs:
         run: node --test test/customer-bot-worker.integration.test.js
       - name: Exercise distributed manager bot controls
         run: node --test test/customer-bot-worker-control.integration.test.js
+      - name: Exercise durable automatic remediation
+        run: node --test test/auto-remediation.integration.test.js
       - name: Verify schema, constraints, and preserved rows
         run: |
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
@@ -128,6 +130,15 @@ jobs:
             END IF;
             IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '005_worker_health_heartbeats') THEN
               RAISE EXCEPTION 'Worker heartbeat migration was not recorded';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '006_auto_remediation_audit') THEN
+              RAISE EXCEPTION 'Automatic remediation audit migration was not recorded';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.tables
+              WHERE table_schema = 'public' AND table_name = 'bot_auto_remediation_attempts'
+            ) THEN
+              RAISE EXCEPTION 'Automatic remediation audit table was not created';
             END IF;
             SELECT COUNT(*) INTO ownership_constraint_count
               FROM pg_constraint
