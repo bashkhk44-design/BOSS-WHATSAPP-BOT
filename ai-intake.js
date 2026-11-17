@@ -163,8 +163,33 @@ async function processIntakeTurn({ project, currentData = {}, userMessage = '', 
   };
 }
 
+const FALLBACK_STEPS = [
+  ['description', '📝 اشرح فكرة المشروع: ماذا تريد أن يقدم البوت للعملاء؟'],
+  ['features', '⚙️ ما أهم الميزات التي تريدها؟ اذكرها بكلامك.'],
+  ['buttons', '🔘 ما الأزرار أو الخيارات التي تريد أن تظهر للعميل؟'],
+  ['payments', '💳 هل يوجد دفع؟ اشرح الطريقة أو اكتب: لا يوجد.'],
+  ['languagesDesign', '🎨 ما اللغة والألوان أو التصميم الذي تفضله؟'],
+  ['extra', '➕ هل توجد شروط أو تفاصيل إضافية؟ اكتبها أو أرسل: لا يوجد.']
+];
+
+function advanceFallbackIntake(currentData = {}, userMessage = '') {
+  const data = { ...currentData, aiFallback: true };
+  const field = data.fallbackField || 'description';
+  const answer = String(userMessage || '').trim();
+  if (answer) data[field] = answer.slice(0, 5000);
+  const next = FALLBACK_STEPS.find(([key]) => !String(data[key] || '').trim());
+  if (!next) {
+    delete data.fallbackField;
+    data.aiFallback = false;
+    return { data, readyForReview: true, assistantMessage: '✅ اكتمل جمع المعلومات الأساسية بالطريقة الاحتياطية. راجع الملخص قبل الاعتماد.' };
+  }
+  data.fallbackField = next[0];
+  return { data, readyForReview: false, assistantMessage: next[1] };
+}
+
 module.exports = {
   FIELDS,
+  advanceFallbackIntake,
   extractJson,
   normalizeIntakeResult,
   processIntakeTurn

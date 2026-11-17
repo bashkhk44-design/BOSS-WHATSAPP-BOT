@@ -14,7 +14,7 @@ const {
   approveProjectSpec
 } = require('./project-db');
 
-const { processIntakeTurn } = require('./ai-intake');
+const { processIntakeTurn, advanceFallbackIntake } = require('./ai-intake');
 
 let intakeBot = null;
 let pollingPromise = null;
@@ -185,6 +185,20 @@ async function askNext(ctx, session) {
 }
 
 async function runInteractiveIntake(ctx, session, userMessage = '') {
+  if (session.data?.aiFallback) {
+    const result = advanceFallbackIntake(session.data, userMessage);
+    const nextStep = result.readyForReview ? 'review' : 'ai_intake';
+    await saveIntakeSession({ telegramUserId: ctx.from.id, projectId: session.project_id, step: nextStep, data: result.data });
+    await saveMessage(ctx.from.id, session.project_id, 'assistant', result.assistantMessage);
+    if (result.readyForReview) {
+      await ctx.reply('اكتمل جمع المتطلبات دون الاعتماد على المحلل الذكي. هذا ملخص طلبك:');
+      await askNext(ctx, { ...session, step: 'review', data: result.data });
+    } else {
+      await ctx.reply(result.assistantMessage);
+    }
+    return;
+  }
+
   try {
     const history = await getProjectConversation(ctx.from.id, session.project_id);
     const result = await processIntakeTurn({
@@ -230,9 +244,14 @@ async function runInteractiveIntake(ctx, session, userMessage = '') {
     await ctx.reply(result.assistantMessage);
   } catch (error) {
     console.error('INTERACTIVE AI INTAKE ERROR:', error.message);
-    await ctx.reply(
-      'واجهنا تأخيراً مؤقتاً في المحلل الذكي. لم نحذف إجابتك؛ أرسل رسالة متابعة بعد قليل أو أرسل /start لإعادة المحاولة.'
+    const fallback = advanceFallbackIntake(
+      { ...(session.data || {}), aiFallback: true, fallbackField: 'description' },
+      ''
     );
+    await saveIntakeSession({ telegramUserId: ctx.from.id, projectId: session.project_id, step: 'ai_intake', data: fallback.data });
+    const notice = '⚠️ المحلل الذكي غير متاح مؤقتاً بسبب حد الاستخدام. حفظنا رسالتك وسنكمل جمع المواصفات بأسئلة واضحة دون فقدان إجاباتك.\n\n';
+    await saveMessage(ctx.from.id, session.project_id, 'assistant', notice + fallback.assistantMessage);
+    await ctx.reply(notice + fallback.assistantMessage);
   }
 }
 
