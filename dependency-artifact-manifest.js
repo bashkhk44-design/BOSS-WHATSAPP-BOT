@@ -22,7 +22,7 @@ function validateRegistryUrl(value, packagePath) {
 
 function parseIntegrity(value, packagePath) {
   if (typeof value !== 'string') throw new Error('Missing integrity for ' + packagePath);
-  const tokens = value.trim().split(/\\s+/).map(token => {
+  const tokens = value.trim().split(/\s+/).map(token => {
     const match = /^(sha256|sha384|sha512)-([A-Za-z0-9+/]+={0,2})$/.exec(token);
     if (!match) throw new Error('Unsupported integrity token for ' + packagePath);
     const digest = Buffer.from(match[2], 'base64');
