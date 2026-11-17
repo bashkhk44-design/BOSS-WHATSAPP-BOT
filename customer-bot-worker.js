@@ -132,6 +132,31 @@ function createCustomerBotWorker({
     const command = await claimNextCommand();
     if (!command) return false;
     const botId = String(command.bot_id);
+    let commandLeaseLost = false;
+    let commandHeartbeatBusy = false;
+    let commandHeartbeatPromise = Promise.resolve();
+    const commandHeartbeatIntervalMs = Math.max(1000, Math.floor(leaseSeconds * 1000 / 3));
+    const commandHeartbeat = setInterval(() => {
+      if (commandHeartbeatBusy || commandLeaseLost) return;
+      commandHeartbeatBusy = true;
+      commandHeartbeatPromise = (async () => {
+        try {
+          const renewed = await pool.query(`
+            UPDATE bot_runtime_commands
+            SET claimed_at = NOW()
+            WHERE id = $1 AND claimed_by = $2 AND status = 'processing'
+            RETURNING id
+          `, [command.id, workerId]);
+          if (!renewed.rowCount) commandLeaseLost = true;
+        } catch (error) {
+          commandLeaseLost = true;
+          logger.error('Could not renew manager command lease ' + command.id + ': ' + error.message);
+        } finally {
+          commandHeartbeatBusy = false;
+        }
+      })();
+    }, commandHeartbeatIntervalMs);
+    if (typeof commandHeartbeat.unref === 'function') commandHeartbeat.unref();
     try {
       if (command.action === 'stop' || command.action === 'restart') {
         await runtime.stopBotById(botId);
@@ -188,35 +213,45 @@ function createCustomerBotWorker({
           }
         }
       }
-      await pool.query(`
-        WITH completed AS (
-          UPDATE bot_runtime_commands
-          SET status = 'completed', processed_at = NOW(), error_message = NULL
-          WHERE id = $1
-          RETURNING auto_remediation_attempt_id
-        )
-        UPDATE bot_auto_remediation_attempts
-        SET status = 'succeeded', finished_at = NOW(), error_message = NULL
-        WHERE id = (SELECT auto_remediation_attempt_id FROM completed)
-          AND status IN ('queued','processing')
-      `, [command.id]);
+      clearInterval(commandHeartbeat);
+      await commandHeartbeatPromise;
+      if (commandLeaseLost) throw new Error('Manager command lease was lost before completion');
+      const completed = await pool.query(`
+        UPDATE bot_runtime_commands
+        SET status = 'completed', processed_at = NOW(), error_message = NULL
+        WHERE id = $1 AND claimed_by = $2 AND status = 'processing'
+        RETURNING auto_remediation_attempt_id
+      `, [command.id, workerId]);
+      if (!completed.rowCount) throw new Error('Manager command lease was lost before completion');
+      if (completed.rows[0].auto_remediation_attempt_id) {
+        await pool.query(`
+          UPDATE bot_auto_remediation_attempts
+          SET status = 'succeeded', finished_at = NOW(), error_message = NULL
+          WHERE id = $1 AND status IN ('queued','processing')
+        `, [completed.rows[0].auto_remediation_attempt_id]);
+      }
       logger.log('Processed manager command ' + command.action + ' for bot ' + botId);
     } catch (error) {
-      await pool.query(`
-        WITH failed AS (
-          UPDATE bot_runtime_commands
-          SET status = 'failed', processed_at = NOW(),
-              error_message = $2
-          WHERE id = $1
-          RETURNING auto_remediation_attempt_id
-        )
-        UPDATE bot_auto_remediation_attempts
-        SET status = 'failed', finished_at = NOW(),
-            error_message = $2
-        WHERE id = (SELECT auto_remediation_attempt_id FROM failed)
-          AND status IN ('queued','processing')
-      `, [command.id, String(error.message || error).slice(0, 1000)]);
-      logger.error('Manager command failed for bot ' + botId + ': ' + error.message);
+      clearInterval(commandHeartbeat);
+      await commandHeartbeatPromise;
+      const failed = await pool.query(`
+        UPDATE bot_runtime_commands
+        SET status = 'failed', processed_at = NOW(), error_message = $3
+        WHERE id = $1 AND claimed_by = $2 AND status = 'processing'
+        RETURNING auto_remediation_attempt_id
+      `, [command.id, workerId, String(error.message || error).slice(0, 1000)]);
+      if (failed.rowCount && failed.rows[0].auto_remediation_attempt_id) {
+        await pool.query(`
+          UPDATE bot_auto_remediation_attempts
+          SET status = 'failed', finished_at = NOW(), error_message = $2
+          WHERE id = $1 AND status IN ('queued','processing')
+        `, [failed.rows[0].auto_remediation_attempt_id, String(error.message || error).slice(0, 1000)]);
+      }
+      if (failed.rowCount) logger.error('Manager command failed for bot ' + botId + ': ' + error.message);
+      else logger.error('Manager command ' + command.id + ' was no longer owned by worker ' + workerId + '; stale result ignored');
+    } finally {
+      clearInterval(commandHeartbeat);
+      await commandHeartbeatPromise;
     }
     return true;
   }
