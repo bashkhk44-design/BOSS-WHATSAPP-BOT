@@ -74,7 +74,7 @@ function verifyAcceptanceTestCases(output, cases) {
       throw new Error('Invalid approved acceptance test marker.');
     }
     const matching = lines.filter(line =>
-      /^\s*(?:ok|not ok)\s+\d+\s+-\s/.test(line) && line.includes(item.marker)
+      line.includes(item.marker) && line.includes(item.testName)
     );
     const passed = matching.length === 1 && /^\s*ok\s/.test(matching[0]);
     results.push({ acceptanceTestId: item.acceptanceTestId, passed });
