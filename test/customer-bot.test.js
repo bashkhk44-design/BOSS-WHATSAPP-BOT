@@ -6,6 +6,12 @@ const { createCustomerBot } = require('../customer-bot');
 
 test('shared customer bot factory preserves polling /start and /help replies', async () => {
   const bot = createCustomerBot({ id: 17, name: 'Test Activity' }, '123456:TEST_TOKEN');
+  bot.botInfo = {
+    id: 123456,
+    is_bot: true,
+    first_name: 'Test Bot',
+    username: 'test_bot'
+  };
   const sent = [];
 
   bot.api.config.use(async (_previous, method, payload) => {
