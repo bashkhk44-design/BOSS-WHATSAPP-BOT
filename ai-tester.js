@@ -7,6 +7,7 @@ const { spawnSync } = require('node:child_process');
 const { validateBundle } = require('./ai-builder');
 const { runSandboxTests } = require('./project-sandbox');
 const { validateDependencyPreflight } = require('./dependency-preflight');
+const { unpackVerifiedDependencies } = require('./offline-dependency-unpack');
 
 function validateManifest(manifest, packageData) {
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
@@ -76,7 +77,7 @@ function scanForEmbeddedSecrets(files) {
   return findings;
 }
 
-async function testProjectBundle({ bundle }) {
+async function testProjectBundle({ bundle, dependencyArtifactDir }) {
   const checks = [];
   const add = (name, passed, details = '') => checks.push({ name, passed, details });
   let validated;
@@ -100,6 +101,7 @@ async function testProjectBundle({ bundle }) {
   }
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-bot-test-'));
+  let runtimeTempDir = null;
   try {
     for (const file of validated.files) {
       const destination = path.join(tempDir, file.path);
@@ -174,11 +176,52 @@ async function testProjectBundle({ bundle }) {
     }
 
     let sandbox = { status: 'disabled', passed: null };
-    if (process.env.BOSS_SANDBOX_ENABLED === 'YES') fs.chmodSync(tempDir, 0o755);
+    let runtimeNodeModulesDir;
     if (process.env.BOSS_SANDBOX_ENABLED === 'YES') {
-      sandbox = runSandboxTests({
-        projectDir: tempDir, files: validated.files, image: process.env.BOSS_SANDBOX_IMAGE
-      });
+      const lockPath = path.join(tempDir, 'package-lock.json');
+      const declaredDependencies = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']
+        .some(field => packageData[field] && Object.keys(packageData[field]).length > 0);
+      let lockData = null;
+      let lockError = null;
+      if (fs.existsSync(lockPath)) {
+        try { lockData = JSON.parse(fs.readFileSync(lockPath, 'utf8')); }
+        catch (error) { lockError = error; }
+      }
+      const lockedPackages = lockData?.packages && typeof lockData.packages === 'object'
+        ? Object.keys(lockData.packages).filter(key => key !== '')
+        : [];
+      if (lockError || (declaredDependencies && !lockData?.packages)) {
+        sandbox = {
+          status: 'failed', passed: false,
+          details: 'A valid package-lock.json is required before dependency runtime tests can execute.'
+        };
+      } else if (lockedPackages.length > 0 && !dependencyArtifactDir) {
+        sandbox = {
+          status: 'failed', passed: false,
+          details: 'Verified offline dependency artifacts are required before runtime tests can execute.'
+        };
+      } else if (declaredDependencies && lockedPackages.length === 0) {
+        sandbox = {
+          status: 'failed', passed: false,
+          details: 'Declared dependencies are missing from package-lock.json.'
+        };
+      } else {
+        if (lockedPackages.length > 0) {
+          runtimeTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-bot-runtime-'));
+          const runtimeOutputDir = path.join(runtimeTempDir, 'verified-runtime');
+          const unpacked = unpackVerifiedDependencies({
+            artifactDir: dependencyArtifactDir,
+            lockfilePath: lockPath,
+            outputDir: runtimeOutputDir
+          });
+          runtimeNodeModulesDir = path.join(unpacked.outputDir, 'node_modules');
+        }
+        fs.chmodSync(tempDir, 0o755);
+        sandbox = runSandboxTests({
+          projectDir: tempDir, files: validated.files,
+          image: process.env.BOSS_SANDBOX_IMAGE, runtimeNodeModulesDir
+        });
+      }
       if (sandbox.status === 'failed') add('sandbox-runtime-tests', false, sandbox.details);
       else if (sandbox.status === 'passed') add('sandbox-runtime-tests', true, sandbox.details);
     }
@@ -195,6 +238,7 @@ async function testProjectBundle({ bundle }) {
     };
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
+    if (runtimeTempDir) fs.rmSync(runtimeTempDir, { recursive: true, force: true });
   }
 }
 
