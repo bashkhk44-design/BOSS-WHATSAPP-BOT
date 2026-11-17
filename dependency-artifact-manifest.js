@@ -26,7 +26,8 @@ function parseIntegrity(value, packagePath) {
     const match = /^(sha256|sha384|sha512)-([A-Za-z0-9+/]+={0,2})$/.exec(token);
     if (!match) throw new Error('Unsupported integrity token for ' + packagePath);
     const digest = Buffer.from(match[2], 'base64');
-    if (!digest.length || digest.toString('base64') !== match[2]) {
+    const expectedBytes = { sha256: 32, sha384: 48, sha512: 64 }[match[1]];
+    if (digest.length !== expectedBytes || digest.toString('base64') !== match[2]) {
       throw new Error('Malformed integrity digest for ' + packagePath);
     }
     return { algorithm: match[1], digest: match[2] };
