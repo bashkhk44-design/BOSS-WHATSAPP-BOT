@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { enqueuePlatformJob, enqueueTelegramUpdate, claimPlatformJob, normalizeJobTypes } = require('../platform-queue');
+const { enqueuePlatformJob, enqueueTelegramUpdate, claimPlatformJob, normalizeJobTypes, recoverExpiredPlatformJobs } = require('../platform-queue');
 const { createQueueWorker } = require('../queue-worker');
 
 test('job enqueue uses a stable idempotency key and returns existing job on conflict', async () => {
@@ -52,6 +52,22 @@ test('queue claims can be restricted to a validated set of registered job types'
   assert.throws(() => normalizeJobTypes(['invalid type']), /invalid job type/);
 });
 
+test('expired lease recovery is restricted to the worker registered job types', async () => {
+  let call;
+  const pool = {
+    async query(sql, params) {
+      call = { sql, params };
+      return { rowCount: 0, rows: [] };
+    }
+  };
+  assert.deepEqual(
+    await recoverExpiredPlatformJobs(pool, 90, ['deployment.preflight']),
+    []
+  );
+  assert.match(call.sql, /job_type = ANY\(\$2::text\[\]\)/);
+  assert.deepEqual(call.params, [90, ['deployment.preflight']]);
+});
+
 test('Telegram update ingestion acknowledges duplicate updates without inserting twice', async () => {
   let inserted = true;
   const pool = {
@@ -76,8 +92,9 @@ test('Telegram update ingestion acknowledges duplicate updates without inserting
 test('queue worker dispatches claimed jobs and records completion', async () => {
   const events = [];
   let claimed = false;
+  let recoveredTypes;
   const queueApi = {
-    async recoverExpiredPlatformJobs() { return []; },
+    async recoverExpiredPlatformJobs(_pool, _leaseSeconds, jobTypes) { recoveredTypes = jobTypes; return []; },
     async claimPlatformJob(_pool, workerId, jobTypes) {
       events.push(['claim', workerId, jobTypes]);
       if (claimed) return null;
@@ -97,6 +114,7 @@ test('queue worker dispatches claimed jobs and records completion', async () => 
 
   assert.equal(await worker.processOne(), true);
   assert.equal(await worker.processOne(), false);
+  assert.deepEqual(recoveredTypes, ['test.echo']);
   assert.deepEqual(events[0], ['claim', 'test-worker', ['test.echo']]);
   assert.deepEqual(events[1], ['complete', 3, { echoed: true }]);
 });
