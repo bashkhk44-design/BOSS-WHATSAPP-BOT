@@ -115,6 +115,14 @@ test('PostgreSQL release handoff enforces customer then manager approval and imm
     });
 
     assert.equal(candidate.status, 'awaiting_customer');
+    const duplicateCandidate = await createReleaseCandidate({
+      project: releaseProject,
+      designJobId,
+      adminTelegramId: managerTelegramId,
+      report,
+      bundle: { files: [{ path: 'index.js', content: "console.log('release');" }] }
+    });
+    assert.equal(duplicateCandidate.id, candidate.id);
     await assert.rejects(
       decideRelease({ releaseId: candidate.id, role: 'manager', telegramUserId: managerTelegramId, decision: 'approved' }),
       /قبل موافقة العميل/
