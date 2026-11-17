@@ -1,0 +1,319 @@
+'use strict';
+
+const crypto = require('node:crypto');
+const { pool } = require('./db');
+
+const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024;
+
+function stableJson(value) {
+  if (Array.isArray(value)) return '[' + value.map(stableJson).join(',') + ']';
+  if (value && typeof value === 'object') {
+    return '{' + Object.keys(value).sort().map(key =>
+      JSON.stringify(key) + ':' + stableJson(value[key])
+    ).join(',') + '}';
+  }
+  return JSON.stringify(value);
+}
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function buildReleaseReport({ project, spec, design, testResult, deployment }) {
+  if (!project?.project_id || !Number.isInteger(Number(project.spec_version))) {
+    throw new Error('بيانات المشروع أو إصدار المواصفات غير صالحة.');
+  }
+  if (!design?.artifact?.sourceFingerprint ||
+      Number(design.artifact.specVersion) !== Number(project.spec_version)) {
+    throw new Error('التصميم لا يطابق إصدار المواصفات المعتمد.');
+  }
+  if (testResult?.passed !== true ||
+      testResult?.sandbox?.executionStatus !== 'completed') {
+    throw new Error('لا يمكن تجهيز تقرير تسليم دون نجاح اختبار مكتمل داخل البيئة المعزولة.');
+  }
+
+  const checks = Array.isArray(deployment?.checks)
+    ? deployment.checks.map(item => ({
+        name: String(item.name || 'unknown').slice(0, 100),
+        passed: item.passed === true,
+        details: String(item.details || '').slice(0, 1000)
+      }))
+    : [];
+
+  const failedChecks = checks.filter(item => !item.passed);
+  const testSummary = testResult.sandbox.testSummary || {};
+  const acceptanceTests = Array.isArray(testResult.sandbox.acceptanceTests)
+    ? testResult.sandbox.acceptanceTests.map(item => ({
+        acceptanceTestId: String(item.acceptanceTestId || '').slice(0, 100),
+        passed: item.passed === true
+      }))
+    : [];
+
+  return {
+    schemaVersion: 1,
+    project: {
+      id: String(project.project_id),
+      name: String(project.project_name || project.name || '').slice(0, 200),
+      businessType: String(project.business_type || '').slice(0, 100)
+    },
+    approvals: {
+      customerSpec: {
+        status: 'approved',
+        specVersion: Number(project.spec_version)
+      },
+      managerConstructionPoints: 'approved',
+      managerDesign: 'approved'
+    },
+    design: {
+      specVersion: Number(design.artifact.specVersion),
+      sourceFingerprint: design.artifact.sourceFingerprint
+    },
+    tests: {
+      status: 'passed',
+      executionStatus: testResult.sandbox.executionStatus,
+      summary: {
+        tests: Number(testSummary.tests || 0),
+        passed: Number(testSummary.passed || 0),
+        failed: Number(testSummary.failed || 0),
+        skipped: Number(testSummary.skipped || 0),
+        todo: Number(testSummary.todo || 0),
+        cancelled: Number(testSummary.cancelled || 0)
+      },
+      acceptanceTests
+    },
+    releaseChecks: checks,
+    risks: failedChecks.map(item => ({
+      type: 'deployment_precheck',
+      check: item.name,
+      details: item.details
+    })),
+    deployment: {
+      deployed: false,
+      ready: deployment?.ready === true
+    },
+    generatedAt: new Date().toISOString()
+  };
+}
+
+function createImmutableReleaseArtifact({ report, bundle }) {
+  if (!report || !bundle || !Array.isArray(bundle.files) || !bundle.files.length) {
+    throw new Error('تقرير الإصدار أو ملفات المشروع غير مكتملة.');
+  }
+  const files = bundle.files.map(file => {
+    if (!file || typeof file.path !== 'string' || typeof file.content !== 'string') {
+      throw new Error('ملف ضمن حزمة الإصدار غير صالح.');
+    }
+    if (file.path.startsWith('/') || file.path.split(/[\\/]/).includes('..')) {
+      throw new Error('مسار ملف غير آمن ضمن حزمة الإصدار.');
+    }
+    return { path: file.path, content: file.content };
+  }).sort((a, b) => a.path.localeCompare(b.path));
+
+  const payload = {
+    schemaVersion: 1,
+    report,
+    bundle: { files }
+  };
+  const serialized = stableJson(payload);
+  const bytes = Buffer.byteLength(serialized, 'utf8');
+  if (bytes > MAX_ARTIFACT_BYTES) {
+    throw new Error('حزمة الإصدار تتجاوز الحد الآمن البالغ 4 ميغابايت.');
+  }
+  return {
+    artifact: payload,
+    artifactSha256: sha256(serialized),
+    artifactBytes: bytes
+  };
+}
+
+async function initProjectReleaseDatabase() {
+  await pool.query(\`
+    CREATE TABLE IF NOT EXISTS project_release_candidates (
+      id BIGSERIAL PRIMARY KEY,
+      project_id BIGINT NOT NULL REFERENCES client_projects(id) ON DELETE CASCADE,
+      release_version INTEGER NOT NULL,
+      spec_version INTEGER NOT NULL,
+      design_job_id BIGINT NOT NULL REFERENCES project_ai_jobs(id),
+      created_by TEXT NOT NULL,
+      artifact JSONB NOT NULL,
+      artifact_sha256 TEXT NOT NULL CHECK (artifact_sha256 ~ '^[a-f0-9]{64}$'),
+      artifact_bytes INTEGER NOT NULL CHECK (artifact_bytes > 0),
+      status TEXT NOT NULL CHECK (status IN ('awaiting_customer', 'awaiting_manager', 'approved', 'rejected')),
+      customer_telegram_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (project_id, release_version)
+    )
+  \`);
+
+  await pool.query(\`
+    CREATE TABLE IF NOT EXISTS project_release_approvals (
+      id BIGSERIAL PRIMARY KEY,
+      release_id BIGINT NOT NULL REFERENCES project_release_candidates(id) ON DELETE CASCADE,
+      approver_role TEXT NOT NULL CHECK (approver_role IN ('customer', 'manager')),
+      telegram_user_id TEXT NOT NULL,
+      decision TEXT NOT NULL CHECK (decision IN ('approved', 'rejected')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (release_id, approver_role)
+    )
+  \`);
+
+  await pool.query(\`
+    CREATE INDEX IF NOT EXISTS project_release_project_idx
+    ON project_release_candidates(project_id, release_version DESC)
+  \`);
+}
+
+async function createReleaseCandidate({ project, designJobId, adminTelegramId, report, bundle }) {
+  const snapshot = createImmutableReleaseArtifact({ report, bundle });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const current = await client.query(\`
+      SELECT p.id, c.telegram_user_id, s.version, j.id AS design_job_id,
+             a.construction_points_approved, a.design_approved
+      FROM client_projects p
+      JOIN clients c ON c.id = p.client_id
+      JOIN LATERAL (
+        SELECT version FROM project_specs
+        WHERE project_id = p.id AND status = 'approved'
+        ORDER BY version DESC LIMIT 1
+      ) s ON TRUE
+      JOIN project_ai_jobs j
+        ON j.project_id = p.id AND j.id = $2
+       AND j.job_type = 'design' AND j.status = 'completed'
+       AND j.spec_version = s.version
+      JOIN project_build_approvals a
+        ON a.project_id = p.id AND a.spec_version = s.version
+       AND a.design_job_id = j.id
+      WHERE p.id = $1 AND p.status = 'spec_approved'
+      FOR UPDATE OF p
+    \`, [project.project_id, designJobId]);
+
+    if (!current.rowCount ||
+        !current.rows[0].construction_points_approved ||
+        !current.rows[0].design_approved ||
+        Number(current.rows[0].version) !== Number(project.spec_version)) {
+      throw new Error('تعذر إنشاء الإصدار: المواصفات أو التصميم أو اعتمادات المدير لم تعد مطابقة.');
+    }
+
+    const versionResult = await client.query(\`
+      SELECT COALESCE(MAX(release_version), 0) + 1 AS next_version
+      FROM project_release_candidates WHERE project_id = $1
+    \`, [project.project_id]);
+
+    const inserted = await client.query(\`
+      INSERT INTO project_release_candidates (
+        project_id, release_version, spec_version, design_job_id,
+        created_by, artifact, artifact_sha256, artifact_bytes,
+        status, customer_telegram_id
+      ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,'awaiting_customer',$9)
+      RETURNING id, project_id, release_version, spec_version,
+                artifact_sha256, artifact_bytes, status, created_at
+    \`, [
+      project.project_id,
+      Number(versionResult.rows[0].next_version),
+      project.spec_version,
+      designJobId,
+      String(adminTelegramId),
+      JSON.stringify(snapshot.artifact),
+      snapshot.artifactSha256,
+      snapshot.artifactBytes,
+      String(current.rows[0].telegram_user_id)
+    ]);
+
+    await client.query('COMMIT');
+    return { ...inserted.rows[0], customerTelegramId: String(current.rows[0].telegram_user_id) };
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function getReleaseCandidate(releaseId) {
+  if (!/^\\d+$/.test(String(releaseId || ''))) throw new Error('رقم الإصدار غير صالح.');
+  const result = await pool.query(\`
+    SELECT r.*, p.name AS project_name,
+           c.telegram_user_id AS customer_telegram_id
+    FROM project_release_candidates r
+    JOIN client_projects p ON p.id = r.project_id
+    JOIN clients c ON c.id = p.client_id
+    WHERE r.id = $1
+  \`, [releaseId]);
+  return result.rows[0] || null;
+}
+
+async function decideRelease({ releaseId, role, telegramUserId, decision }) {
+  if (!['customer', 'manager'].includes(role) ||
+      !['approved', 'rejected'].includes(decision) ||
+      !/^\\d+$/.test(String(telegramUserId || '')) ||
+      !/^\\d+$/.test(String(releaseId || ''))) {
+    throw new Error('بيانات قرار الإصدار غير صالحة.');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const found = await client.query(\`
+      SELECT r.*, c.telegram_user_id AS actual_customer_id
+      FROM project_release_candidates r
+      JOIN client_projects p ON p.id = r.project_id
+      JOIN clients c ON c.id = p.client_id
+      WHERE r.id = $1
+      FOR UPDATE OF r
+    \`, [releaseId]);
+    if (!found.rowCount) throw new Error('الإصدار غير موجود.');
+    const release = found.rows[0];
+
+    if (role === 'customer' && String(release.actual_customer_id) !== String(telegramUserId)) {
+      throw new Error('هذا الإصدار لا يخص حساب Telegram الحالي.');
+    }
+    if (role === 'customer' && release.status !== 'awaiting_customer') {
+      throw new Error('لم يعد الإصدار بانتظار قرار العميل.');
+    }
+    if (role === 'manager' && release.status !== 'awaiting_manager') {
+      throw new Error('لا يمكن اعتماد المدير قبل موافقة العميل.');
+    }
+    if (release.status === 'approved' || release.status === 'rejected') {
+      throw new Error('تم إغلاق قرار هذا الإصدار مسبقاً.');
+    }
+
+    await client.query(\`
+      INSERT INTO project_release_approvals
+        (release_id, approver_role, telegram_user_id, decision)
+      VALUES ($1,$2,$3,$4)
+    \`, [releaseId, role, String(telegramUserId), decision]);
+
+    const nextStatus = decision === 'rejected'
+      ? 'rejected'
+      : role === 'customer' ? 'awaiting_manager' : 'approved';
+
+    const updated = await client.query(\`
+      UPDATE project_release_candidates
+      SET status = $2, updated_at = NOW()
+      WHERE id = $1
+      RETURNING id, project_id, release_version, spec_version,
+                artifact_sha256, status
+    \`, [releaseId, nextStatus]);
+
+    await client.query('COMMIT');
+    return updated.rows[0];
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = {
+  stableJson,
+  buildReleaseReport,
+  createImmutableReleaseArtifact,
+  initProjectReleaseDatabase,
+  createReleaseCandidate,
+  getReleaseCandidate,
+  decideRelease
+};
