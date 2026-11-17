@@ -8,6 +8,9 @@ const zlib = require('node:zlib');
 const DEFAULT_LIMITS = Object.freeze({
   maxPackages: 300,
   maxArchiveBytes: 100 * 1024 * 1024,
+  maxTotalArchiveBytes: 1024 * 1024 * 1024,
+  maxManifestBytes: 5 * 1024 * 1024,
+  maxLockfileBytes: 50 * 1024 * 1024,
   maxExpandedBytes: 512 * 1024 * 1024,
   maxTotalExpandedBytes: 2 * 1024 * 1024 * 1024,
   maxFiles: 50000,
@@ -191,7 +194,8 @@ function parseTarArchive(gzipBytes, destination, limits, budget) {
     if (seen.has(normalized)) fail('Duplicate path in dependency archive: ' + normalized);
     seen.add(normalized);
     fileCount++;
-    if (fileCount > limits.maxFiles) fail('Dependency archive contains too many entries.');
+    budget.files++;
+    if (budget.files > limits.maxFiles) fail('Dependency artifacts contain too many total entries.');
 
     if (type === '5') {
       if (size !== 0) fail('Tar directory entry contains data.');
@@ -232,6 +236,7 @@ function unpackVerifiedDependencies({ artifactDir, lockfilePath, outputDir, limi
       lockLstat.isSymbolicLink() || !lockLstat.isFile()) fail('Artifact directory and lockfile must be real directory/file paths.');
   const artifactRoot = fs.realpathSync(artifactDir);
   const lockReal = fs.realpathSync(lockfilePath);
+  if (path.resolve(outputDir) === path.parse(path.resolve(outputDir)).root) fail('Output directory cannot be a filesystem root.');
   const outputParent = path.resolve(path.dirname(path.resolve(outputDir)));
   if (!fs.existsSync(outputParent) || !fs.statSync(outputParent).isDirectory()) fail('Output parent directory must already exist.');
   const outputRealParent = fs.realpathSync(outputParent);
@@ -250,12 +255,14 @@ function unpackVerifiedDependencies({ artifactDir, lockfilePath, outputDir, limi
   if (packagesRootStat.isSymbolicLink() || !packagesRootStat.isDirectory()) fail('Artifact packages path must be a real directory.');
   const manifestPath = path.join(artifactRoot, 'artifact-manifest.json');
   const manifestStat = fs.lstatSync(manifestPath);
-  if (manifestStat.isSymbolicLink() || !manifestStat.isFile()) fail('Artifact manifest must be a regular file.');
+  if (manifestStat.isSymbolicLink() || !manifestStat.isFile() || manifestStat.size > cap.maxManifestBytes) fail('Artifact manifest must be a bounded regular file.');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   if (!manifest || manifest.format !== 'boss-offline-dependencies-v1' ||
       !Array.isArray(manifest.packages) || manifest.packageCount !== manifest.packages.length ||
       manifest.packages.length > cap.maxPackages) fail('Unsupported or invalid offline dependency manifest.');
 
+  const lockStat = fs.statSync(lockReal);
+  if (lockStat.size > cap.maxLockfileBytes) fail('package-lock.json exceeds the configured size limit.');
   const lockBytes = fs.readFileSync(lockReal);
   const lockSha = crypto.createHash('sha256').update(lockBytes).digest('hex');
   if (lockSha !== manifest.lockfileSha256) fail('Artifact was prepared for a different package-lock.json.');
@@ -269,6 +276,7 @@ function unpackVerifiedDependencies({ artifactDir, lockfilePath, outputDir, limi
   const artifactByPath = new Map();
   const artifactFiles = new Set();
   let manifestBytes = 0;
+
   for (const item of manifest.packages) {
     if (!item || typeof item.lockPath !== 'string' || artifactByPath.has(item.lockPath) ||
         typeof item.file !== 'string' || !/^[0-9]{4}\.tgz$/.test(item.file) ||
@@ -281,7 +289,7 @@ function unpackVerifiedDependencies({ artifactDir, lockfilePath, outputDir, limi
     manifestBytes += item.size;
     artifactByPath.set(item.lockPath, item);
   }
-  if (!Number.isSafeInteger(manifest.totalBytes) || manifest.totalBytes !== manifestBytes) {
+  if (!Number.isSafeInteger(manifest.totalBytes) || manifest.totalBytes !== manifestBytes || manifestBytes > cap.maxTotalArchiveBytes) {
     fail('Manifest total archive size does not match its package entries.');
   }
   for (const [lockPath, entry] of expectedEntries) {
@@ -307,8 +315,8 @@ function unpackVerifiedDependencies({ artifactDir, lockfilePath, outputDir, limi
       if (!packageDestination.startsWith(nodeModules + path.sep)) fail('Package destination escaped node_modules.');
       fs.mkdirSync(path.dirname(packageDestination), { recursive: true, mode: 0o755 });
       fs.mkdirSync(packageDestination, { mode: 0o755 });
-      const parsed = parseTarArchive(archiveBytes, packageDestination, cap, { total: totalExpanded });
-      totalExpanded += parsed.expandedBytes;
+      const parsed = parseTarArchive(archiveBytes, packageDestination, cap, unpackBudget);
+      totalExpanded = unpackBudget.total;
       if (!parsed.packageJson || typeof parsed.packageJson !== 'object' ||
           parsed.packageJson.name !== derivePackageName(lockPath) ||
           parsed.packageJson.version !== lockEntry.version) {
