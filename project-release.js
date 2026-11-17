@@ -132,7 +132,7 @@ function createImmutableReleaseArtifact({ report, bundle }) {
     if (seenPaths.has(file.path)) throw new Error('يوجد مسار مكرر ضمن حزمة الإصدار.');
     seenPaths.add(file.path);
     return { path: file.path, content: file.content };
-  }).sort((a, b) => a.path.localeCompare(b.path));
+  }).sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 
   const payload = {
     schemaVersion: 1,
