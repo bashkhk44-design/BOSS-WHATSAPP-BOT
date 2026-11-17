@@ -9,6 +9,7 @@ const { runSandboxTests } = require('./project-sandbox');
 const { validateDependencyPreflight } = require('./dependency-preflight');
 const { unpackVerifiedDependencies } = require('./offline-dependency-unpack');
 const { prepareRuntimeDependencyTree } = require('./runtime-dependency-tree');
+const { validateDesignMap } = require('./build-design-map');
 
 function validateManifest(manifest, packageData) {
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
@@ -78,7 +79,7 @@ function scanForEmbeddedSecrets(files) {
   return findings;
 }
 
-async function testProjectBundle({ bundle, dependencyArtifactDir }) {
+async function testProjectBundle({ bundle, dependencyArtifactDir, designArtifact }) {
   const checks = [];
   const add = (name, passed, details = '') => checks.push({ name, passed, details });
   let validated;
@@ -120,6 +121,24 @@ async function testProjectBundle({ bundle, dependencyArtifactDir }) {
     } catch (error) {
       add('package-json', false, error.message);
       return { passed: false, checks, summary: 'ملف package.json غير صالح.' };
+    }
+
+    if (designArtifact) {
+      try {
+        const mapFile = validated.files.find(file => file.path === 'boss-design-map.json');
+        if (!mapFile) throw new Error('الحزمة لا تحتوي على boss-design-map.json.');
+        const map = JSON.parse(mapFile.content);
+        const designContract = validateDesignMap({
+          map,
+          designArtifact,
+          files: validated.files
+        });
+        add('design-to-file-map', true,
+          designContract.mappedElements + ' design elements mapped to ' +
+          designContract.mappedFiles + ' generated files.');
+      } catch (error) {
+        add('design-to-file-map', false, error.message);
+      }
     }
 
     const lockFile = validated.files.find(file => file.path === 'package-lock.json');
@@ -249,6 +268,7 @@ async function testProjectBundle({ bundle, dependencyArtifactDir }) {
       sandbox.status !== 'failed';
     return {
       passed, checks, manifest: manifest || null, sandbox,
+      designFingerprint: designArtifact?.sourceFingerprint || null,
       summary: passed
         ? (sandbox.status === 'passed'
           ? 'نجحت الفحوص الأساسية واختبارات التشغيل المعزولة.'
