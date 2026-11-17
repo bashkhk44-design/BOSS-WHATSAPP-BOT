@@ -60,6 +60,21 @@ test('produces the same tree digest for identical dependency contents', t => {
   assert.equal(firstResult.directoryCount, secondResult.directoryCount);
 });
 
+test('canonical permissions keep identical dependency trees reproducible across umasks', t => {
+  const first = fixture(t);
+  const second = fixture(t);
+  fs.chmodSync(first.nodeModulesDir, 0o700);
+  fs.chmodSync(path.join(first.nodeModulesDir, 'demo'), 0o700);
+  fs.chmodSync(path.join(first.nodeModulesDir, 'demo', 'bin'), 0o700);
+  fs.chmodSync(path.join(first.nodeModulesDir, 'demo', 'package.json'), 0o600);
+  fs.chmodSync(path.join(first.nodeModulesDir, 'demo', 'index.js'), 0o600);
+  fs.chmodSync(path.join(first.nodeModulesDir, 'demo', 'bin', 'cli.js'), 0o600);
+  const firstResult = prepareRuntimeDependencyTree(first);
+  const secondResult = prepareRuntimeDependencyTree(second);
+  assert.equal(firstResult.treeSha256, secondResult.treeSha256);
+  assert.equal(fs.statSync(first.nodeModulesDir).mode & 0o777, 0o755);
+});
+
 test('tree digest changes when a dependency file changes', t => {
   const item = fixture(t, [{ name: 'demo', version: '1.0.0' }]);
   const before = computeDirectoryTreeDigest(item.nodeModulesDir).sha256;
