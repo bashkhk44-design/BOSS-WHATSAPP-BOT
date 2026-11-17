@@ -20,14 +20,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS client_projects_id_client_id_uq
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'telegram_bots_client_id_fk'
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'telegram_bots_client_id_fk'
+      AND conrelid = 'telegram_bots'::regclass
   ) THEN
     ALTER TABLE telegram_bots
       ADD CONSTRAINT telegram_bots_client_id_fk
       FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE RESTRICT;
   END IF;
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'telegram_bots_project_client_fk'
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'telegram_bots_project_client_fk'
+      AND conrelid = 'telegram_bots'::regclass
   ) THEN
     ALTER TABLE telegram_bots
       ADD CONSTRAINT telegram_bots_project_client_fk
@@ -100,7 +104,9 @@ CREATE TABLE IF NOT EXISTS platform_jobs (
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'platform_jobs_project_client_fk'
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'platform_jobs_project_client_fk'
+      AND conrelid = 'platform_jobs'::regclass
   ) THEN
     ALTER TABLE platform_jobs
       ADD CONSTRAINT platform_jobs_project_client_fk
