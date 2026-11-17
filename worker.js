@@ -15,6 +15,22 @@ function validateWorkerEnvironment(env = process.env) {
   if (!/^[0-9a-fA-F]{64}$/.test(env.BOTS_ENCRYPTION_KEY || '')) {
     throw new Error('BOTS_ENCRYPTION_KEY must be a 32-byte hex key');
   }
+  const integerSettings = [
+    ['WORKER_DB_POOL_MAX', 1, 20],
+    ['QUEUE_POLL_INTERVAL_MS', 100, 60000],
+    ['QUEUE_LEASE_SECONDS', 10, 86400]
+  ];
+  for (const [name, minimum, maximum] of integerSettings) {
+    const raw = env[name];
+    if (raw === undefined) continue;
+    if (!/^\d+$/.test(String(raw))) {
+      throw new Error(name + ' must be an integer between ' + minimum + ' and ' + maximum);
+    }
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+      throw new Error(name + ' must be an integer between ' + minimum + ' and ' + maximum);
+    }
+  }
   return true;
 }
 

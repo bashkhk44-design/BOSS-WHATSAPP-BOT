@@ -45,3 +45,33 @@ test('worker startup accepts uppercase hexadecimal encryption keys', () => {
     true
   );
 });
+
+test('worker startup rejects unsafe database pool and queue timing limits', () => {
+  const invalidSettings = [
+    ['WORKER_DB_POOL_MAX', '0'],
+    ['WORKER_DB_POOL_MAX', '21'],
+    ['WORKER_DB_POOL_MAX', '2.5'],
+    ['QUEUE_POLL_INTERVAL_MS', '99'],
+    ['QUEUE_POLL_INTERVAL_MS', '60001'],
+    ['QUEUE_POLL_INTERVAL_MS', 'fast'],
+    ['QUEUE_LEASE_SECONDS', '9'],
+    ['QUEUE_LEASE_SECONDS', '86401'],
+    ['QUEUE_LEASE_SECONDS', '10.5']
+  ];
+
+  for (const [name, value] of invalidSettings) {
+    assert.throws(
+      () => validateWorkerEnvironment({ ...validEnvironment, [name]: value }),
+      new RegExp(name + ' must be an integer')
+    );
+  }
+});
+
+test('worker startup accepts bounded integer database pool and queue timing limits', () => {
+  assert.equal(validateWorkerEnvironment({
+    ...validEnvironment,
+    WORKER_DB_POOL_MAX: '20',
+    QUEUE_POLL_INTERVAL_MS: '100',
+    QUEUE_LEASE_SECONDS: '86400'
+  }), true);
+});
