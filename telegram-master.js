@@ -611,7 +611,7 @@ bot.callbackQuery(/^settings:(main|database|security|services|gemini|gemini:test
 
   if (section === 'gemini') {
     const configured = Boolean(process.env.GEMINI_API_KEY);
-    const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+    const model = process.env.GEMINI_MODEL || process.env.GEMINI_FREE_MODEL || 'gemini-3.8-flash';
 
     const keyboard = new InlineKeyboard()
       .text('🧪 اختبار اتصال Gemini', 'settings:gemini:test')
