@@ -76,3 +76,43 @@ test('webhook ingress rejects invalid JSON and unsupported methods', async t => 
   const method = await request(port, { method: 'GET' });
   assert.equal(method.status, 405);
 });
+
+
+test('webhook ingress rejects non-integer, negative, and string update identifiers', async t => {
+  const queries = [];
+  const server = createTelegramWebhookServer({
+    pool: { async query(sql, params) { queries.push({ sql, params }); return { rowCount: 1, rows: [{ id: 1, job_id: 2 }] }; } },
+    resolveSecret: async () => 'test_secret_123',
+    logger: { error() {} }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const port = server.address().port;
+
+  for (const update of [
+    { update_id: -1 },
+    { update_id: 1.5 },
+    { update_id: '123' },
+    { update_id: Number.MAX_SAFE_INTEGER + 1 },
+    []
+  ]) {
+    const response = await request(port, { body: JSON.stringify(update) });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error, 'invalid_update');
+  }
+  assert.equal(queries.length, 0);
+});
+
+test('webhook ingress rejects oversized request bodies', async t => {
+  const server = createTelegramWebhookServer({
+    pool: { async query() { assert.fail('oversized request must not reach database'); } },
+    resolveSecret: async () => 'test_secret_123',
+    maxBodyBytes: 1024,
+    logger: { error() {} }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const response = await request(server.address().port, { body: JSON.stringify({ update_id: 1, text: 'x'.repeat(2048) }) });
+  assert.equal(response.status, 413);
+  assert.equal(response.body.error, 'payload_too_large');
+});
