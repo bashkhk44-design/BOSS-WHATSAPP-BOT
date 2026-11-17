@@ -8,9 +8,19 @@ const { decryptToken } = require('./db');
 const { createQueueWorker } = require('./queue-worker');
 const { createTelegramUpdateHandler } = require('./telegram-update-handler');
 
+function validateWorkerEnvironment(env = process.env) {
+  if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+  if (!/^postgres(?:ql)?:\\/\\//i.test(env.DATABASE_URL)) {
+    throw new Error('DATABASE_URL must use the PostgreSQL protocol');
+  }
+  if (!/^[0-9a-fA-F]{64}$/.test(env.BOTS_ENCRYPTION_KEY || '')) {
+    throw new Error('BOTS_ENCRYPTION_KEY must be a 32-byte hex key');
+  }
+  return true;
+}
+
 async function main() {
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-  if (!process.env.BOTS_ENCRYPTION_KEY) throw new Error('BOTS_ENCRYPTION_KEY is required for Telegram update processing');
+  validateWorkerEnvironment();
 
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -68,4 +78,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main };
+module.exports = { main, validateWorkerEnvironment };
