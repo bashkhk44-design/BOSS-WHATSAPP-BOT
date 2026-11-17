@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/ai-suite-hardening
+      - foundation/durable-queue-workers-v1
   pull_request:
     branches:
       - audit-hardening
@@ -29,3 +30,95 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Run AI quality tests
         run: npm test
+
+  database-migration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: boss
+          POSTGRES_PASSWORD: boss_test_password
+          POSTGRES_DB: boss_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U boss -d boss_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://boss:boss_test_password@localhost:5432/boss_test
+      DATABASE_SSL: disable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Create pre-existing application schema
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE TABLE clients (
+            id BIGSERIAL PRIMARY KEY,
+            telegram_user_id BIGINT NOT NULL UNIQUE
+          );
+          CREATE TABLE client_projects (
+            id BIGSERIAL PRIMARY KEY,
+            client_id BIGINT NOT NULL REFERENCES clients(id) ON DELETE CASCADE
+          );
+          CREATE TABLE telegram_bots (
+            id BIGSERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            username TEXT,
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );
+          INSERT INTO clients (telegram_user_id) VALUES (10001);
+          INSERT INTO client_projects (client_id) VALUES (1);
+          INSERT INTO telegram_bots (name, username) VALUES ('fixture bot', 'fixture_bot');
+          SQL
+      - name: Apply migration from a clean database
+        run: npm run db:migrate
+      - name: Verify migration is idempotent
+        run: npm run db:migrate
+      - name: Exercise real PostgreSQL queue operations
+        run: node --test test/platform-queue.integration.test.js
+      - name: Verify schema, constraints, and preserved rows
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          DECLARE
+            migration_count INTEGER;
+            bot_count INTEGER;
+            table_count INTEGER;
+            ownership_constraint_count INTEGER;
+          BEGIN
+            SELECT COUNT(*) INTO migration_count
+              FROM schema_migrations WHERE version = '001_foundation_database';
+            SELECT COUNT(*) INTO bot_count FROM telegram_bots;
+            SELECT COUNT(*) INTO table_count
+              FROM information_schema.tables
+              WHERE table_schema = 'public'
+                AND table_name IN (
+                  'bot_runtime_status', 'bot_inbound_updates',
+                  'platform_jobs', 'ai_usage', 'platform_audit_logs'
+                );
+            SELECT COUNT(*) INTO ownership_constraint_count
+              FROM pg_constraint
+              WHERE conname IN (
+                'telegram_bots_project_requires_client',
+                'platform_jobs_project_requires_client',
+                'ai_usage_project_requires_client',
+                'platform_audit_project_requires_client'
+              );
+            IF migration_count <> 1 OR bot_count <> 1 OR table_count <> 5
+               OR ownership_constraint_count <> 4 THEN
+              RAISE EXCEPTION 'Migration verification failed: migrations %, bots %, tables %, ownership checks %',
+                migration_count, bot_count, table_count, ownership_constraint_count;
+            END IF;
+          END $$;
+          SQL

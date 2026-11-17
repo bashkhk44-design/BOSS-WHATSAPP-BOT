@@ -61,7 +61,7 @@ function createMigrationRunner({
           }
 
           const sql = fsApi.readFileSync(path.join(migrationsDir, filename), 'utf8');
-          if (!/^\s*BEGIN\s*;/i.test(sql) || !/\bCOMMIT\s*;\s*$/i.test(sql)) {
+          if (!/^\s*(?:--[^\r\n]*(?:\r?\n|$)\s*)*BEGIN\s*;/i.test(sql) || !/\bCOMMIT\s*;\s*$/i.test(sql)) {
             throw new Error(`Migration ${filename} must contain a transaction ending in COMMIT;`);
           }
 
@@ -106,7 +106,7 @@ async function main() {
   const { Pool } = require('pg');
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false },
     max: 1,
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 10000
