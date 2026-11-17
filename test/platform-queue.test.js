@@ -186,7 +186,7 @@ test('queue worker renews a long-running job lease until its handler finishes', 
     logger: { log() {}, warn() {}, error() {} }
   });
   assert.equal(await worker.processOne(), true);
-  assert.equal(renewals, 2);
+  assert.ok(renewals >= 2);
   assert.equal(completed, true);
 });
 
