@@ -136,7 +136,11 @@ function runSandboxTests({
   requiredAcceptanceTests = [], spawn = spawnSync
 }) {
   if (!hasProjectTests(files || [])) {
-    return { status: 'skipped', passed: null, reason: 'No project test files were supplied.' };
+    return {
+      status: 'skipped', executionStatus: 'not_started',
+      repairable: false, passed: null,
+      reason: 'No project test files were supplied.'
+    };
   }
   const built = buildSandboxArgs({ projectDir, image, timeoutMs, runtimeNodeModulesDir });
   if (runtimeNodeModulesDir) ensureRuntimeMountPoint(projectDir);
