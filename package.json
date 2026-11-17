@@ -6,7 +6,8 @@
   "scripts": {
     "test": "node --test",
     "start": "node host.js",
-    "start:cloud": "node host.js"
+    "start:cloud": "node host.js",
+    "db:migrate": "node migrations/runner.js"
   },
   "keywords": [],
   "type": "commonjs",
