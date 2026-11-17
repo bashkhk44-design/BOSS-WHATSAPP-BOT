@@ -272,6 +272,10 @@ async function testProjectBundle({ bundle, dependencyArtifactDir, designArtifact
       else add('sandbox-runtime-tests', false,
         sandbox.reason || 'لم يتم تنفيذ اختبارات فعلية داخل بيئة معزولة.');
     }
+    if (!checks.some(check => check.name === 'sandbox-runtime-tests')) {
+      add('sandbox-runtime-tests', false,
+        'التشغيل المعزول غير مفعّل؛ لا يمكن اعتبار المشروع مجتازاً دون تنفيذ الاختبارات.');
+    }
 
     const passed = syntaxPassed && jsonPassed && checks.every(check => check.passed) &&
       sandbox.status === 'passed';
