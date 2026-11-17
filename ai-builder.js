@@ -110,12 +110,12 @@ async function buildProject({ project, analysis, design }) {
     'المصدر الوحيد للميزات هو designArtifact ومراجعه إلى approved source requirements.',
     'لا تضف ميزة أو تكاملاً أو دوراً أو سياسة غير موجودة في التصميم المعتمد.',
     'يجب تنفيذ كل عنصر في designArtifact وربطه بملف واحد أو أكثر موجود فعلياً في الحزمة.',
-    'لكل acceptanceTest أنشئ حالة اختبار Node.js فعلية باستخدام node:test، واربطها في testCases بملف الاختبار واسم يبدأ حرفياً بالعلامة [BOSS_ACCEPTANCE:<designId>]. لا تكتفِ بكتابة وصف أو اختبار فارغ؛ اختبر السلوك المتوقع في acceptanceTest قدر الإمكان من خلال واجهات المشروع. جميع هذه الحالات ستنفذ داخل sandbox معزول.'
+    'لكل acceptanceTest أنشئ حالة اختبار Node.js فعلية باستخدام node:test، واربطها في testCases بملف الاختبار واسم يبدأ حرفياً بالعلامة [BOSS_ACCEPTANCE:<designId>]. لا تكتفِ بكتابة وصف أو اختبار فارغ؛ اختبر السلوك المتوقع في acceptanceTest قدر الإمكان من خلال واجهات المشروع. جميع هذه الحالات ستنفذ داخل sandbox معزول.',
     'أنشئ boss-design-map.json مطابقاً تماماً للشكل التالي، مع mapping واحد لكل عنصر تصميم، بما في ذلك flow وstep وstate وtransition وmessage وbutton وerrorState وacceptanceTest:',
     JSON.stringify(mappingExample, null, 2),
     'استخدم أسماء designType وdesignId ومراجع requirementRefs كما هي تماماً في التصميم؛ لا تخترع أو تحذف أي عنصر.',
     'filePaths يجب أن تشير إلى ملفات موجودة فعلياً ضمن files، ولا تشر إلى boss-design-map.json نفسه.',
-    'لكل mapping من النوع acceptanceTest أضف testCases: [{filePath, testName}]؛ يجب أن يكون الملف ضمن test/ أو tests/ أو ملفاً منتهياً بـ .test.js/.spec.js/.test.cjs/.spec.cjs/.test.mjs/.spec.mjs، وأن يكون ضمن filePaths، وأن يبدأ testName بالعلامة [BOSS_ACCEPTANCE:<designId>].'
+    'لكل mapping من النوع acceptanceTest أضف testCases: [{filePath, testName}]؛ يجب أن يكون الملف ضمن test/ أو tests/ أو ملفاً منتهياً بـ .test.js/.spec.js/.test.cjs/.spec.cjs/.test.mjs/.spec.mjs، وأن يكون ضمن filePaths، وأن يبدأ testName بالعلامة [BOSS_ACCEPTANCE:<designId>].',
     'يجب أن تطابق schemaVersion وspecVersion وsourceFingerprint التصميم المعتمد دون تغيير.',
     'لا تضع مفاتيح API أو كلمات مرور أو أسراراً داخل الملفات. استخدم متغيرات البيئة.',
     'لا تنشئ ملفات .env أو node_modules أو .git.',
