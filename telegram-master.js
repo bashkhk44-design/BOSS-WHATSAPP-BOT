@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const { Bot, Keyboard, InlineKeyboard } = require('grammy');
+const { isPrivateAdmin } = require('./telegram-admin-auth');
 const {
   pool,
   initDatabase,
@@ -53,7 +54,7 @@ const bot = new Bot(token, { client: { timeoutSeconds: 45 } });
 const pendingAdds = new Map();
 
 function isAdmin(ctx) {
-  return ctx.from && String(ctx.from.id) === String(adminId);
+  return isPrivateAdmin(ctx, adminId);
 }
 
 function designKeyboard(projectId) {
