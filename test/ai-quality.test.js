@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { validateBundle } = require('../ai-builder');
 const { validateManifest, scanForEmbeddedSecrets, testProjectBundle } = require('../ai-tester');
-const { providers } = require('../ai-router');
+const { providers, getGeminiModel } = require('../ai-router');
 
 function validBundle() {
   return {
@@ -96,7 +96,16 @@ test('alternative AI providers require explicit opt-in', () => {
     delete process.env.AI_ENABLE_OPENROUTER;
 
     assert.deepEqual(providers().map(provider => provider.id), ['gemini']);
-    assert.equal(providers()[0].model, 'gemini-3.8-flash');
+    assert.equal(getGeminiModel(), 'gemini-3.8-flash');
+    assert.equal(providers()[0].model, getGeminiModel());
+
+    delete process.env.GEMINI_MODEL;
+    process.env.GEMINI_FREE_MODEL = 'gemini-3.8-flash';
+    assert.equal(getGeminiModel(), 'gemini-3.8-flash');
+
+    process.env.GEMINI_MODEL = 'gemini-3.8-flash';
+    process.env.GEMINI_FREE_MODEL = 'unsupported-model';
+    assert.equal(getGeminiModel(), 'gemini-3.8-flash');
 
     process.env.GEMINI_MODEL = 'unsupported-model';
     assert.equal(providers()[0].model, 'gemini-3.8-flash');
