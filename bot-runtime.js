@@ -20,6 +20,7 @@ function createBotRuntime({
   const runningBots = new Map();
   let runtimeStopping = false;
   let warnedStatusTable = false;
+  let statusPersistenceFailureNotified = false;
 
   async function persistStatus(state) {
     try {
@@ -54,7 +55,8 @@ function createBotRuntime({
         warnedStatusTable = true;
         logger.error('BOT RUNTIME STATUS PERSISTENCE UNAVAILABLE:', error.message);
       }
-      if (typeof onStatusPersistError === 'function') {
+      if (!statusPersistenceFailureNotified && typeof onStatusPersistError === 'function') {
+        statusPersistenceFailureNotified = true;
         try { onStatusPersistError(error); } catch (callbackError) {
           logger.error('BOT RUNTIME STATUS FAILURE HANDLER ERROR:', callbackError.message);
         }
