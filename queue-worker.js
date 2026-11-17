@@ -63,7 +63,7 @@ function createQueueWorker({
             logger.error(`Job lease heartbeat failed: ${job.id}: ${error.message}`);
           })
           .finally(() => { heartbeatInFlight = null; });
-      }, leaseRenewalIntervalMs);
+      }, heartbeatIntervalMs);
       if (typeof heartbeatTimer.unref === 'function') heartbeatTimer.unref();
     }
 
