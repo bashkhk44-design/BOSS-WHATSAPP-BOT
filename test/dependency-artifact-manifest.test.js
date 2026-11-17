@@ -35,6 +35,18 @@ test('builds a deterministic manifest after verifying the npm integrity hash', (
     crypto.createHash('sha256').update(f.bytes).digest('hex'));
 });
 
+test('parses multiple SRI tokens and rejects digest lengths that do not match the algorithm', () => {
+  const f = fixture();
+  const sha256 = crypto.createHash('sha256').update(f.bytes).digest('base64');
+  const sha512 = crypto.createHash('sha512').update(f.bytes).digest('base64');
+  const lockData = structuredClone(f.lockData);
+  lockData.packages['node_modules/is-number'].integrity = 'sha256-' + sha256 + ' sha512-' + sha512;
+  assert.equal(buildVerifiedDependencyManifest({ ...f, lockData }).packageCount, 1);
+
+  lockData.packages['node_modules/is-number'].integrity = 'sha512-' + Buffer.from('short').toString('base64');
+  assert.throws(() => buildVerifiedDependencyManifest({ ...f, lockData }), /Malformed integrity digest/);
+});
+
 test('rejects missing, unexpected, and modified tarballs', () => {
   const f = fixture();
   assert.throws(() => buildVerifiedDependencyManifest({ ...f, tarballs: {} }), /Missing tarball/);
