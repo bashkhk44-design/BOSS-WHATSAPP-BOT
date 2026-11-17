@@ -107,6 +107,7 @@ const integrationTest = test('PostgreSQL queue integration: idempotency, claims,
     assert.equal(repeated.duplicate, true);
   } finally {
     if (botId) {
+      await pool.query('DELETE FROM platform_jobs WHERE bot_id = $1', [botId]);
       await pool.query('DELETE FROM platform_jobs WHERE idempotency_key = ANY($1::text[])', [keys]);
       await pool.query('DELETE FROM bot_inbound_updates WHERE bot_id = $1', [botId]);
       await pool.query('DELETE FROM telegram_bots WHERE id = $1', [botId]);
