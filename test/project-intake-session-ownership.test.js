@@ -91,6 +91,7 @@ test('new intake reuses an existing session only after its project ownership is 
     if (sql.includes('SELECT s.project_id, s.step, s.data')) {
       return { rowCount: 1, rows: [validSession] };
     }
+    if (sql.trim() === 'BEGIN' || sql.trim() === 'COMMIT') return { rowCount: 0, rows: [] };
     assert.fail('valid owned session should return without creating or deleting records');
   });
   const loaded = loadProjectDbWithPool(pool);
