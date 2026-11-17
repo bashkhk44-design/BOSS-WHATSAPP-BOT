@@ -325,6 +325,7 @@ function validTarget(target, release) {
     /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(target.provider) &&
     typeof target.serviceId === 'string' &&
     target.serviceId.trim().length > 0 &&
+    target.serviceId === target.serviceId.trim() &&
     target.serviceId.length <= 200 &&
     ['staging', 'production'].includes(target.environment) &&
     target.confirmed === true &&
@@ -332,7 +333,8 @@ function validTarget(target, release) {
 }
 
 function validRollbackRelease(rollbackRelease, release) {
-  if (!rollbackRelease || String(rollbackRelease.id) === String(release?.id) ||
+  if (!rollbackRelease || !/^\\d+$/.test(String(rollbackRelease.id || '')) ||
+      String(rollbackRelease.id) === String(release?.id) ||
       String(rollbackRelease.project_id) !== String(release?.project_id) ||
       rollbackRelease.status !== 'approved' ||
       !/^[a-f0-9]{64}$/.test(String(rollbackRelease.artifact_sha256 || '')) ||
@@ -443,11 +445,23 @@ function runDeploymentPreflight({
   add('health_check', probe.passed,
     probe.evidence + (probe.healthStatus ? ' HTTP ' + probe.healthStatus + '.' : ''));
 
+  const authorizationDigestValid = Boolean(authorization && release &&
+    authorization.authorization_sha256 === computeDeploymentAuthorizationDigest({
+      release,
+      authorizedBy: authorization.authorized_by
+    }));
+  const executionApprovalDigestValid = Boolean(executionApproval &&
+    executionApproval.approvalSha256 === computeExecutionApprovalDigest(executionApproval));
+
   const readiness = evaluateDeploymentReadiness({
     release,
-    authorization,
+    authorization: authorizationDigestValid
+      ? authorization
+      : { ...authorization, status: 'invalid' },
     target,
-    executionApproval,
+    executionApproval: executionApprovalDigestValid
+      ? executionApproval
+      : { ...executionApproval, status: 'invalid' },
     checks
   });
 
