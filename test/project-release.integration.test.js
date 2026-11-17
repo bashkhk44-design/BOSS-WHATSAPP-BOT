@@ -12,6 +12,7 @@ test('PostgreSQL release handoff enforces customer then manager approval and imm
   const managerTelegramId = '10001';
 
   try {
+    await pool.query('ALTER TABLE clients ADD COLUMN IF NOT EXISTS first_name TEXT');
     await pool.query('ALTER TABLE client_projects ADD COLUMN IF NOT EXISTS name TEXT');
     await pool.query("ALTER TABLE client_projects ADD COLUMN IF NOT EXISTS business_type TEXT");
     await pool.query("ALTER TABLE client_projects ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'spec_approved'");
