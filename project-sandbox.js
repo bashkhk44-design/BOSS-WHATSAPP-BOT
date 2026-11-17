@@ -68,7 +68,9 @@ function verifyAcceptanceTestCases(output, cases) {
   const lines = String(output || '').split(/\r?\n/);
   const results = [];
   for (const item of cases) {
-    if (!item || typeof item.marker !== 'string' || !item.marker.startsWith('[BOSS_ACCEPTANCE:')) {
+    if (!item || typeof item.marker !== 'string' ||
+        !item.marker.startsWith('[BOSS_ACCEPTANCE:') ||
+        typeof item.testName !== 'string' || !item.testName.startsWith(item.marker)) {
       throw new Error('Invalid approved acceptance test marker.');
     }
     const matching = lines.filter(line =>
