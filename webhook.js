@@ -6,13 +6,20 @@ const { Pool } = require('pg');
 const { deriveTelegramWebhookSecret } = require('./telegram-webhook-secret');
 const { createTelegramWebhookServer } = require('./telegram-webhook-server');
 
+function getWebhookSslConfig(env = process.env) {
+  return env.DATABASE_SSL === 'disable' ? false : true;
+}
+
 function validateWebhookEnvironment(env = process.env) {
   if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-  if (!/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL)) {
+  if (!/^postgres(?:ql)?:\\/\\//i.test(env.DATABASE_URL)) {
     throw new Error('DATABASE_URL must use the PostgreSQL protocol');
   }
   if (!/^[0-9a-fA-F]{64}$/.test(env.BOTS_ENCRYPTION_KEY || '')) {
     throw new Error('BOTS_ENCRYPTION_KEY must be a 32-byte hex key');
+  }
+  if (env.DATABASE_SSL !== undefined && !['require', 'disable'].includes(env.DATABASE_SSL)) {
+    throw new Error('DATABASE_SSL must be either require or disable');
   }
   return true;
 }
@@ -23,7 +30,7 @@ async function main() {
   const { decryptToken } = require('./db');
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false },
+    ssl: getWebhookSslConfig(),
     max: Number(process.env.WEBHOOK_DB_POOL_MAX || 5),
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000
@@ -77,4 +84,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, validateWebhookEnvironment };
+module.exports = { main, validateWebhookEnvironment, getWebhookSslConfig };
