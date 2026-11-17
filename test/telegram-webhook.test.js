@@ -161,7 +161,7 @@ test('webhook server applies bounded header and request timeouts', () => {
   });
   assert.equal(server.headersTimeout, 2000);
   assert.equal(server.requestTimeout, 5000);
-  server.close();
+  // The server is intentionally not listening in this configuration-only test.
 });
 
 test('webhook server rejects invalid timeout configuration', () => {
