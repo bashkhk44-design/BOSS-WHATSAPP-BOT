@@ -141,38 +141,58 @@ async function getBots() {
   return result.rows;
 }
 
-async function showBots(ctx) {
+async function showBots(ctx, requestedPage = 0) {
   const bots = await getBots();
   if (!bots.length) return ctx.reply('🤖 لا توجد بوتات مسجلة حالياً.');
 
-  await ctx.reply('🤖 إدارة البوتات\nاختر إجراءً لكل بوت. الحالة التشغيلية أدناه من عامل التشغيل، وليست من حقل التفعيل فقط.');
-  for (const b of bots) {
+  const pageSize = 10;
+  const pageCount = Math.max(1, Math.ceil(bots.length / pageSize));
+  const page = Math.min(Math.max(0, Number(requestedPage) || 0), pageCount - 1);
+  const visible = bots.slice(page * pageSize, (page + 1) * pageSize);
+  const statusLabels = {
+    running: '🟢 يعمل',
+    starting: '🟡 يبدأ',
+    retrying: '🟠 يعيد',
+    stopped: '🔴 متوقف',
+    conflict: '⛔ تعارض',
+    unauthorized: '⛔ Token',
+    error: '❌ خطأ',
+    not_loaded: '⚪ غير محمّل'
+  };
+  const keyboard = new InlineKeyboard();
+  const lines = [
+    '🤖 إدارة البوتات',
+    'الصفحة: ' + (page + 1) + '/' + pageCount + ' | الإجمالي: ' + bots.length,
+    'الحالة التشغيلية من runtime، وليست مجرد حالة التفعيل.',
+    ''
+  ];
+
+  for (const b of visible) {
     const runtimeStatus = getBotRuntimeStatus(b.id);
-    const statusLabels = {
-      running: '🟢 يعمل',
-      starting: '🟡 يبدأ التشغيل',
-      retrying: '🟠 يعيد المحاولة',
-      stopped: '🔴 متوقف',
-      conflict: '⛔ تعارض polling',
-      unauthorized: '⛔ Token غير صالح',
-      error: '❌ خطأ',
-      not_loaded: '⚪ غير محمّل'
-    };
-    const keyboard = new InlineKeyboard();
-    if (b.active) {
-      keyboard.text('⏹ إيقاف', 'bot:stop:' + b.id).text('🔄 إعادة تشغيل', 'bot:restart:' + b.id);
-    } else {
-      keyboard.text('▶️ تشغيل', 'bot:start:' + b.id);
-    }
-    await ctx.reply(
-      '🤖 ' + b.name + '\n' +
-      'المعرف: ' + b.id + '\n' +
-      'الحساب: ' + (b.username ? '@' + b.username : 'غير معروف') + '\n' +
-      'التفعيل: ' + (b.active ? 'مفعّل' : 'معطّل') + '\n' +
-      'التشغيل: ' + (statusLabels[runtimeStatus] || runtimeStatus),
-      { reply_markup: keyboard }
+    lines.push(
+      '#' + b.id + ' ' + b.name +
+      (b.username ? ' (@' + b.username + ')' : '') +
+      '\\n' + (statusLabels[runtimeStatus] || runtimeStatus) +
+      ' | ' + (b.active ? 'مفعّل' : 'معطّل')
     );
+    if (b.active) {
+      keyboard.text('⏹ #' + b.id, 'bot:stop:' + b.id)
+        .text('🔄', 'bot:restart:' + b.id).row();
+    } else {
+      keyboard.text('▶️ #' + b.id, 'bot:start:' + b.id).row();
+    }
   }
+
+  if (pageCount > 1) {
+    if (page > 0) keyboard.text('⬅️ السابق', 'bots:page:' + (page - 1));
+    if (page < pageCount - 1) keyboard.text('التالي ➡️', 'bots:page:' + (page + 1));
+  }
+
+  const message = lines.join('\\n');
+  if (ctx.callbackQuery) {
+    return ctx.editMessageText(message, { reply_markup: keyboard });
+  }
+  return ctx.reply(message, { reply_markup: keyboard });
 }
 
 async function showStats(ctx) {
@@ -218,6 +238,12 @@ bot.command('bots', async (ctx) => {
 bot.command('stats', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply('⛔ غير مصرح لك.');
   await showStats(ctx);
+});
+
+bot.callbackQuery(/^bots:page:(\\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  await ctx.answerCallbackQuery();
+  return showBots(ctx, Number(ctx.match[1]));
 });
 
 bot.callbackQuery(/^bot:(start|stop|restart):(\d+)$/, async (ctx) => {
