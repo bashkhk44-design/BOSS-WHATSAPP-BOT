@@ -258,6 +258,7 @@ module.exports = {
   enqueuePlatformJob,
   normalizeJobTypes,
   claimPlatformJob,
+  renewPlatformJobLease,
   completePlatformJob,
   failPlatformJob,
   recoverExpiredPlatformJobs,
