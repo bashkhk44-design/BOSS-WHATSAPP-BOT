@@ -12,7 +12,8 @@ function getWebhookSslConfig(env = process.env) {
 
 function validateWebhookEnvironment(env = process.env) {
   if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-  if (!/^postgres(?:ql)?:\\/\\//i.test(env.DATABASE_URL)) {
+  if (!env.DATABASE_URL.toLowerCase().startsWith('postgres://') &&
+      !env.DATABASE_URL.toLowerCase().startsWith('postgresql://')) {
     throw new Error('DATABASE_URL must use the PostgreSQL protocol');
   }
   if (!/^[0-9a-fA-F]{64}$/.test(env.BOTS_ENCRYPTION_KEY || '')) {
