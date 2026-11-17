@@ -93,7 +93,7 @@ async function buildProject({ project, analysis, design }) {
       designId: item.designId,
       requirementRefs: item.requirementRefs,
       filePaths: item.designType === 'acceptanceTest'
-        ? ['test/acceptance.test.js']
+        ? ['src/feature.js', 'test/acceptance.test.js']
         : ['src/feature.js'],
       ...(item.designType === 'acceptanceTest'
         ? { testCases: [{
@@ -115,7 +115,7 @@ async function buildProject({ project, analysis, design }) {
     JSON.stringify(mappingExample, null, 2),
     'استخدم أسماء designType وdesignId ومراجع requirementRefs كما هي تماماً في التصميم؛ لا تخترع أو تحذف أي عنصر.',
     'filePaths يجب أن تشير إلى ملفات موجودة فعلياً ضمن files، ولا تشر إلى boss-design-map.json نفسه.',
-    'لكل mapping من النوع acceptanceTest أضف testCases: [{filePath, testName}]؛ يجب أن يكون الملف ضمن test/ أو tests/ أو ملفاً منتهياً بـ .test.js/.spec.js/.test.cjs/.spec.cjs/.test.mjs/.spec.mjs، وأن يكون ضمن filePaths، وأن يبدأ testName بالعلامة [BOSS_ACCEPTANCE:<designId>].',
+    'لكل mapping من النوع acceptanceTest أضف testCases: [{filePath, testName}]؛ يجب أن يكون الملف داخل مجلد test/ أو tests/، وأن يكون ضمن filePaths، وأن ينتهي بـ .test.js/.spec.js/.test.cjs/.spec.cjs/.test.mjs/.spec.mjs، وأن يبدأ testName بالعلامة [BOSS_ACCEPTANCE:<designId>]. اربط mapping أيضاً بملف التنفيذ الفعلي.',
     'يجب أن تطابق schemaVersion وspecVersion وsourceFingerprint التصميم المعتمد دون تغيير.',
     'لا تضع مفاتيح API أو كلمات مرور أو أسراراً داخل الملفات. استخدم متغيرات البيئة.',
     'لا تنشئ ملفات .env أو node_modules أو .git.',
