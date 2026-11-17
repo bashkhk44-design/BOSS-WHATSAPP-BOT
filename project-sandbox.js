@@ -36,6 +36,26 @@ function validateRuntimeNodeModules(runtimeNodeModulesDir) {
   return resolved;
 }
 
+function ensureRuntimeMountPoint(projectDir) {
+  const mountPoint = path.join(projectDir, 'node_modules');
+  let stat;
+  try {
+    stat = fs.lstatSync(mountPoint);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    fs.mkdirSync(mountPoint, { mode: 0o755 });
+    stat = fs.lstatSync(mountPoint);
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error('Project node_modules mount point must be a real directory.');
+  }
+  if (fs.readdirSync(mountPoint).length > 0) {
+    throw new Error('Project bundle must not contain files in node_modules; verified dependencies use this mount point.');
+  }
+  fs.chmodSync(mountPoint, 0o755);
+  return mountPoint;
+}
+
 function buildSandboxArgs({ projectDir, image, timeoutMs = DEFAULT_TIMEOUT_MS, runtimeNodeModulesDir }) {
   if (typeof projectDir !== 'string' || !path.isAbsolute(projectDir) ||
       !fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
@@ -72,6 +92,7 @@ function runSandboxTests({
     return { status: 'skipped', passed: null, reason: 'No project test files were supplied.' };
   }
   const built = buildSandboxArgs({ projectDir, image, timeoutMs, runtimeNodeModulesDir });
+  if (runtimeNodeModulesDir) ensureRuntimeMountPoint(projectDir);
   const result = spawn('docker', built.args, {
     encoding: 'utf8',
     timeout: built.timeout,
@@ -96,4 +117,4 @@ function runSandboxTests({
   };
 }
 
-module.exports = { validateSandboxImage, validateRuntimeNodeModules, hasProjectTests, buildSandboxArgs, runSandboxTests };
+module.exports = { validateSandboxImage, validateRuntimeNodeModules, ensureRuntimeMountPoint, hasProjectTests, buildSandboxArgs, runSandboxTests };
