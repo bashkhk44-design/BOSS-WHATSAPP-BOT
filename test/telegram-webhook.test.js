@@ -5,7 +5,13 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const { createTelegramWebhookServer } = require('../telegram-webhook-server');
 
-function request(port, { method = 'POST', path = '/telegram/webhook/12', secret = 'test_secret_123', body = '{}' } = {}) {
+function request(port, {
+  method = 'POST',
+  path = '/telegram/webhook/12',
+  secret = 'test_secret_123',
+  body = '{}',
+  contentType = 'application/json'
+} = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request({
       host: '127.0.0.1',
@@ -13,7 +19,7 @@ function request(port, { method = 'POST', path = '/telegram/webhook/12', secret 
       path,
       method,
       headers: {
-        'content-type': 'application/json',
+        'content-type': contentType,
         'x-telegram-bot-api-secret-token': secret,
         'content-length': Buffer.byteLength(body)
       }
@@ -77,7 +83,6 @@ test('webhook ingress rejects invalid JSON and unsupported methods', async t => 
   assert.equal(method.status, 405);
 });
 
-
 test('webhook ingress rejects non-integer, negative, and string update identifiers', async t => {
   const queries = [];
   const server = createTelegramWebhookServer({
@@ -112,7 +117,58 @@ test('webhook ingress rejects oversized request bodies', async t => {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  const response = await request(server.address().port, { body: JSON.stringify({ update_id: 1, text: 'x'.repeat(2048) }) });
+  const response = await request(server.address().port, {
+    body: JSON.stringify({ update_id: 1, text: 'x'.repeat(2048) })
+  });
   assert.equal(response.status, 413);
   assert.equal(response.body.error, 'payload_too_large');
+});
+
+test('webhook ingress rejects non-JSON content types before database access', async t => {
+  const server = createTelegramWebhookServer({
+    pool: { async query() { assert.fail('unsupported media type must not reach database'); } },
+    resolveSecret: async () => 'test_secret_123',
+    logger: { error() {} }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const response = await request(server.address().port, { contentType: 'text/plain' });
+  assert.equal(response.status, 415);
+  assert.equal(response.body.error, 'unsupported_media_type');
+});
+
+test('webhook ingress accepts JSON content type parameters', async t => {
+  const server = createTelegramWebhookServer({
+    pool: { async query() { return { rowCount: 1, rows: [{ id: 1, job_id: 2 }] }; } },
+    resolveSecret: async () => 'test_secret_123',
+    logger: { error() {} }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const response = await request(server.address().port, {
+    contentType: 'application/json; charset=utf-8',
+    body: JSON.stringify({ update_id: 4 })
+  });
+  assert.equal(response.status, 200);
+});
+
+test('webhook server applies bounded header and request timeouts', () => {
+  const server = createTelegramWebhookServer({
+    pool: { async query() {} },
+    resolveSecret: async () => 'test_secret_123',
+    headersTimeoutMs: 2000,
+    requestTimeoutMs: 5000
+  });
+  assert.equal(server.headersTimeout, 2000);
+  assert.equal(server.requestTimeout, 5000);
+  // The server is intentionally not listening in this configuration-only test.
+});
+
+test('webhook server rejects invalid timeout configuration', () => {
+  assert.throws(() => createTelegramWebhookServer({
+    pool: { async query() {} },
+    resolveSecret: async () => 'test_secret_123',
+    headersTimeoutMs: 5000,
+    requestTimeoutMs: 4000
+  }), /requestTimeoutMs must be at least headersTimeoutMs/);
 });
