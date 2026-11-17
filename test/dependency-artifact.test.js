@@ -36,6 +36,7 @@ function makeFixture() {
 
 function removeTree(dir) {
   if (!fs.existsSync(dir)) return;
+  try { fs.chmodSync(dir, 0o700); } catch {}
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const target = path.join(dir, entry.name);
     if (entry.isDirectory()) removeTree(target);
@@ -44,7 +45,6 @@ function removeTree(dir) {
       fs.rmSync(target, { force: true });
     }
   }
-  try { fs.chmodSync(dir, 0o700); } catch {}
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
