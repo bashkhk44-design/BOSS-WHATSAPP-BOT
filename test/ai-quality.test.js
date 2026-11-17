@@ -143,3 +143,49 @@ test('AI intake fallback collects requirements one question at a time without AI
   assert.equal(state.data.description, 'متجر على تيليغرام');
   assert.equal(state.data.features, 'عرض المنتجات واستقبال الطلبات');
 });
+
+
+test('AI fallback preserves the message that triggered provider failure', () => {
+  const state = advanceFallbackIntake(
+    { projectName: 'مطعم مرهف', businessType: 'restaurant', platform: 'telegram' },
+    'نظام طلبات طعام مع التوصيل'
+  );
+
+  assert.equal(state.data.description, 'نظام طلبات طعام مع التوصيل');
+  assert.equal(state.data.projectName, 'مطعم مرهف');
+  assert.equal(state.data.businessType, 'restaurant');
+  assert.equal(state.data.fallbackField, 'features');
+  assert.match(state.assistantMessage, /أهم الميزات/);
+});
+
+test('AI fallback skips already collected fields and never overwrites them', () => {
+  const state = advanceFallbackIntake(
+    {
+      aiFallback: true,
+      fallbackField: 'description',
+      description: 'وصف محفوظ من المحلل',
+      features: 'ميزات محفوظة من المحلل'
+    },
+    'أزرار قائمة الطعام والسلة وتتبع الطلب'
+  );
+
+  assert.equal(state.data.description, 'وصف محفوظ من المحلل');
+  assert.equal(state.data.features, 'ميزات محفوظة من المحلل');
+  assert.equal(state.data.buttons, 'أزرار قائمة الطعام والسلة وتتبع الطلب');
+  assert.equal(state.data.fallbackField, 'payments');
+});
+
+test('AI fallback can finish immediately when all required sections are already present', () => {
+  const state = advanceFallbackIntake({
+    description: 'وصف',
+    features: 'ميزات',
+    buttons: 'أزرار',
+    payments: 'لا يوجد',
+    languagesDesign: 'العربية',
+    extra: 'لا يوجد'
+  });
+
+  assert.equal(state.readyForReview, true);
+  assert.equal(state.data.aiFallback, false);
+  assert.equal(state.data.fallbackField, undefined);
+});
