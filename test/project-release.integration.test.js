@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 let pool;
-const { buildReleaseReport, createReleaseCandidate, decideRelease, initProjectReleaseDatabase } = require('../project-release');
+const { buildReleaseReport, createReleaseCandidate, decideRelease, authorizeDeployment, initProjectReleaseDatabase } = require('../project-release');
 
 test('PostgreSQL release handoff enforces customer then manager approval and immutable artifact', { skip: !process.env.DATABASE_URL }, async () => {
   let clientId;
@@ -132,6 +132,11 @@ test('PostgreSQL release handoff enforces customer then manager approval and imm
       /لا يخص حساب Telegram/
     );
 
+    await assert.rejects(
+      authorizeDeployment({ releaseId: candidate.id, telegramUserId: managerTelegramId }),
+      /قبل موافقة العميل والمدير/
+    );
+
     const customerDecision = await decideRelease({
       releaseId: candidate.id, role: 'customer',
       telegramUserId: customerTelegramId, decision: 'approved'
@@ -143,6 +148,34 @@ test('PostgreSQL release handoff enforces customer then manager approval and imm
       telegramUserId: managerTelegramId, decision: 'approved'
     });
     assert.equal(managerDecision.status, 'approved');
+
+    const authorization = await authorizeDeployment({
+      releaseId: candidate.id,
+      telegramUserId: managerTelegramId
+    });
+    assert.equal(authorization.status, 'authorized');
+    assert.equal(authorization.release_id, candidate.id);
+    assert.match(authorization.authorization_sha256, /^[a-f0-9]{64}$/);
+    const duplicateAuthorization = await authorizeDeployment({
+      releaseId: candidate.id,
+      telegramUserId: managerTelegramId
+    });
+    assert.equal(duplicateAuthorization.id, authorization.id);
+    await assert.rejects(
+      pool.query(
+        'UPDATE project_deployment_authorizations SET authorized_by = $2 WHERE id = $1',
+        [authorization.id, '99999']
+      ),
+      /immutable/
+    );
+
+    await assert.rejects(
+      pool.query(
+        'DELETE FROM project_deployment_authorizations WHERE id = $1',
+        [authorization.id]
+      ),
+      /immutable/
+    );
 
     await assert.rejects(
       pool.query('UPDATE project_release_candidates SET artifact_sha256 = $2 WHERE id = $1', [candidate.id, 'c'.repeat(64)]),

@@ -184,6 +184,39 @@ async function initProjectReleaseDatabase() {
   `);
 
   await getPool().query(`
+    CREATE TABLE IF NOT EXISTS project_deployment_authorizations (
+      id BIGSERIAL PRIMARY KEY,
+      release_id BIGINT NOT NULL UNIQUE REFERENCES project_release_candidates(id) ON DELETE CASCADE,
+      authorized_by TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('authorized')),
+      authorization_sha256 TEXT NOT NULL CHECK (authorization_sha256 ~ '^[a-f0-9]{64}$'),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await getPool().query(`
+    CREATE OR REPLACE FUNCTION prevent_project_deployment_authorization_mutation()
+    RETURNS trigger AS $deployment_auth$
+    BEGIN
+      IF TG_OP = 'DELETE' AND pg_trigger_depth() > 1 THEN
+        RETURN OLD;
+      END IF;
+      RAISE EXCEPTION 'deployment authorizations are immutable';
+    END;
+    $deployment_auth$ LANGUAGE plpgsql
+  `);
+
+  await getPool().query(`
+    DROP TRIGGER IF EXISTS project_deployment_authorization_immutable
+    ON project_deployment_authorizations
+  `);
+  await getPool().query(`
+    CREATE TRIGGER project_deployment_authorization_immutable
+    BEFORE UPDATE OR DELETE ON project_deployment_authorizations
+    FOR EACH ROW EXECUTE FUNCTION prevent_project_deployment_authorization_mutation()
+  `);
+
+  await getPool().query(`
     CREATE INDEX IF NOT EXISTS project_release_project_idx
     ON project_release_candidates(project_id, release_version DESC)
   `);
@@ -392,6 +425,68 @@ async function decideRelease({ releaseId, role, telegramUserId, decision }) {
   }
 }
 
+
+async function authorizeDeployment({ releaseId, telegramUserId }) {
+  if (!/^\d+$/.test(String(releaseId || '')) ||
+      !/^\d+$/.test(String(telegramUserId || ''))) {
+    throw new Error('بيانات تصريح النشر غير صالحة.');
+  }
+
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const found = await client.query(`
+      SELECT id, project_id, release_version, spec_version,
+             artifact_sha256, status
+      FROM project_release_candidates
+      WHERE id = $1
+      FOR UPDATE
+    `, [releaseId]);
+    if (!found.rowCount) throw new Error('الإصدار غير موجود.');
+    const release = found.rows[0];
+    if (release.status !== 'approved') {
+      throw new Error('لا يمكن إصدار تصريح نشر قبل موافقة العميل والمدير على الإصدار.');
+    }
+
+    const authorizationHash = sha256(stableJson({
+      releaseId: String(release.id),
+      projectId: String(release.project_id),
+      releaseVersion: Number(release.release_version),
+      specVersion: Number(release.spec_version),
+      artifactSha256: release.artifact_sha256,
+      authorizedBy: String(telegramUserId)
+    }));
+
+    const inserted = await client.query(`
+      INSERT INTO project_deployment_authorizations
+        (release_id, authorized_by, status, authorization_sha256)
+      VALUES ($1, $2, 'authorized', $3)
+      ON CONFLICT (release_id) DO NOTHING
+      RETURNING id, release_id, authorized_by, status,
+                authorization_sha256, created_at
+    `, [releaseId, String(telegramUserId), authorizationHash]);
+
+    if (inserted.rowCount) {
+      await client.query('COMMIT');
+      return inserted.rows[0];
+    }
+
+    const existing = await client.query(`
+      SELECT id, release_id, authorized_by, status,
+             authorization_sha256, created_at
+      FROM project_deployment_authorizations
+      WHERE release_id = $1
+    `, [releaseId]);
+    await client.query('COMMIT');
+    return existing.rows[0];
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   stableJson,
   buildReleaseReport,
@@ -399,5 +494,6 @@ module.exports = {
   initProjectReleaseDatabase,
   createReleaseCandidate,
   getReleaseCandidate,
-  decideRelease
+  decideRelease,
+  authorizeDeployment
 };
