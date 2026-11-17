@@ -352,3 +352,21 @@ test('queue worker drains an active job before graceful stop resolves', async ()
   assert.equal(completed, true, 'active job should be completed before stop resolves');
   assert.ok(renewals >= 1, 'lease should remain renewed while the active job drains');
 });
+
+
+test('Telegram update queue rejects coerced or malformed update identifiers before database access', async () => {
+  const pool = { async query() { assert.fail('invalid update must not reach database'); } };
+  for (const update of [
+    { update_id: '1234' },
+    { update_id: 1.5 },
+    { update_id: -1 },
+    { update_id: Number.MAX_SAFE_INTEGER + 1 },
+    [],
+    null
+  ]) {
+    await assert.rejects(
+      enqueueTelegramUpdate(pool, { botId: 7, update }),
+      /Telegram update_id is required/
+    );
+  }
+});
