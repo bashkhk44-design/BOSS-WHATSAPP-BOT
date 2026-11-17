@@ -290,3 +290,65 @@ test('queue worker stop interrupts retry backoff immediately', async () => {
   assert.ok(Date.now() - stopStartedAt < 500, 'stop should wake retry sleep without waiting for its backoff');
   assert.equal(recoveryCalls, 1);
 });
+
+
+test('queue worker drains an active job before graceful stop resolves', async () => {
+  let claimed = false;
+  let handlerStarted = false;
+  let releaseHandler;
+  let completed = false;
+  let renewals = 0;
+  const handlerGate = new Promise(resolve => { releaseHandler = resolve; });
+  const queueApi = {
+    async recoverExpiredPlatformJobs() { return []; },
+    async claimPlatformJob() {
+      if (claimed) return null;
+      claimed = true;
+      return { id: 91, job_type: 'test.drain', attempts: 1 };
+    },
+    async renewPlatformJobLease(_pool, args) {
+      assert.deepEqual(args, { jobId: 91, workerId: 'drain-worker' });
+      renewals += 1;
+      return true;
+    },
+    async completePlatformJob(_pool, args) {
+      assert.equal(args.jobId, 91);
+      completed = true;
+    },
+    async failPlatformJob() { assert.fail('active job should complete'); }
+  };
+  const worker = createQueueWorker({
+    pool: { query() {} },
+    workerId: 'drain-worker',
+    handlers: {
+      'test.drain': async () => {
+        handlerStarted = true;
+        await handlerGate;
+        return { drained: true };
+      }
+    },
+    queueApi,
+    leaseSeconds: 10,
+    leaseRenewalIntervalMs: 100,
+    logger: { log() {}, warn() {}, error() {} }
+  });
+
+  const running = worker.start();
+  const startDeadline = Date.now() + 2000;
+  while (!handlerStarted && Date.now() < startDeadline) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal(handlerStarted, true, 'worker should begin the claimed job');
+
+  let stopResolved = false;
+  const stopping = worker.stop().then(() => { stopResolved = true; });
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(stopResolved, false, 'stop must wait while the handler is still running');
+  assert.equal(completed, false, 'job must not be completed before its handler finishes');
+
+  releaseHandler();
+  await stopping;
+  await running;
+  assert.equal(completed, true, 'active job should be completed before stop resolves');
+  assert.ok(renewals >= 1, 'lease should remain renewed while the active job drains');
+});
