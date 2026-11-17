@@ -4,7 +4,6 @@ require('dotenv').config();
 
 const path = require('node:path');
 const { Pool } = require('pg');
-const { decryptToken } = require('./db');
 const { createQueueWorker } = require('./queue-worker');
 const { createTelegramUpdateHandler } = require('./telegram-update-handler');
 
@@ -22,6 +21,7 @@ function validateWorkerEnvironment(env = process.env) {
 async function main() {
   validateWorkerEnvironment();
 
+  const { decryptToken } = require('./db');
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false },
