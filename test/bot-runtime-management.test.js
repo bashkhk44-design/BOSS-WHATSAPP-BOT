@@ -9,12 +9,12 @@ function fixturePool(records) {
   return {
     statuses,
     async query(sql, params = []) {
-      if (sql.includes('FROM telegram_bots') && sql.includes('WHERE active = TRUE')) {
-        return { rowCount: records.filter(row => row.active).length, rows: records.filter(row => row.active) };
-      }
       if (sql.includes('FROM telegram_bots') && sql.includes('WHERE id = $1')) {
         const row = records.find(item => String(item.id) === String(params[0]) && item.active);
         return { rowCount: row ? 1 : 0, rows: row ? [row] : [] };
+      }
+      if (sql.includes('FROM telegram_bots') && sql.includes('WHERE active = TRUE')) {
+        return { rowCount: records.filter(row => row.active).length, rows: records.filter(row => row.active) };
       }
       if (sql.includes('INSERT INTO bot_runtime_status')) {
         statuses.set(String(params[0]), { status: params[1], error: params[4] });
