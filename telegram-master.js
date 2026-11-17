@@ -11,7 +11,7 @@ const {
   setRuntimeLockFailureHandler
 } = require('./db');
 
-const { startBotRuntime, stopBotRuntime, getRunningBotCount } = require('./bot-runtime');
+const { startBotRuntime, stopBotRuntime, startBotById, stopBotById, getRunningBotCount, getBotRuntimeStatus } = require('./bot-runtime');
 const {
   createProjectAiJob,
   getLatestCompletedProjectAiJob,
@@ -141,29 +141,71 @@ async function getBots() {
   return result.rows;
 }
 
-async function showBots(ctx) {
+async function showBots(ctx, requestedPage = 0) {
   const bots = await getBots();
+  if (!bots.length) return ctx.reply('🤖 لا توجد بوتات مسجلة حالياً.');
 
-  if (!bots.length) {
-    return ctx.reply('🤖 لا توجد بوتات مسجلة حالياً.');
+  const pageSize = 10;
+  const pageCount = Math.max(1, Math.ceil(bots.length / pageSize));
+  const page = Math.min(Math.max(0, Number(requestedPage) || 0), pageCount - 1);
+  const visible = bots.slice(page * pageSize, (page + 1) * pageSize);
+  const statusLabels = {
+    running: '🟢 يعمل',
+    starting: '🟡 يبدأ',
+    retrying: '🟠 يعيد',
+    stopped: '🔴 متوقف',
+    conflict: '⛔ تعارض',
+    unauthorized: '⛔ Token',
+    error: '❌ خطأ',
+    not_loaded: '⚪ غير محمّل'
+  };
+  const keyboard = new InlineKeyboard();
+  const lines = [
+    '🤖 إدارة البوتات',
+    'الصفحة: ' + (page + 1) + '/' + pageCount + ' | الإجمالي: ' + bots.length,
+    'الحالة التشغيلية من runtime، وليست مجرد حالة التفعيل.',
+    ''
+  ];
+
+  for (const b of visible) {
+    const runtimeStatus = getBotRuntimeStatus(b.id);
+    lines.push(
+      '#' + b.id + ' ' + b.name +
+      (b.username ? ' (@' + b.username + ')' : '') +
+      '\n' + (statusLabels[runtimeStatus] || runtimeStatus) +
+      ' | ' + (b.active ? 'مفعّل' : 'معطّل')
+    );
+    if (b.active) {
+      keyboard.text('⏹ #' + b.id, 'bot:stop:' + b.id)
+        .text('🔄', 'bot:restart:' + b.id).row();
+    } else {
+      keyboard.text('▶️ #' + b.id, 'bot:start:' + b.id).row();
+    }
   }
 
-  const lines = bots.map((b, i) =>
-    `${i + 1}. ${b.name}\nالحساب: ${b.username ? '@' + b.username : 'غير معروف'}\nالحالة: ${b.active ? '🟢 فعال' : '🔴 متوقف'}`
-  );
+  if (pageCount > 1) {
+    if (page > 0) keyboard.text('⬅️ السابق', 'bots:page:' + (page - 1));
+    if (page < pageCount - 1) keyboard.text('التالي ➡️', 'bots:page:' + (page + 1));
+  }
 
-  return ctx.reply('🤖 قائمة البوتات:\n\n' + lines.join('\n\n'));
+  const message = lines.join('\n');
+  if (ctx.callbackQuery) {
+    return ctx.editMessageText(message, { reply_markup: keyboard });
+  }
+  return ctx.reply(message, { reply_markup: keyboard });
 }
 
 async function showStats(ctx) {
   const bots = await getBots();
   const active = bots.filter(b => b.active).length;
-
+  const running = getRunningBotCount();
   return ctx.reply(
-    `📊 إحصائيات BOSS BOT MASTER\n\n` +
-    `إجمالي البوتات: ${bots.length}\n` +
-    `الفعالة: ${active}\n` +
-    `المتوقفة: ${bots.length - active}`
+    '📊 إحصائيات BOSS BOT MASTER\n\n' +
+    'إجمالي البوتات: ' + bots.length + '\n' +
+    'مفعّلة في قاعدة البيانات: ' + active + '\n' +
+    'تعمل فعلياً في هذه العملية: ' + running + '\n' +
+    'غير العاملة فعلياً حالياً: ' + Math.max(0, active - running) + '\n' +
+    'الحد التشغيلي الحالي: 100 بوت'
   );
 }
 
@@ -196,6 +238,40 @@ bot.command('bots', async (ctx) => {
 bot.command('stats', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply('⛔ غير مصرح لك.');
   await showStats(ctx);
+});
+
+bot.callbackQuery(/^bots:page:(\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  await ctx.answerCallbackQuery();
+  return showBots(ctx, Number(ctx.match[1]));
+});
+
+bot.callbackQuery(/^bot:(start|stop|restart):(\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  const action = ctx.match[1];
+  const botId = Number(ctx.match[2]);
+  await ctx.answerCallbackQuery({ text: 'جارٍ تنفيذ الأمر...' });
+  try {
+    if (action === 'stop') {
+      await pool.query('UPDATE telegram_bots SET active = FALSE WHERE id = $1', [botId]);
+      await stopBotById(botId);
+      return ctx.reply('⏹ تم إيقاف البوت رقم ' + botId + ' وتعطيل تشغيله التلقائي.');
+    }
+    if (action === 'start') {
+      const saved = await pool.query('UPDATE telegram_bots SET active = TRUE WHERE id = $1 RETURNING id', [botId]);
+      if (!saved.rowCount) return ctx.reply('لم يتم العثور على البوت.');
+      await startBotById(botId);
+      return ctx.reply('▶️ تم تفعيل طلب تشغيل البوت رقم ' + botId + '. راجع حالته من قائمة البوتات.');
+    }
+    const saved = await pool.query('UPDATE telegram_bots SET active = TRUE WHERE id = $1 RETURNING id', [botId]);
+    if (!saved.rowCount) return ctx.reply('لم يتم العثور على البوت.');
+    await stopBotById(botId);
+    await startBotById(botId);
+    return ctx.reply('🔄 أُعيد تشغيل البوت رقم ' + botId + '.');
+  } catch (error) {
+    console.error('CUSTOMER BOT MANAGEMENT ERROR:', botId, error.message);
+    return ctx.reply('❌ تعذر تنفيذ الأمر للبوت رقم ' + botId + ': ' + String(error.message || error).slice(0, 500));
+  }
 });
 
 
@@ -744,6 +820,14 @@ bot.on('message:text', async (ctx) => {
             token: newToken
           });
 
+          let runtimeMessage = '⚠️ تم تسجيله، لكن لم يبدأ التشغيل؛ راجع السعة أو سجل الأخطاء.';
+          try {
+            const state = await startBotById(saved.id);
+            runtimeMessage = '🟢 ' + (state.status === 'running' ? 'يعمل الآن' : 'بدأ التشغيل وحالته: ' + state.status);
+          } catch (runtimeError) {
+            console.error('NEW CUSTOMER BOT START ERROR:', saved.id, runtimeError.message);
+          }
+
           pendingAdds.delete(userId);
 
           return ctx.reply(
@@ -751,7 +835,7 @@ bot.on('message:text', async (ctx) => {
             `الاسم: ${saved.name}\n` +
             `الحساب: @${me.username}\n` +
             `رقم التسجيل: ${saved.id}\n` +
-            `الحالة: 🟢 مسجل في قاعدة البيانات\n\n` +
+            `حالة التشغيل: ${runtimeMessage}\n\n` +
             'تم حفظ الرمز بصورة مشفرة.',
             { reply_markup: menu() }
           );
