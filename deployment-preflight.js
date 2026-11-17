@@ -333,7 +333,7 @@ function validTarget(target, release) {
 }
 
 function validRollbackRelease(rollbackRelease, release) {
-  if (!rollbackRelease || !/^\\d+$/.test(String(rollbackRelease.id || '')) ||
+  if (!rollbackRelease || !/^\d+$/.test(String(rollbackRelease.id || '')) ||
       String(rollbackRelease.id) === String(release?.id) ||
       String(rollbackRelease.project_id) !== String(release?.project_id) ||
       rollbackRelease.status !== 'approved' ||
