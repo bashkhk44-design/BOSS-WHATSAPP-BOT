@@ -84,6 +84,8 @@ jobs:
         run: npm run db:migrate
       - name: Verify migration is idempotent
         run: npm run db:migrate
+      - name: Exercise real PostgreSQL queue operations
+        run: node --test test/platform-queue.integration.test.js
       - name: Verify schema, constraints, and preserved rows
         run: |
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
