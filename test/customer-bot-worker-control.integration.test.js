@@ -118,7 +118,10 @@ test('worker marks a queued automatic remediation attempt succeeded after restar
 
     const runtime = {
       getRuntimeSnapshot: () => [],
-      async startBotById(id) { assert.equal(String(id), String(botId)); },
+      async startBotById(id) {
+        assert.equal(String(id), String(botId));
+        await pool.query("UPDATE bot_runtime_status SET status = 'running', last_heartbeat_at = NOW() WHERE bot_id = $1", [botId]);
+      },
       async stopBotById() {},
       async stopBotRuntime() {}
     };
@@ -211,7 +214,10 @@ test('worker recovers an abandoned automatic remediation after a worker crash', 
 
     const runtime = {
       getRuntimeSnapshot: () => [],
-      async startBotById(id) { assert.equal(String(id), String(botId)); },
+      async startBotById(id) {
+        assert.equal(String(id), String(botId));
+        await pool.query("UPDATE bot_runtime_status SET status = 'running', last_heartbeat_at = NOW() WHERE bot_id = $1", [botId]);
+      },
       async stopBotById() {},
       async stopBotRuntime() {}
     };
