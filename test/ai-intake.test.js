@@ -55,6 +55,7 @@ test('AI intake cannot finish while missing items remain', () => {
   assert.ok(result.missingItems.includes('تحديد صلاحيات الموظفين'));
   assert.ok(result.missingItems.includes('تحديد هدف المشروع وطريقة عمله'));
   assert.ok(result.missingItems.includes('تحديد الوظائف الأساسية المطلوبة'));
+  assert.match(result.assistantMessage, /بقيت نقطة تحتاج توضيحاً/);
 });
 
 test('AI intake cannot finish without a project goal and core features', () => {
