@@ -106,6 +106,14 @@ function createCustomerBotWorker({
         SET status = 'processing', claimed_by = $2, claimed_at = NOW(), attempts = attempts + 1
         WHERE id = $1
       `, [command.id, workerId]);
+      await client.query(`
+        UPDATE bot_auto_remediation_attempts
+        SET status = 'processing', started_at = COALESCE(started_at, NOW())
+        WHERE id = (
+          SELECT auto_remediation_attempt_id
+          FROM bot_runtime_commands WHERE id = $1
+        ) AND status = 'queued'
+      `, [command.id]);
       await client.query('COMMIT');
       return command;
     } catch (error) {
@@ -152,17 +160,32 @@ function createCustomerBotWorker({
         }
       }
       await pool.query(`
-        UPDATE bot_runtime_commands
-        SET status = 'completed', processed_at = NOW(), error_message = NULL
-        WHERE id = $1
+        WITH completed AS (
+          UPDATE bot_runtime_commands
+          SET status = 'completed', processed_at = NOW(), error_message = NULL
+          WHERE id = $1
+          RETURNING auto_remediation_attempt_id
+        )
+        UPDATE bot_auto_remediation_attempts
+        SET status = 'succeeded', finished_at = NOW(), error_message = NULL
+        WHERE id = (SELECT auto_remediation_attempt_id FROM completed)
+          AND status IN ('queued','processing')
       `, [command.id]);
       logger.log('Processed manager command ' + command.action + ' for bot ' + botId);
     } catch (error) {
       await pool.query(`
-        UPDATE bot_runtime_commands
-        SET status = 'failed', processed_at = NOW(),
+        WITH failed AS (
+          UPDATE bot_runtime_commands
+          SET status = 'failed', processed_at = NOW(),
+              error_message = $2
+          WHERE id = $1
+          RETURNING auto_remediation_attempt_id
+        )
+        UPDATE bot_auto_remediation_attempts
+        SET status = 'failed', finished_at = NOW(),
             error_message = $2
-        WHERE id = $1
+        WHERE id = (SELECT auto_remediation_attempt_id FROM failed)
+          AND status IN ('queued','processing')
       `, [command.id, String(error.message || error).slice(0, 1000)]);
       logger.error('Manager command failed for bot ' + botId + ': ' + error.message);
     }
