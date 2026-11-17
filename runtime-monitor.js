@@ -18,14 +18,21 @@ function createRuntimeMonitor({
   let stopped = true;
 
   async function pollOnce() {
-    const result = await pool.query(`
-      SELECT b.id, b.name, s.status, s.worker_id,
-             s.last_heartbeat_at, s.last_error_code
-      FROM telegram_bots b
-      LEFT JOIN bot_runtime_status s ON s.bot_id = b.id
-      WHERE b.active = TRUE AND b.token_ciphertext IS NOT NULL
-      ORDER BY b.id ASC
-    `);
+    const [result, workerResult] = await Promise.all([
+      pool.query(`
+        SELECT b.id, b.name, s.status, s.worker_id,
+               s.last_heartbeat_at, s.last_error_code
+        FROM telegram_bots b
+        LEFT JOIN bot_runtime_status s ON s.bot_id = b.id
+        WHERE b.active = TRUE AND b.token_ciphertext IS NOT NULL
+        ORDER BY b.id ASC
+      `),
+      pool.query(`
+        SELECT worker_id, status, capacity, last_heartbeat_at
+        FROM bot_worker_status
+        ORDER BY worker_id ASC
+      `)
+    ]);
     const currentTime = now();
     const issues = [];
     const workers = new Map();
@@ -64,11 +71,17 @@ function createRuntimeMonitor({
       checkedAt: new Date(currentTime).toISOString(),
       activeBots: result.rows.length,
       healthyBots: result.rows.length - issues.length,
-      workers: Array.from(workers.values()).map(worker => ({
-        ...worker,
-        heartbeatSource: 'bot_runtime_status',
-        health: 'not_independently_measured'
-      })),
+      workers: workerResult.rows.map(worker => {
+        const heartbeat = worker.last_heartbeat_at ? new Date(worker.last_heartbeat_at).getTime() : 0;
+        const fresh = heartbeat > 0 && currentTime - heartbeat <= staleAfterSeconds * 1000;
+        return {
+          workerId: worker.worker_id,
+          status: worker.status,
+          capacity: worker.capacity,
+          lastHeartbeatAt: worker.last_heartbeat_at,
+          health: worker.status === 'running' && fresh ? 'healthy' : 'stale_or_stopped'
+        };
+      }),
       issues
     };
   }
