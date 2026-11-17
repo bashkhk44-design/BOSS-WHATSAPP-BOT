@@ -8,10 +8,13 @@ const {
   updateClientProjectStatus,
   addConversationMessage,
   getIntakeSession,
+  getProjectConversation,
   saveIntakeSession,
   deleteIntakeSession,
   approveProjectSpec
 } = require('./project-db');
+
+const { processIntakeTurn } = require('./ai-intake');
 
 let intakeBot = null;
 let pollingPromise = null;
@@ -181,6 +184,58 @@ async function askNext(ctx, session) {
   }
 }
 
+async function runInteractiveIntake(ctx, session, userMessage = '') {
+  try {
+    const history = await getProjectConversation(ctx.from.id, session.project_id);
+    const result = await processIntakeTurn({
+      project: {
+        project_id: session.project_id,
+        project_name: session.data.projectName,
+        business_type: session.data.businessType
+      },
+      currentData: session.data || {},
+      userMessage,
+      history
+    });
+
+    const missingItems = result.missingItems || [];
+    const readyForReview = result.readyForReview && missingItems.length === 0;
+    const data = {
+      ...result.data,
+      aiIntakeTurns: (Number(session.data?.aiIntakeTurns) || 0) + (userMessage ? 1 : 0),
+      aiIntakeMissing: missingItems
+    };
+    const nextStep = readyForReview ? 'review' : 'ai_intake';
+
+    await saveIntakeSession({
+      telegramUserId: ctx.from.id,
+      projectId: session.project_id,
+      step: nextStep,
+      data
+    });
+
+    await saveMessage(
+      ctx.from.id,
+      session.project_id,
+      'assistant',
+      result.assistantMessage
+    );
+
+    if (readyForReview) {
+      await ctx.reply('✅ اكتمل جمع المتطلبات بمساعدة AI ANALYST. هذا ملخص طلبك للمراجعة:');
+      await askNext(ctx, { ...session, step: 'review', data });
+      return;
+    }
+
+    await ctx.reply(result.assistantMessage);
+  } catch (error) {
+    console.error('INTERACTIVE AI INTAKE ERROR:', error.message);
+    await ctx.reply(
+      'واجهنا تأخيراً مؤقتاً في المحلل الذكي. لم نحذف إجابتك؛ أرسل رسالة متابعة بعد قليل أو أرسل /start لإعادة المحاولة.'
+    );
+  }
+}
+
 async function beginProject(ctx) {
   const userId = ctx.from.id;
   const session = await getIntakeSession(userId);
@@ -241,6 +296,11 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
       await ctx.reply(
         'أهلاً بعودتك إلى BOSS BOT MASTER 👋\nوجدنا طلبك السابق وسنكمل من حيث توقفت.'
       );
+
+      if (session.step === 'ai_intake') {
+        await runInteractiveIntake(ctx, session, '');
+        return;
+      }
 
       await askNext(ctx, session);
       return;
@@ -318,7 +378,7 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
     });
 
     const editing = session.step === 'edit_business_type';
-    const nextStep = editing ? 'review' : 'description';
+    const nextStep = editing ? 'review' : 'ai_intake';
 
     await saveIntakeSession({
       telegramUserId: ctx.from.id,
@@ -336,11 +396,12 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
 
     await ctx.answerCallbackQuery();
 
-    await askNext(ctx, {
-      ...session,
-      step: nextStep,
-      data
-    });
+    const nextSession = { ...session, step: nextStep, data };
+    if (editing) {
+      await askNext(ctx, nextSession);
+    } else {
+      await runInteractiveIntake(ctx, nextSession, '');
+    }
   });
 
   intakeBot.callbackQuery(/^platform:(.+)$/, async (ctx) => {
@@ -651,6 +712,11 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
 
       await ctx.reply('✅ تم حفظ التعديل في المواصفات.');
       await askNext(ctx, { ...session, step: 'review', data });
+      return;
+    }
+
+    if (session.step === 'ai_intake') {
+      await runInteractiveIntake(ctx, session, text);
       return;
     }
 
