@@ -17,7 +17,7 @@ function fixture() {
   };
 }
 
-test('accepts a pinned registry package with integrity', () => {
+test('accepts a locked registry package with integrity', () => {
   assert.equal(validateDependencyPreflight(fixture()).passed, true);
 });
 
@@ -34,15 +34,24 @@ test('rejects lifecycle scripts', () => {
   assert.equal(validateDependencyPreflight(f).passed, false);
 });
 
-test('rejects git and file dependency specifications', () => {
+test('rejects git and file dependency specifications in every dependency group', () => {
   const f = fixture();
-  f.packageData.dependencies.evil = 'git+https://example.com/evil.git';
+  f.packageData.devDependencies = { evil: 'git+https://example.com/evil.git' };
   assert.equal(validateDependencyPreflight(f).passed, false);
 });
 
-test('rejects unapproved registry hosts and missing integrity', () => {
+test('rejects a declared dependency absent from the lockfile', () => {
+  const f = fixture();
+  f.packageData.dependencies.missing = '^2.0.0';
+  assert.equal(validateDependencyPreflight(f).passed, false);
+});
+
+test('rejects unapproved registry hosts, credentials, ports, and missing integrity', () => {
   const f = fixture();
   f.lockData.packages['node_modules/leftpad'].resolved = 'https://evil.example/pkg.tgz';
   delete f.lockData.packages['node_modules/leftpad'].integrity;
+  assert.equal(validateDependencyPreflight(f).passed, false);
+  f.lockData.packages['node_modules/leftpad'].resolved =
+    'https://user:pass@registry.npmjs.org:444/pkg.tgz';
   assert.equal(validateDependencyPreflight(f).passed, false);
 });
