@@ -16,7 +16,7 @@ function isSha256(value) {
 }
 
 function isNumericId(value) {
-  return /^\\d+$/.test(String(value ?? ''));
+  return /^\d+$/.test(String(value ?? ''));
 }
 
 function sha256(value) {
