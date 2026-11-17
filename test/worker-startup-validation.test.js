@@ -46,6 +46,25 @@ test('worker startup accepts uppercase hexadecimal encryption keys', () => {
   );
 });
 
+test('worker startup accepts supported database SSL modes', () => {
+  for (const mode of ['require', 'disable']) {
+    assert.equal(
+      validateWorkerEnvironment({ ...validEnvironment, DATABASE_SSL: mode }),
+      true
+    );
+  }
+  assert.equal(validateWorkerEnvironment(validEnvironment), true);
+});
+
+test('worker startup rejects unknown database SSL modes instead of silently enabling TLS', () => {
+  for (const mode of ['disabled', 'false', 'verify-full', '']) {
+    assert.throws(
+      () => validateWorkerEnvironment({ ...validEnvironment, DATABASE_SSL: mode }),
+      /DATABASE_SSL must be either require or disable/
+    );
+  }
+});
+
 test('worker startup rejects unsafe database pool and queue timing limits', () => {
   const invalidSettings = [
     ['WORKER_DB_POOL_MAX', '0'],
