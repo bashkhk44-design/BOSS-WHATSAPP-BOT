@@ -300,6 +300,7 @@ function unpackVerifiedDependencies({ artifactDir, lockfilePath, outputDir, limi
   fs.mkdirSync(finalOutput, { mode: 0o700 });
   let totalExpanded = 0;
   let extractedPackages = 0;
+  const unpackBudget = { total: 0, files: 0 };
   try {
     const nodeModules = path.join(finalOutput, 'node_modules');
     fs.mkdirSync(nodeModules, { mode: 0o755 });
@@ -310,7 +311,6 @@ function unpackVerifiedDependencies({ artifactDir, lockfilePath, outputDir, limi
       const item = artifactByPath.get(lockPath);
       const archivePath = path.join(artifactRoot, 'packages', item.file);
       const archiveBytes = verifyArchive(archivePath, item, lockEntry, cap);
-      const relativePackagePath = lockPath.slice('node_modules/'.length);
       const packageDestination = path.resolve(finalOutput, lockPath);
       if (!packageDestination.startsWith(nodeModules + path.sep)) fail('Package destination escaped node_modules.');
       fs.mkdirSync(path.dirname(packageDestination), { recursive: true, mode: 0o755 });
