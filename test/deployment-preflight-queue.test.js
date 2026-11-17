@@ -124,6 +124,7 @@ test('formatted preflight status always says execution and deployment are denied
     }
   }, { id: '7', release_version: 2 });
   assert.match(message, /تشغيل الحاوية مؤكد: نعم/);
+  assert.match(message, /بيانات وجهة النشر غير محددة أو غير مؤكدة/);
   assert.match(message, /السماح بالتنفيذ: ❌ لا/);
   assert.match(message, /تم النشر: ❌ لا/);
 });
