@@ -174,15 +174,31 @@ const FALLBACK_STEPS = [
 
 function advanceFallbackIntake(currentData = {}, userMessage = '') {
   const data = { ...currentData, aiFallback: true };
-  const field = data.fallbackField || 'description';
   const answer = String(userMessage || '').trim();
-  if (answer) data[field] = answer.slice(0, 5000);
+  const knownFields = new Set(FALLBACK_STEPS.map(([key]) => key));
+  let field = knownFields.has(data.fallbackField) ? data.fallbackField : null;
+
+  // Never overwrite an answer already collected by the AI or an earlier fallback turn.
+  if (!field || String(data[field] || '').trim()) {
+    field = FALLBACK_STEPS.find(([key]) => !String(data[key] || '').trim())?.[0] || null;
+  }
+
+  // Preserve the message that triggered the AI failure as the answer to the next missing question.
+  if (answer && field) {
+    data[field] = answer.slice(0, 5000);
+  }
+
   const next = FALLBACK_STEPS.find(([key]) => !String(data[key] || '').trim());
   if (!next) {
     delete data.fallbackField;
     data.aiFallback = false;
-    return { data, readyForReview: true, assistantMessage: '✅ اكتمل جمع المعلومات الأساسية بالطريقة الاحتياطية. راجع الملخص قبل الاعتماد.' };
+    return {
+      data,
+      readyForReview: true,
+      assistantMessage: '✅ اكتمل جمع المعلومات الأساسية بالطريقة الاحتياطية. راجع الملخص قبل الاعتماد.'
+    };
   }
+
   data.fallbackField = next[0];
   return { data, readyForReview: false, assistantMessage: next[1] };
 }
