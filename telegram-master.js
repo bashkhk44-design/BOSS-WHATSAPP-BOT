@@ -881,7 +881,7 @@ function startMasterPolling() {
       if (!started) {
         reject(new Error('Master polling stopped before startup completed'));
       } else if (!shuttingDown && !stoppingForRecovery) {
-        void shutdown('MASTER_POLLING_STOPPED_UNEXPECTEDLY', 1);
+        void recoverTelegramRuntime(new Error('Master polling stopped unexpectedly'));
       }
     }).catch((err) => {
       if (!started) {
@@ -891,7 +891,7 @@ function startMasterPolling() {
 
       if (!shuttingDown && !stoppingForRecovery) {
         console.error('MASTER POLLING ERROR:', err.message);
-        void shutdown('MASTER_POLLING_ERROR', 1);
+        void recoverTelegramRuntime(new Error('Master polling failed: ' + err.message));
       }
     }).finally(() => {
       if (masterPollingPromise === polling) {
@@ -926,9 +926,8 @@ async function startTelegramServices() {
     async ({ text, extra }) => {
       await bot.api.sendMessage(adminId, text, extra);
     },
-    (fatalError) => shutdown(
-      'INTAKE_BOT_FAILURE: ' + fatalError.message,
-      1
+    (fatalError) => recoverTelegramRuntime(
+      new Error('Intake bot polling failed: ' + fatalError.message)
     )
   );
 
@@ -943,13 +942,13 @@ async function startTelegramServices() {
   }
 }
 
-async function recoverRuntimeAfterLockLoss(err) {
+async function recoverTelegramRuntime(err) {
   if (shuttingDown) return;
   runtimeRecoveryRequested = true;
   if (runtimeRecoveryPromise) return runtimeRecoveryPromise;
 
   console.error(
-    'WARNING: Telegram runtime lock was lost. Stopping Telegram services and attempting safe lock recovery.',
+    'WARNING: Telegram polling/runtime failed. Stopping Telegram services and attempting safe recovery.',
     err?.message || err || ''
   );
 
@@ -1009,7 +1008,7 @@ async function recoverRuntimeAfterLockLoss(err) {
 
 async function start() {
   startupInProgress = true;
-  setRuntimeLockFailureHandler(recoverRuntimeAfterLockLoss);
+  setRuntimeLockFailureHandler(recoverTelegramRuntime);
 
   try {
     await initDatabase();
@@ -1079,7 +1078,7 @@ async function start() {
 
     // Close the narrow race where the lock is lost as startup is completing.
     if (runtimeRecoveryRequested && !shuttingDown && !runtimeRecoveryPromise) {
-      void recoverRuntimeAfterLockLoss(
+      void recoverTelegramRuntime(
         new Error('Runtime lock loss detected while startup was completing')
       );
     }
