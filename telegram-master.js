@@ -28,6 +28,8 @@ const { designProject } = require('./ai-designer');
 const { runProjectPipeline } = require('./project-pipeline');
 const { getGeminiModel } = require('./ai-router');
 
+const CUSTOMER_BOT_WORKER_MODE = process.env.CUSTOMER_BOT_WORKER_MODE === 'external';
+
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const adminId = process.env.TELEGRAM_ADMIN_ID;
 
@@ -141,6 +143,48 @@ async function getBots() {
   return result.rows;
 }
 
+async function getExternalBotRuntimeStatuses(botIds) {
+  if (!CUSTOMER_BOT_WORKER_MODE || !botIds.length) return new Map();
+  const result = await pool.query(
+    'SELECT bot_id, status, worker_id, last_heartbeat_at FROM bot_runtime_status WHERE bot_id = ANY($1::bigint[])',
+    [botIds]
+  );
+  return new Map(result.rows.map(row => [String(row.bot_id), row]));
+}
+
+async function queueCustomerBotAction(botId, action, requestedBy) {
+  if (!['start', 'stop', 'restart'].includes(action)) throw new Error('Invalid bot action');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const found = await client.query(`
+      SELECT b.id, s.worker_id
+      FROM telegram_bots b
+      LEFT JOIN bot_runtime_status s ON s.bot_id = b.id
+      WHERE b.id = $1
+      FOR UPDATE OF b
+    `, [botId]);
+    if (!found.rowCount) throw new Error('لم يتم العثور على البوت.');
+    const targetWorkerId = found.rows[0].worker_id || null;
+    await client.query(
+      'UPDATE telegram_bots SET active = $2 WHERE id = $1',
+      [botId, action !== 'stop']
+    );
+    await client.query(`
+      INSERT INTO bot_runtime_commands
+        (bot_id, action, status, target_worker_id, requested_by)
+      VALUES ($1, $2, 'queued', $3, $4)
+    `, [botId, action, targetWorkerId, String(requestedBy)]);
+    await client.query('COMMIT');
+    return { botId: String(botId), action, targetWorkerId };
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function showBots(ctx, requestedPage = 0) {
   const bots = await getBots();
   if (!bots.length) return ctx.reply('🤖 لا توجد بوتات مسجلة حالياً.');
@@ -149,6 +193,7 @@ async function showBots(ctx, requestedPage = 0) {
   const pageCount = Math.max(1, Math.ceil(bots.length / pageSize));
   const page = Math.min(Math.max(0, Number(requestedPage) || 0), pageCount - 1);
   const visible = bots.slice(page * pageSize, (page + 1) * pageSize);
+  const externalStatuses = await getExternalBotRuntimeStatuses(visible.map(b => b.id));
   const statusLabels = {
     running: '🟢 يعمل',
     starting: '🟡 يبدأ',
@@ -168,11 +213,15 @@ async function showBots(ctx, requestedPage = 0) {
   ];
 
   for (const b of visible) {
-    const runtimeStatus = getBotRuntimeStatus(b.id);
+    const external = externalStatuses.get(String(b.id));
+    const runtimeStatus = CUSTOMER_BOT_WORKER_MODE
+      ? (external?.status || 'not_loaded')
+      : getBotRuntimeStatus(b.id);
     lines.push(
       '#' + b.id + ' ' + b.name +
       (b.username ? ' (@' + b.username + ')' : '') +
       '\n' + (statusLabels[runtimeStatus] || runtimeStatus) +
+      (CUSTOMER_BOT_WORKER_MODE && external?.worker_id ? ' | العامل: ' + external.worker_id.slice(0, 8) : '') +
       ' | ' + (b.active ? 'مفعّل' : 'معطّل')
     );
     if (b.active) {
@@ -198,7 +247,11 @@ async function showBots(ctx, requestedPage = 0) {
 async function showStats(ctx) {
   const bots = await getBots();
   const active = bots.filter(b => b.active).length;
-  const running = getRunningBotCount();
+  let running = getRunningBotCount();
+  if (CUSTOMER_BOT_WORKER_MODE) {
+    const result = await pool.query("SELECT COUNT(*)::int AS count FROM bot_runtime_status WHERE status = 'running' AND last_heartbeat_at >= NOW() - INTERVAL '2 minutes'");
+    running = Number(result.rows[0]?.count || 0);
+  }
   return ctx.reply(
     '📊 إحصائيات BOSS BOT MASTER\n\n' +
     'إجمالي البوتات: ' + bots.length + '\n' +
@@ -252,6 +305,14 @@ bot.callbackQuery(/^bot:(start|stop|restart):(\d+)$/, async (ctx) => {
   const botId = Number(ctx.match[2]);
   await ctx.answerCallbackQuery({ text: 'جارٍ تنفيذ الأمر...' });
   try {
+    if (CUSTOMER_BOT_WORKER_MODE) {
+      const queued = await queueCustomerBotAction(botId, action, ctx.from.id);
+      return ctx.reply(
+        (action === 'stop' ? '⏹' : action === 'restart' ? '🔄' : '▶️') +
+        ' تم إرسال أمر ' + action + ' للبوت رقم ' + botId +
+        '.\nالعامل الموزع سينفذ الأمر، ويمكنك متابعة الحالة من قائمة البوتات.'
+      );
+    }
     if (action === 'stop') {
       await pool.query('UPDATE telegram_bots SET active = FALSE WHERE id = $1', [botId]);
       await stopBotById(botId);
@@ -939,10 +1000,12 @@ async function stopTelegramServicesForRecovery() {
       }
     }
 
-    try {
-      await stopBotRuntime();
-    } catch (err) {
-      console.error('RECOVERY CUSTOMER BOTS STOP ERROR:', err.message);
+    if (!CUSTOMER_BOT_WORKER_MODE) {
+      try {
+        await stopBotRuntime();
+      } catch (err) {
+        console.error('RECOVERY CUSTOMER BOTS STOP ERROR:', err.message);
+      }
     }
   } finally {
     stoppingForRecovery = false;
@@ -1000,7 +1063,11 @@ async function startTelegramServices() {
     throw new Error('Runtime lock lost before Telegram services startup');
   }
 
-  await startBotRuntime();
+  if (!CUSTOMER_BOT_WORKER_MODE) {
+    await startBotRuntime();
+  } else {
+    console.log('Customer bot runtime is external; manager will control bots through PostgreSQL commands.');
+  }
 
   if (!(await runtimeLockIsSafe())) {
     throw new Error('Runtime lock lost after customer bots startup');
@@ -1204,10 +1271,12 @@ async function shutdown(signal, exitCode = 0) {
     console.error('MASTER BOT STOP ERROR:', err.message);
   }
 
-  try {
-    await stopBotRuntime();
-  } catch (err) {
-    console.error('CUSTOMER BOTS STOP ERROR:', err.message);
+  if (!CUSTOMER_BOT_WORKER_MODE) {
+    try {
+      await stopBotRuntime();
+    } catch (err) {
+      console.error('CUSTOMER BOTS STOP ERROR:', err.message);
+    }
   }
 
   try {
