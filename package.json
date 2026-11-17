@@ -8,7 +8,9 @@
     "start": "node host.js",
     "start:cloud": "node host.js",
     "db:migrate": "node migrations/runner.js",
-    "worker": "node worker.js"
+    "worker": "node worker.js",
+    "start:worker": "node worker.js",
+    "start:webhook": "node webhook.js"
   },
   "keywords": [],
   "type": "commonjs",
