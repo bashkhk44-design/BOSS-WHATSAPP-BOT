@@ -1,6 +1,6 @@
 'use strict';
 
-const { Bot } = require('grammy');
+const { createCustomerBot } = require('./customer-bot');
 
 function createTelegramUpdateHandler({
   pool,
@@ -12,16 +12,9 @@ function createTelegramUpdateHandler({
   if (typeof decryptToken !== 'function') throw new TypeError('decryptToken(record) is required');
   if (!Number.isInteger(leaseSeconds) || leaseSeconds < 10) throw new RangeError('leaseSeconds must be at least 10');
 
-  const makeBot = botFactory || ((record, token) => {
-    const bot = new Bot(token, { client: { timeoutSeconds: 45 } });
-    bot.command('start', ctx => ctx.reply(
-      `أهلاً بك في ${record.name} 👋\n\nهذا بوت النشاط، وسيتم إعداد خدماته قريباً.`
-    ));
-    bot.command('help', ctx => ctx.reply(
-      `مساعدة ${record.name}\n\nسيتم تفعيل خدمات هذا البوت بعد إعداد مواصفاته.`
-    ));
-    return bot;
-  });
+  // The webhook worker and existing polling runtime share exactly the same
+  // command handlers, so moving transport does not change customer behavior.
+  const makeBot = botFactory || createCustomerBot;
 
   return async function handleTelegramUpdate(job) {
     const botId = Number(job.payload?.botId);
