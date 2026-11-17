@@ -127,7 +127,7 @@ function createImmutableReleaseArtifact({ report, bundle }) {
 }
 
 async function initProjectReleaseDatabase() {
-  await pool.query(\`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS project_release_candidates (
       id BIGSERIAL PRIMARY KEY,
       project_id BIGINT NOT NULL REFERENCES client_projects(id) ON DELETE CASCADE,
@@ -144,9 +144,9 @@ async function initProjectReleaseDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (project_id, release_version)
     )
-  \`);
+  `);
 
-  await pool.query(\`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS project_release_approvals (
       id BIGSERIAL PRIMARY KEY,
       release_id BIGINT NOT NULL REFERENCES project_release_candidates(id) ON DELETE CASCADE,
@@ -156,14 +156,14 @@ async function initProjectReleaseDatabase() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (release_id, approver_role)
     )
-  \`);
+  `);
 
-  await pool.query(\`
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS project_release_project_idx
     ON project_release_candidates(project_id, release_version DESC)
-  \`);
+  `);
 
-  await pool.query(\`
+  await pool.query(`
     CREATE OR REPLACE FUNCTION prevent_project_release_artifact_mutation()
     RETURNS trigger AS $
     BEGIN
@@ -182,17 +182,17 @@ async function initProjectReleaseDatabase() {
       RETURN NEW;
     END;
     $ LANGUAGE plpgsql
-  \`);
+  `);
 
-  await pool.query(\`
+  await pool.query(`
     DROP TRIGGER IF EXISTS project_release_artifact_immutable
     ON project_release_candidates
-  \`);
-  await pool.query(\`
+  `);
+  await pool.query(`
     CREATE TRIGGER project_release_artifact_immutable
     BEFORE UPDATE ON project_release_candidates
     FOR EACH ROW EXECUTE FUNCTION prevent_project_release_artifact_mutation()
-  \`);
+  `);
 }
 
 async function createReleaseCandidate({ project, designJobId, adminTelegramId, report, bundle }) {
@@ -200,7 +200,7 @@ async function createReleaseCandidate({ project, designJobId, adminTelegramId, r
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const current = await client.query(\`
+    const current = await client.query(`
       SELECT p.id, c.telegram_user_id, s.version, j.id AS design_job_id,
              a.construction_points_approved, a.design_approved
       FROM client_projects p
@@ -219,7 +219,7 @@ async function createReleaseCandidate({ project, designJobId, adminTelegramId, r
        AND a.design_job_id = j.id
       WHERE p.id = $1 AND p.status = 'spec_approved'
       FOR UPDATE OF p
-    \`, [project.project_id, designJobId]);
+    `, [project.project_id, designJobId]);
 
     if (!current.rowCount ||
         !current.rows[0].construction_points_approved ||
@@ -228,12 +228,12 @@ async function createReleaseCandidate({ project, designJobId, adminTelegramId, r
       throw new Error('تعذر إنشاء الإصدار: المواصفات أو التصميم أو اعتمادات المدير لم تعد مطابقة.');
     }
 
-    const versionResult = await client.query(\`
+    const versionResult = await client.query(`
       SELECT COALESCE(MAX(release_version), 0) + 1 AS next_version
       FROM project_release_candidates WHERE project_id = $1
-    \`, [project.project_id]);
+    `, [project.project_id]);
 
-    const inserted = await client.query(\`
+    const inserted = await client.query(`
       INSERT INTO project_release_candidates (
         project_id, release_version, spec_version, design_job_id,
         created_by, artifact, artifact_sha256, artifact_bytes,
@@ -241,7 +241,7 @@ async function createReleaseCandidate({ project, designJobId, adminTelegramId, r
       ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,'awaiting_customer',$9)
       RETURNING id, project_id, release_version, spec_version,
                 artifact_sha256, artifact_bytes, status, created_at
-    \`, [
+    `, [
       project.project_id,
       Number(versionResult.rows[0].next_version),
       project.spec_version,
@@ -264,37 +264,37 @@ async function createReleaseCandidate({ project, designJobId, adminTelegramId, r
 }
 
 async function getReleaseCandidate(releaseId) {
-  if (!/^\\d+$/.test(String(releaseId || ''))) throw new Error('رقم الإصدار غير صالح.');
-  const result = await pool.query(\`
+  if (!/^\d+$/.test(String(releaseId || ''))) throw new Error('رقم الإصدار غير صالح.');
+  const result = await pool.query(`
     SELECT r.*, p.name AS project_name,
            c.telegram_user_id AS customer_telegram_id
     FROM project_release_candidates r
     JOIN client_projects p ON p.id = r.project_id
     JOIN clients c ON c.id = p.client_id
     WHERE r.id = $1
-  \`, [releaseId]);
+  `, [releaseId]);
   return result.rows[0] || null;
 }
 
 async function decideRelease({ releaseId, role, telegramUserId, decision }) {
   if (!['customer', 'manager'].includes(role) ||
       !['approved', 'rejected'].includes(decision) ||
-      !/^\\d+$/.test(String(telegramUserId || '')) ||
-      !/^\\d+$/.test(String(releaseId || ''))) {
+      !/^\d+$/.test(String(telegramUserId || '')) ||
+      !/^\d+$/.test(String(releaseId || ''))) {
     throw new Error('بيانات قرار الإصدار غير صالحة.');
   }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const found = await client.query(\`
+    const found = await client.query(`
       SELECT r.*, c.telegram_user_id AS actual_customer_id
       FROM project_release_candidates r
       JOIN client_projects p ON p.id = r.project_id
       JOIN clients c ON c.id = p.client_id
       WHERE r.id = $1
       FOR UPDATE OF r
-    \`, [releaseId]);
+    `, [releaseId]);
     if (!found.rowCount) throw new Error('الإصدار غير موجود.');
     const release = found.rows[0];
 
@@ -311,23 +311,23 @@ async function decideRelease({ releaseId, role, telegramUserId, decision }) {
       throw new Error('تم إغلاق قرار هذا الإصدار مسبقاً.');
     }
 
-    await client.query(\`
+    await client.query(`
       INSERT INTO project_release_approvals
         (release_id, approver_role, telegram_user_id, decision)
       VALUES ($1,$2,$3,$4)
-    \`, [releaseId, role, String(telegramUserId), decision]);
+    `, [releaseId, role, String(telegramUserId), decision]);
 
     const nextStatus = decision === 'rejected'
       ? 'rejected'
       : role === 'customer' ? 'awaiting_manager' : 'approved';
 
-    const updated = await client.query(\`
+    const updated = await client.query(`
       UPDATE project_release_candidates
       SET status = $2, updated_at = NOW()
       WHERE id = $1
       RETURNING id, project_id, release_version, spec_version,
                 artifact_sha256, status
-    \`, [releaseId, nextStatus]);
+    `, [releaseId, nextStatus]);
 
     await client.query('COMMIT');
     return updated.rows[0];
