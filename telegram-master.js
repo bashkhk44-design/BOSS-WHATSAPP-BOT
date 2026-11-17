@@ -28,6 +28,7 @@ const { analyzeProject } = require('./gemini-analyst');
 const { designProject } = require('./ai-designer');
 const { runProjectPipeline } = require('./project-pipeline');
 const { getGeminiModel } = require('./ai-router');
+const { getReleaseCandidate, decideRelease } = require('./project-release');
 
 const CUSTOMER_BOT_WORKER_MODE = process.env.CUSTOMER_BOT_WORKER_MODE === 'external';
 
@@ -663,11 +664,33 @@ bot.callbackQuery(/^project:pipeline:(\d+)$/, async (ctx) => {
       );
     }
 
+    const release = result.releaseCandidate;
     await ctx.reply(
       '✅ اكتمل البناء والاختبار للمشروع رقم ' + projectId +
       '\n' + result.summary +
-      '\nحالة النشر: لم يُنشر بعد، وينتظر ربط الاستضافة وموافقة المدير.'
+      '\nرقم الإصدار: R' + release.release_version +
+      '\nبصمة SHA-256: ' + release.artifact_sha256 +
+      '\nحالة الإصدار: بانتظار موافقة العميل ثم المدير.\nلم يتم النشر.'
     );
+
+    try {
+      await ctx.api.sendMessage(
+        release.customerTelegramId,
+        '📦 إصدار جديد جاهز للمراجعة والتسليم' +
+        '\nالمشروع: ' + (project.project_name || project.name) +
+        '\nالإصدار: R' + release.release_version +
+        '\nالمواصفات المعتمدة: v' + release.spec_version +
+        '\nبصمة الإصدار: ' + release.artifact_sha256 +
+        '\n\nيرجى مراجعة نتيجة الاختبارات وتقرير الإصدار. موافقتك لا تعني النشر؛ إنها اعتماد للتسليم فقط.',
+        { reply_markup: new InlineKeyboard()
+          .text('✅ أوافق على الإصدار', 'project:release:customer:approved:' + release.id)
+          .row()
+          .text('❌ أرفض الإصدار', 'project:release:customer:rejected:' + release.id) }
+      );
+    } catch (deliveryError) {
+      console.error('RELEASE CUSTOMER DELIVERY ERROR:', deliveryError.message);
+      await ctx.reply('⚠️ تم حفظ الإصدار، لكن تعذر إرسال طلب الموافقة إلى العميل عبر Telegram. لم يتم النشر.');
+    }
   } catch (error) {
     console.error('PROJECT PIPELINE ERROR:', error);
     await ctx.reply(
