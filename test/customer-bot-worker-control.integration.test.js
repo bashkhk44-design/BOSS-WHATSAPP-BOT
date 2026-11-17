@@ -244,3 +244,52 @@ test('worker recovers an abandoned automatic remediation after a worker crash', 
     await pool.end();
   }
 });
+
+
+test('worker does not mark automatic recovery successful unless bot becomes healthy', { skip: !enabled }, async () => {
+  const pool = new Pool({ connectionString: databaseUrl, ssl: false, max: 3 });
+  let botId;
+  let stopped = 0;
+  try {
+    const bot = await pool.query(`
+      INSERT INTO telegram_bots (name, username, active, token_ciphertext)
+      VALUES ('auto remediation unhealthy fixture', 'auto_remediation_unhealthy_bot', TRUE, 'test-ciphertext')
+      RETURNING id
+    `);
+    botId = bot.rows[0].id;
+    const attempt = await pool.query(`
+      INSERT INTO bot_auto_remediation_attempts (bot_id, status, reason)
+      VALUES ($1, 'queued', 'stale_heartbeat') RETURNING id
+    `, [botId]);
+    await pool.query(`
+      INSERT INTO bot_runtime_commands
+        (bot_id, action, status, requested_by, auto_remediation_attempt_id)
+      VALUES ($1, 'restart', 'queued', 'auto-remediation', $2)
+    `, [botId, attempt.rows[0].id]);
+
+    const runtime = {
+      getRuntimeSnapshot: () => [],
+      async startBotById() {},
+      async stopBotById() { stopped += 1; },
+      async stopBotRuntime() {}
+    };
+    const worker = createCustomerBotWorker({
+      pool, runtime, workerId: 'auto-remediation-unhealthy-worker',
+      capacity: 2, leaseSeconds: 90, pollIntervalMs: 500,
+      botReadyTimeoutMs: 1000, botReadyPollMs: 100,
+      logger: { log() {}, error() {} }
+    });
+    assert.equal(await worker.runOnce(), true);
+    const result = await pool.query(
+      'SELECT status, error_message, finished_at FROM bot_auto_remediation_attempts WHERE id = $1',
+      [attempt.rows[0].id]
+    );
+    assert.equal(result.rows[0].status, 'failed');
+    assert.match(result.rows[0].error_message, /did not reach a healthy running state/);
+    assert.ok(result.rows[0].finished_at);
+    assert.equal(stopped, 1);
+  } finally {
+    if (botId) await pool.query('DELETE FROM telegram_bots WHERE id = $1', [botId]);
+    await pool.end();
+  }
+});
