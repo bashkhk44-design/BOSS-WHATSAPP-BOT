@@ -15,7 +15,7 @@ const { getProjectSecretNames } = require('./project-db');
 const { analyzeProject } = require('./gemini-analyst');
 const { buildProject } = require('./ai-builder');
 const { testProjectBundle } = require('./ai-tester');
-const { fixProject } = require('./ai-fixer');
+const { fixProject, canAttemptFix } = require('./ai-fixer');
 const { prepareDeployment } = require('./ai-deployer');
 
 async function runStage({
@@ -164,7 +164,7 @@ async function runProjectPipeline({
     let finalTest = test;
     let fixResult = null;
 
-    if (!test.passed && test.sandbox?.status === 'passed') {
+    if (!test.passed && canAttemptFix(test)) {
       const previousFix = await getLatestCompletedProjectAiJob({
         projectId,
         jobType: 'fix'
@@ -214,15 +214,24 @@ async function runProjectPipeline({
 
         finalBundle = fixResult.bundle;
 
-        const retryPostFixTest =
-          previousPostFixResult?.passed === false;
+        if (!fixResult.passed && !canAttemptFix(fixResult.testResult)) {
+          return {
+            completed: false,
+            projectId,
+            stage: 'testing_environment',
+            analysis,
+            design,
+            build,
+            test,
+            fixResult,
+            finalTest: fixResult.testResult,
+            summary: 'توقف الإصلاح لأن بيئة الاختبار لم تؤكد تنفيذ مجموعة الاختبارات بعد التعديل.'
+          };
+        }
 
         finalTest = await stage(
           'test_after_fix',
-          () => testProjectBundle({
-            bundle: finalBundle,
-            designArtifact: design.artifact
-          }),
+          async () => fixResult.testResult,
           { forceRetry: true }
         );
       }
