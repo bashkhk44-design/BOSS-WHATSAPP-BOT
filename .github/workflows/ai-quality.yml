@@ -8,6 +8,7 @@ on:
       - feat/runtime-health-monitor
       - feat/safe-auto-remediation
       - audit-hardening
+      - cloudflare-ci-staging-branch
   pull_request:
     branches:
       - audit-hardening
