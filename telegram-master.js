@@ -860,7 +860,7 @@ bot.callbackQuery(/^project:deploy:readiness:(\d+)$/, async (ctx) => {
   }
 });
 
-bot.callbackQuery(/^project:deploy:preflight:(\\d+)$/, async (ctx) => {
+bot.callbackQuery(/^project:deploy:preflight:(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   try {
     const release = await getReleaseCandidate(ctx.match[1]);
@@ -900,7 +900,7 @@ bot.callbackQuery(/^project:deploy:preflight:(\\d+)$/, async (ctx) => {
   }
 });
 
-bot.callbackQuery(/^project:deploy:preflight-status:(\\d+)$/, async (ctx) => {
+bot.callbackQuery(/^project:deploy:preflight-status:(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   try {
     const release = await getReleaseCandidate(ctx.match[1]);
