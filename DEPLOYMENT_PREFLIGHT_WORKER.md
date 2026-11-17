@@ -37,5 +37,6 @@ The process intentionally does not require `TELEGRAM_BOT_TOKEN` or `BOTS_ENCRYPT
 - The sandbox receives placeholder values for required environment variables, not real customer secrets.
 - The sandbox has no network access. No provider credentials are passed to it.
 - `executionAllowed` and `deployed` are hard-coded false in the worker result.
+- The result distinguishes an attempted preflight from confirmed container execution (a reported Node runtime); a missing Docker daemon or invalid sandbox setup is never reported as a confirmed container run.
 - A successful preflight is evidence for a later manual review, not deployment authorization.
 - Do not point this worker at the production database or deploy it before the separate disposable-database validation and explicit production approval.
