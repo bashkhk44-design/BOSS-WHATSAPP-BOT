@@ -249,7 +249,7 @@ async function runInteractiveIntake(ctx, session, userMessage = '') {
       userMessage
     );
     await saveIntakeSession({ telegramUserId: ctx.from.id, projectId: session.project_id, step: 'ai_intake', data: fallback.data });
-    const notice = '⚠️ المحلل الذكي غير متاح مؤقتاً بسبب حد الاستخدام. حفظنا رسالتك وسنكمل جمع المواصفات بأسئلة واضحة دون فقدان إجاباتك.\n\n';
+    const notice = '⚠️ المحلل الذكي غير متاح مؤقتاً بسبب حد الاستخدام أو مشكلة اتصال. حفظنا إجابتك وسنكمل جمع المواصفات بأسئلة واضحة دون فقدان ما سبق.\n\n';
     await saveMessage(ctx.from.id, session.project_id, 'assistant', notice + fallback.assistantMessage);
     await ctx.reply(notice + fallback.assistantMessage);
   }
