@@ -53,7 +53,7 @@ async function main() {
   const shutdown = async signal => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(\`Queue worker stopping: \${signal}\`);
+    console.log('Queue worker stopping: ' + signal);
     await worker.stop();
     await pool.end();
   };
@@ -67,7 +67,7 @@ async function main() {
     process.exitCode = 1;
   }));
 
-  console.log(\`Queue worker started: \${worker.workerId}\`);
+  console.log('Queue worker started: ' + worker.workerId);
   await worker.start();
 }
 
