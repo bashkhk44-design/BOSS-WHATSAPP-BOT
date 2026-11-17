@@ -102,10 +102,19 @@ function createQueueWorker({
   }
 
   async function run() {
+    let consecutiveErrors = 0;
     while (!stopping) {
-      const processed = await processOne();
-      if (!processed && !stopping) {
-        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+      try {
+        const processed = await processOne();
+        consecutiveErrors = 0;
+        if (!processed && !stopping) {
+          await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+        }
+      } catch (error) {
+        consecutiveErrors += 1;
+        const retryDelayMs = Math.min(30000, Math.max(pollIntervalMs, 1000) * (2 ** Math.min(consecutiveErrors - 1, 5)));
+        logger.error(`QUEUE WORKER DATABASE/LOOP ERROR (attempt ${consecutiveErrors}); retrying in ${retryDelayMs}ms: ${error.message}`);
+        if (!stopping) await new Promise(resolve => setTimeout(resolve, retryDelayMs));
       }
     }
   }
