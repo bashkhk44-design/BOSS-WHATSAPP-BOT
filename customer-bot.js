@@ -9,21 +9,21 @@ function createCustomerBot(record, token) {
 
   clientBot.command('start', async (ctx) => {
     await ctx.reply(
-      `أهلاً بك في ${record.name} 👋\\n\\n` +
+      \`أهلاً بك في \${record.name} 👋\n\n\` +
       'هذا بوت النشاط، وسيتم إعداد خدماته قريباً.'
     );
   });
 
   clientBot.command('help', async (ctx) => {
     await ctx.reply(
-      `مساعدة ${record.name}\\n\\n` +
+      \`مساعدة \${record.name}\n\n\` +
       'سيتم تفعيل خدمات هذا البوت بعد إعداد مواصفاته.'
     );
   });
 
   clientBot.catch((err) => {
     console.error(
-      `CUSTOMER BOT ${record.id} UPDATE ERROR:`,
+      \`CUSTOMER BOT \${record.id} UPDATE ERROR:\`,
       err.error_code || '',
       err.message || ''
     );
