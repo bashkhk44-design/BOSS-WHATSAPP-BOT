@@ -44,6 +44,17 @@ test('AI intake merges only allowed non-empty string fields', () => {
   assert.equal(result.readyForReview, false);
 });
 
+test('AI intake cannot finish while missing items remain', () => {
+  const result = normalizeIntakeResult({
+    assistant_message: 'ما زالت هناك نقطة تحتاج توضيحاً.',
+    fields: {},
+    missing_items: ['تحديد صلاحيات الموظفين'],
+    ready_for_review: true
+  });
+  assert.equal(result.readyForReview, false);
+  assert.deepEqual(result.missingItems, ['تحديد صلاحيات الموظفين']);
+});
+
 test('AI intake requires a customer-facing next message', () => {
   assert.throws(
     () => normalizeIntakeResult({ fields: {}, ready_for_review: true }),
