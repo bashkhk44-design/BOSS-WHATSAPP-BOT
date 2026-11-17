@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const { buildReleaseReport, createReleaseCandidate, decideRelease, initProjectReleaseDatabase } = require('../project-release');
 
-test('PostgreSQL release handoff enforces customer then manager approval and immutable artifact', async () => {
+test('PostgreSQL release handoff enforces customer then manager approval and immutable artifact', { skip: !process.env.DATABASE_URL }, async () => {
   let clientId;
   let projectId;
   const customerTelegramId = String(900000000 + Math.floor(Math.random() * 90000000));
