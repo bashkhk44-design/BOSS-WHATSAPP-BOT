@@ -19,6 +19,16 @@ function validBundle() {
         })
       },
       {
+        path: 'package-lock.json',
+        content: JSON.stringify({
+          name: 'sample-bot',
+          version: '1.0.0',
+          lockfileVersion: 3,
+          requires: true,
+          packages: { '': { name: 'sample-bot', version: '1.0.0' } }
+        })
+      },
+      {
         path: 'boss-manifest.json',
         content: JSON.stringify({
           version: 1,
@@ -28,16 +38,13 @@ function validBundle() {
           healthCheck: '/health'
         })
       },
-      {
-        path: 'index.js',
-        content: "console.log('sample');"
-      }
+      { path: 'index.js', content: "console.log('sample');" }
     ]
   };
 }
 
 test('bundle validation accepts a safe project bundle', () => {
-  assert.equal(validateBundle(validBundle()).files.length, 3);
+  assert.equal(validateBundle(validBundle()).files.length, 4);
 });
 
 test('bundle validation rejects path traversal', () => {
@@ -49,17 +56,11 @@ test('bundle validation rejects path traversal', () => {
 test('manifest validation checks the declared start script', () => {
   const pkg = { scripts: { start: 'node index.js' } };
   const manifest = {
-    version: 1,
-    requiredEnv: ['DATABASE_URL'],
-    optionalEnv: [],
-    startScript: 'start',
-    healthCheck: '/health'
+    version: 1, requiredEnv: ['DATABASE_URL'], optionalEnv: [],
+    startScript: 'start', healthCheck: '/health'
   };
   assert.equal(validateManifest(manifest, pkg).startScript, 'start');
-  assert.throws(
-    () => validateManifest({ ...manifest, startScript: 'missing' }, pkg),
-    /غير موجود/
-  );
+  assert.throws(() => validateManifest({ ...manifest, startScript: 'missing' }, pkg), /غير موجود/);
 });
 
 test('secret scanner detects embedded Telegram credentials', () => {
@@ -70,23 +71,26 @@ test('secret scanner detects embedded Telegram credentials', () => {
   assert.equal(findings[0].type, 'TELEGRAM_BOT_TOKEN');
 });
 
-test('project bundle static checks pass for a valid minimal bundle', async () => {
+test('project bundle static checks pass only with dependency preflight', async () => {
   const result = await testProjectBundle({ bundle: validBundle() });
   assert.equal(result.passed, true, JSON.stringify(result.checks));
+  assert.equal(result.checks.find(check => check.name === 'dependency-preflight').passed, true);
+});
+
+test('project bundle without a lockfile fails closed', async () => {
+  const bundle = validBundle();
+  bundle.files = bundle.files.filter(file => file.path !== 'package-lock.json');
+  const result = await testProjectBundle({ bundle });
+  assert.equal(result.passed, false);
+  assert.equal(result.checks.find(check => check.name === 'dependency-preflight').passed, false);
 });
 
 test('alternative AI providers require explicit opt-in', () => {
   const names = [
-    'GEMINI_API_KEY',
-    'GEMINI_MODEL',
-    'GEMINI_FREE_MODEL',
-    'GROQ_API_KEY',
-    'OPENROUTER_API_KEY',
-    'AI_ENABLE_GROQ_FREE',
-    'AI_ENABLE_OPENROUTER'
+    'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_FREE_MODEL', 'GROQ_API_KEY',
+    'OPENROUTER_API_KEY', 'AI_ENABLE_GROQ_FREE', 'AI_ENABLE_OPENROUTER'
   ];
   const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
-
   try {
     process.env.GEMINI_API_KEY = 'test-gemini';
     process.env.GEMINI_MODEL = 'gemini-3.8-flash';
@@ -95,28 +99,20 @@ test('alternative AI providers require explicit opt-in', () => {
     process.env.OPENROUTER_API_KEY = 'test-openrouter';
     delete process.env.AI_ENABLE_GROQ_FREE;
     delete process.env.AI_ENABLE_OPENROUTER;
-
     assert.deepEqual(providers().map(provider => provider.id), ['gemini']);
     assert.equal(getGeminiModel(), 'gemini-3.8-flash');
     assert.equal(providers()[0].model, getGeminiModel());
-
     delete process.env.GEMINI_MODEL;
     process.env.GEMINI_FREE_MODEL = 'gemini-3.8-flash';
     assert.equal(getGeminiModel(), 'gemini-3.8-flash');
-
     process.env.GEMINI_MODEL = 'gemini-3.8-flash';
     process.env.GEMINI_FREE_MODEL = 'unsupported-model';
     assert.equal(getGeminiModel(), 'gemini-3.8-flash');
-
     process.env.GEMINI_MODEL = 'unsupported-model';
     assert.equal(providers()[0].model, 'gemini-3.8-flash');
-
     process.env.AI_ENABLE_GROQ_FREE = 'true';
     process.env.AI_ENABLE_OPENROUTER = 'true';
-    assert.deepEqual(
-      providers().map(provider => provider.id),
-      ['gemini', 'groq', 'openrouter']
-    );
+    assert.deepEqual(providers().map(provider => provider.id), ['gemini', 'groq', 'openrouter']);
   } finally {
     for (const name of names) {
       if (previous[name] === undefined) delete process.env[name];
@@ -124,7 +120,6 @@ test('alternative AI providers require explicit opt-in', () => {
     }
   }
 });
-
 
 test('AI intake fallback collects requirements one question at a time without AI', () => {
   let state = advanceFallbackIntake({ aiFallback: true, fallbackField: 'description' });
@@ -144,13 +139,11 @@ test('AI intake fallback collects requirements one question at a time without AI
   assert.equal(state.data.features, 'عرض المنتجات واستقبال الطلبات');
 });
 
-
 test('AI fallback preserves the message that triggered provider failure', () => {
   const state = advanceFallbackIntake(
     { projectName: 'مطعم مرهف', businessType: 'restaurant', platform: 'telegram' },
     'نظام طلبات طعام مع التوصيل'
   );
-
   assert.equal(state.data.description, 'نظام طلبات طعام مع التوصيل');
   assert.equal(state.data.projectName, 'مطعم مرهف');
   assert.equal(state.data.businessType, 'restaurant');
@@ -159,16 +152,10 @@ test('AI fallback preserves the message that triggered provider failure', () => 
 });
 
 test('AI fallback skips already collected fields and never overwrites them', () => {
-  const state = advanceFallbackIntake(
-    {
-      aiFallback: true,
-      fallbackField: 'description',
-      description: 'وصف محفوظ من المحلل',
-      features: 'ميزات محفوظة من المحلل'
-    },
-    'أزرار قائمة الطعام والسلة وتتبع الطلب'
-  );
-
+  const state = advanceFallbackIntake({
+    aiFallback: true, fallbackField: 'description',
+    description: 'وصف محفوظ من المحلل', features: 'ميزات محفوظة من المحلل'
+  }, 'أزرار قائمة الطعام والسلة وتتبع الطلب');
   assert.equal(state.data.description, 'وصف محفوظ من المحلل');
   assert.equal(state.data.features, 'ميزات محفوظة من المحلل');
   assert.equal(state.data.buttons, 'أزرار قائمة الطعام والسلة وتتبع الطلب');
@@ -177,14 +164,9 @@ test('AI fallback skips already collected fields and never overwrites them', () 
 
 test('AI fallback can finish immediately when all required sections are already present', () => {
   const state = advanceFallbackIntake({
-    description: 'وصف',
-    features: 'ميزات',
-    buttons: 'أزرار',
-    payments: 'لا يوجد',
-    languagesDesign: 'العربية',
-    extra: 'لا يوجد'
+    description: 'وصف', features: 'ميزات', buttons: 'أزرار',
+    payments: 'لا يوجد', languagesDesign: 'العربية', extra: 'لا يوجد'
   });
-
   assert.equal(state.readyForReview, true);
   assert.equal(state.data.aiFallback, false);
   assert.equal(state.data.fallbackField, undefined);
