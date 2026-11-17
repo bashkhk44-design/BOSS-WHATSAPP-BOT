@@ -945,14 +945,13 @@ async function startTelegramServices() {
 
 async function recoverRuntimeAfterLockLoss(err) {
   if (shuttingDown) return;
+  runtimeRecoveryRequested = true;
   if (runtimeRecoveryPromise) return runtimeRecoveryPromise;
 
   console.error(
     'WARNING: Telegram runtime lock was lost. Stopping Telegram services and attempting safe lock recovery.',
     err?.message || err || ''
   );
-
-  runtimeRecoveryRequested = true;
 
   // During initial startup, the startup loop already owns recovery.
   if (startupInProgress) return;
@@ -984,7 +983,7 @@ async function recoverRuntimeAfterLockLoss(err) {
 
         await startTelegramServices();
 
-        if (!(await runtimeLockIsSafe())) {
+        if (!(await runtimeLockIsSafe()) || runtimeRecoveryRequested) {
           throw new Error('Runtime lock was lost while restarting Telegram services');
         }
 
