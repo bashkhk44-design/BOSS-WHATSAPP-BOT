@@ -33,6 +33,11 @@ const {
   reviewDeploymentReadiness,
   formatDeploymentReadinessReview
 } = require('./deployment-readiness-telegram');
+const {
+  enqueueDeploymentPreflight,
+  getLatestDeploymentPreflightJob,
+  formatDeploymentPreflightJob
+} = require('./deployment-preflight-queue');
 
 const CUSTOMER_BOT_WORKER_MODE = process.env.CUSTOMER_BOT_WORKER_MODE === 'external';
 
@@ -839,15 +844,81 @@ bot.callbackQuery(/^project:deploy:readiness:(\d+)$/, async (ctx) => {
     const review = reviewDeploymentReadiness({ release, authorization });
     const message = formatDeploymentReadinessReview({ release, review });
 
+    const keyboard = new InlineKeyboard();
+    if (release.status === 'approved' &&
+        review.artifactDigestValid &&
+        review.authorizationDigestValid) {
+      keyboard.text('🧪 تشغيل فحص Docker المعزول', 'project:deploy:preflight:' + release.id).row();
+    }
+    keyboard.text('🔄 تحديث المراجعة', 'project:deploy:readiness:' + release.id);
+
     await ctx.answerCallbackQuery({ text: 'اكتملت مراجعة المتطلبات.' });
-    await ctx.reply(message, {
-      reply_markup: new InlineKeyboard().text(
-        '🔄 تحديث المراجعة',
-        'project:deploy:readiness:' + release.id
-      )
-    });
+    await ctx.reply(message, { reply_markup: keyboard });
   } catch (error) {
     console.error('DEPLOYMENT READINESS TELEGRAM REVIEW ERROR:', error.message);
+    await ctx.answerCallbackQuery({ text: String(error.message || error).slice(0, 180) });
+  }
+});
+
+bot.callbackQuery(/^project:deploy:preflight:(\\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  try {
+    const release = await getReleaseCandidate(ctx.match[1]);
+    if (!release) throw new Error('الإصدار غير موجود.');
+
+    const authorizationResult = await pool.query(
+      `SELECT id, release_id, authorized_by, status, authorization_sha256, created_at
+       FROM project_deployment_authorizations
+       WHERE release_id = $1`,
+      [release.id]
+    );
+    const authorization = authorizationResult.rows[0] || null;
+    const queued = await enqueueDeploymentPreflight({
+      pool,
+      release,
+      authorization,
+      requestedBy: ctx.from.id
+    });
+    const job = await getLatestDeploymentPreflightJob({
+      pool,
+      releaseId: release.id,
+      projectId: release.project_id
+    });
+
+    await ctx.answerCallbackQuery({
+      text: queued.created ? 'تمت إضافة الفحص إلى قائمة الانتظار.' : 'يوجد فحص سابق لهذا الإصدار.'
+    });
+    await ctx.reply(formatDeploymentPreflightJob(job, release), {
+      reply_markup: new InlineKeyboard()
+        .text('🔄 تحديث حالة الفحص', 'project:deploy:preflight-status:' + release.id)
+        .row()
+        .text('📋 مراجعة متطلبات الجاهزية', 'project:deploy:readiness:' + release.id)
+    });
+  } catch (error) {
+    console.error('DEPLOYMENT PREFLIGHT QUEUE ERROR:', error.message);
+    await ctx.answerCallbackQuery({ text: String(error.message || error).slice(0, 180) });
+  }
+});
+
+bot.callbackQuery(/^project:deploy:preflight-status:(\\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  try {
+    const release = await getReleaseCandidate(ctx.match[1]);
+    if (!release) throw new Error('الإصدار غير موجود.');
+    const job = await getLatestDeploymentPreflightJob({
+      pool,
+      releaseId: release.id,
+      projectId: release.project_id
+    });
+    await ctx.answerCallbackQuery({ text: 'تم تحديث حالة الفحص.' });
+    await ctx.reply(formatDeploymentPreflightJob(job, release), {
+      reply_markup: new InlineKeyboard()
+        .text('🔄 تحديث حالة الفحص', 'project:deploy:preflight-status:' + release.id)
+        .row()
+        .text('📋 مراجعة متطلبات الجاهزية', 'project:deploy:readiness:' + release.id)
+    });
+  } catch (error) {
+    console.error('DEPLOYMENT PREFLIGHT STATUS ERROR:', error.message);
     await ctx.answerCallbackQuery({ text: String(error.message || error).slice(0, 180) });
   }
 });
