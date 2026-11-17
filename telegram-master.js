@@ -11,7 +11,7 @@ const {
   setRuntimeLockFailureHandler
 } = require('./db');
 
-const { startBotRuntime, stopBotRuntime, getRunningBotCount } = require('./bot-runtime');
+const { startBotRuntime, stopBotRuntime, startBotById, stopBotById, getRunningBotCount, getBotRuntimeStatus } = require('./bot-runtime');
 const {
   createProjectAiJob,
   getLatestCompletedProjectAiJob,
@@ -143,27 +143,49 @@ async function getBots() {
 
 async function showBots(ctx) {
   const bots = await getBots();
+  if (!bots.length) return ctx.reply('🤖 لا توجد بوتات مسجلة حالياً.');
 
-  if (!bots.length) {
-    return ctx.reply('🤖 لا توجد بوتات مسجلة حالياً.');
+  await ctx.reply('🤖 إدارة البوتات\\nاختر إجراءً لكل بوت. الحالة التشغيلية أدناه من عامل التشغيل، وليست من حقل التفعيل فقط.');
+  for (const b of bots) {
+    const runtimeStatus = getBotRuntimeStatus(b.id);
+    const statusLabels = {
+      running: '🟢 يعمل',
+      starting: '🟡 يبدأ التشغيل',
+      retrying: '🟠 يعيد المحاولة',
+      stopped: '🔴 متوقف',
+      conflict: '⛔ تعارض polling',
+      unauthorized: '⛔ Token غير صالح',
+      error: '❌ خطأ',
+      not_loaded: '⚪ غير محمّل'
+    };
+    const keyboard = new InlineKeyboard();
+    if (b.active) {
+      keyboard.text('⏹ إيقاف', 'bot:stop:' + b.id).text('🔄 إعادة تشغيل', 'bot:restart:' + b.id);
+    } else {
+      keyboard.text('▶️ تشغيل', 'bot:start:' + b.id);
+    }
+    await ctx.reply(
+      '🤖 ' + b.name + '\\n' +
+      'المعرف: ' + b.id + '\\n' +
+      'الحساب: ' + (b.username ? '@' + b.username : 'غير معروف') + '\\n' +
+      'التفعيل: ' + (b.active ? 'مفعّل' : 'معطّل') + '\\n' +
+      'التشغيل: ' + (statusLabels[runtimeStatus] || runtimeStatus),
+      { reply_markup: keyboard }
+    );
   }
-
-  const lines = bots.map((b, i) =>
-    `${i + 1}. ${b.name}\nالحساب: ${b.username ? '@' + b.username : 'غير معروف'}\nالحالة: ${b.active ? '🟢 فعال' : '🔴 متوقف'}`
-  );
-
-  return ctx.reply('🤖 قائمة البوتات:\n\n' + lines.join('\n\n'));
 }
 
 async function showStats(ctx) {
   const bots = await getBots();
   const active = bots.filter(b => b.active).length;
-
+  const running = getRunningBotCount();
   return ctx.reply(
-    `📊 إحصائيات BOSS BOT MASTER\n\n` +
-    `إجمالي البوتات: ${bots.length}\n` +
-    `الفعالة: ${active}\n` +
-    `المتوقفة: ${bots.length - active}`
+    '📊 إحصائيات BOSS BOT MASTER\\n\\n' +
+    'إجمالي البوتات: ' + bots.length + '\\n' +
+    'مفعّلة في قاعدة البيانات: ' + active + '\\n' +
+    'تعمل فعلياً في هذه العملية: ' + running + '\\n' +
+    'المتوقفة أو غير المحمّلة: ' + Math.max(0, active - running) + '\\n' +
+    'الحد التشغيلي الحالي: 100 بوت'
   );
 }
 
@@ -196,6 +218,34 @@ bot.command('bots', async (ctx) => {
 bot.command('stats', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply('⛔ غير مصرح لك.');
   await showStats(ctx);
+});
+
+bot.callbackQuery(/^bot:(start|stop|restart):(\\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  const action = ctx.match[1];
+  const botId = Number(ctx.match[2]);
+  await ctx.answerCallbackQuery({ text: 'جارٍ تنفيذ الأمر...' });
+  try {
+    if (action === 'stop') {
+      await pool.query('UPDATE telegram_bots SET active = FALSE WHERE id = $1', [botId]);
+      await stopBotById(botId);
+      return ctx.reply('⏹ تم إيقاف البوت رقم ' + botId + ' وتعطيل تشغيله التلقائي.');
+    }
+    if (action === 'start') {
+      const saved = await pool.query('UPDATE telegram_bots SET active = TRUE WHERE id = $1 RETURNING id', [botId]);
+      if (!saved.rowCount) return ctx.reply('لم يتم العثور على البوت.');
+      await startBotById(botId);
+      return ctx.reply('▶️ تم تفعيل طلب تشغيل البوت رقم ' + botId + '. راجع حالته من قائمة البوتات.');
+    }
+    const saved = await pool.query('UPDATE telegram_bots SET active = TRUE WHERE id = $1 RETURNING id', [botId]);
+    if (!saved.rowCount) return ctx.reply('لم يتم العثور على البوت.');
+    await stopBotById(botId);
+    await startBotById(botId);
+    return ctx.reply('🔄 أُعيد تشغيل البوت رقم ' + botId + '.');
+  } catch (error) {
+    console.error('CUSTOMER BOT MANAGEMENT ERROR:', botId, error.message);
+    return ctx.reply('❌ تعذر تنفيذ الأمر للبوت رقم ' + botId + ': ' + String(error.message || error).slice(0, 500));
+  }
 });
 
 
@@ -743,6 +793,12 @@ bot.on('message:text', async (ctx) => {
             username: me.username || null,
             token: newToken
           });
+
+          try {
+            await startBotById(saved.id);
+          } catch (runtimeError) {
+            console.error('NEW CUSTOMER BOT START ERROR:', saved.id, runtimeError.message);
+          }
 
           pendingAdds.delete(userId);
 
