@@ -31,6 +31,21 @@ function buildReleaseReport({ project, spec, design, testResult, deployment }) {
       testResult?.sandbox?.executionStatus !== 'completed') {
     throw new Error('لا يمكن تجهيز تقرير تسليم دون نجاح اختبار مكتمل داخل البيئة المعزولة.');
   }
+  const verifiedSummary = testResult.sandbox.testSummary || {};
+  if (Number(verifiedSummary.tests) < 1 ||
+      Number(verifiedSummary.passed) !== Number(verifiedSummary.tests) ||
+      Number(verifiedSummary.failed || 0) !== 0 ||
+      Number(verifiedSummary.skipped || 0) !== 0 ||
+      Number(verifiedSummary.todo || 0) !== 0 ||
+      Number(verifiedSummary.cancelled || 0) !== 0 ||
+      !Array.isArray(testResult.sandbox.acceptanceTests) ||
+      !testResult.sandbox.acceptanceTests.length ||
+      !testResult.sandbox.acceptanceTests.every(item => item.passed === true)) {
+    throw new Error('ملخص الاختبارات أو تغطية اختبارات القبول غير مكتملة.');
+  }
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
+    throw new Error('نسخة مواصفات العميل غير صالحة للتقرير.');
+  }
 
   const checks = Array.isArray(deployment?.checks)
     ? deployment.checks.map(item => ({
@@ -101,13 +116,17 @@ function createImmutableReleaseArtifact({ report, bundle }) {
   if (!report || !bundle || !Array.isArray(bundle.files) || !bundle.files.length) {
     throw new Error('تقرير الإصدار أو ملفات المشروع غير مكتملة.');
   }
+  const seenPaths = new Set();
   const files = bundle.files.map(file => {
     if (!file || typeof file.path !== 'string' || typeof file.content !== 'string') {
       throw new Error('ملف ضمن حزمة الإصدار غير صالح.');
     }
-    if (file.path.startsWith('/') || file.path.split(/[\\/]/).includes('..')) {
+    if (/^(?:\\/|[A-Za-z]:|\\\\)/.test(file.path) ||
+        file.path.split(/[\\/]/).includes('..') || file.path.includes('\\0')) {
       throw new Error('مسار ملف غير آمن ضمن حزمة الإصدار.');
     }
+    if (seenPaths.has(file.path)) throw new Error('يوجد مسار مكرر ضمن حزمة الإصدار.');
+    seenPaths.add(file.path);
     return { path: file.path, content: file.content };
   }).sort((a, b) => a.path.localeCompare(b.path));
 
