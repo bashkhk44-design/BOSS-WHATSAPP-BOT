@@ -77,6 +77,8 @@ test('project bundle static checks pass for a valid minimal bundle', async () =>
 test('alternative AI providers require explicit opt-in', () => {
   const names = [
     'GEMINI_API_KEY',
+    'GEMINI_MODEL',
+    'GEMINI_FREE_MODEL',
     'GROQ_API_KEY',
     'OPENROUTER_API_KEY',
     'AI_ENABLE_GROQ_FREE',
@@ -86,12 +88,18 @@ test('alternative AI providers require explicit opt-in', () => {
 
   try {
     process.env.GEMINI_API_KEY = 'test-gemini';
+    process.env.GEMINI_MODEL = 'gemini-3.8-flash';
+    delete process.env.GEMINI_FREE_MODEL;
     process.env.GROQ_API_KEY = 'test-groq';
     process.env.OPENROUTER_API_KEY = 'test-openrouter';
     delete process.env.AI_ENABLE_GROQ_FREE;
     delete process.env.AI_ENABLE_OPENROUTER;
 
     assert.deepEqual(providers().map(provider => provider.id), ['gemini']);
+    assert.equal(providers()[0].model, 'gemini-3.8-flash');
+
+    process.env.GEMINI_MODEL = 'unsupported-model';
+    assert.equal(providers()[0].model, 'gemini-3.8-flash');
 
     process.env.AI_ENABLE_GROQ_FREE = 'true';
     process.env.AI_ENABLE_OPENROUTER = 'true';
