@@ -133,10 +133,11 @@ function createRuntimeMonitor({
 async function main() {
   require('dotenv').config();
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+  const { getPostgresSslConfig } = require('./postgres-ssl');
   const { Pool } = require('pg');
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false },
+    ssl: getPostgresSslConfig(),
     max: 2,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000
