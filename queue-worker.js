@@ -24,6 +24,23 @@ function createQueueWorker({
 
   let stopping = false;
   let loopPromise = null;
+  const sleepWaiters = new Set();
+
+  function waitOrStop(milliseconds) {
+    return new Promise(resolve => {
+      const finish = () => {
+        clearTimeout(timer);
+        sleepWaiters.delete(finish);
+        resolve();
+      };
+      const timer = setTimeout(finish, milliseconds);
+      sleepWaiters.add(finish);
+    });
+  }
+
+  function wakeSleeper() {
+    for (const finish of [...sleepWaiters]) finish();
+  }
 
   async function processOne() {
     const expired = await queueApi.recoverExpiredPlatformJobs(pool, leaseSeconds, Object.keys(handlers));
@@ -108,13 +125,13 @@ function createQueueWorker({
         const processed = await processOne();
         consecutiveErrors = 0;
         if (!processed && !stopping) {
-          await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+          await waitOrStop(pollIntervalMs);
         }
       } catch (error) {
         consecutiveErrors += 1;
         const retryDelayMs = Math.min(30000, Math.max(pollIntervalMs, 1000) * (2 ** Math.min(consecutiveErrors - 1, 5)));
         logger.error(`QUEUE WORKER DATABASE/LOOP ERROR (attempt ${consecutiveErrors}); retrying in ${retryDelayMs}ms: ${error.message}`);
-        if (!stopping) await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+        if (!stopping) await waitOrStop(retryDelayMs);
       }
     }
   }
@@ -135,6 +152,7 @@ function createQueueWorker({
     },
     async stop() {
       stopping = true;
+      wakeSleeper();
       if (loopPromise) await loopPromise;
     }
   };
