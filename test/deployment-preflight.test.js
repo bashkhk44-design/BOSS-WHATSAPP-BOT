@@ -233,6 +233,17 @@ test('preflight rejects a mismatched deployment authorization digest', () => {
   assert.ok(result.readiness.blockers.includes('deployment_authorization_missing_or_mismatched'));
 });
 
+test('preflight rejects an execution approval with a tampered digest', () => {
+  const input = fixture();
+  input.executionApproval.approvalSha256 = 'f'.repeat(64);
+  const result = runDeploymentPreflight({
+    ...input,
+    image: IMAGE,
+    spawn: successfulDockerSpawn([])
+  });
+  assert.ok(result.readiness.blockers.includes('separate_execution_approval_missing_or_mismatched'));
+});
+
 test('preflight rejects an execution approval bound to a different target', () => {
   const input = fixture();
   input.executionApproval.serviceId = 'another-service';
