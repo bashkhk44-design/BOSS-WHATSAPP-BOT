@@ -4,31 +4,33 @@ require('dotenv').config();
 
 const path = require('node:path');
 const { Pool } = require('pg');
+const { decryptToken } = require('./db');
 const { createQueueWorker } = require('./queue-worker');
+const { createTelegramUpdateHandler } = require('./telegram-update-handler');
 
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-  if (!process.env.JOB_HANDLERS_MODULE) {
-    throw new Error('JOB_HANDLERS_MODULE must point to a module exporting a job handler map; refusing to consume jobs without handlers');
-  }
-
-  const handlersPath = path.isAbsolute(process.env.JOB_HANDLERS_MODULE)
-    ? process.env.JOB_HANDLERS_MODULE
-    : path.resolve(process.cwd(), process.env.JOB_HANDLERS_MODULE);
-  const loaded = require(handlersPath);
-  const handlers = loaded.handlers || loaded;
-
-  if (!handlers || typeof handlers !== 'object' || !Object.keys(handlers).length) {
-    throw new Error('The configured job handler module exports no handlers; worker will not start');
-  }
+  if (!process.env.BOTS_ENCRYPTION_KEY) throw new Error('BOTS_ENCRYPTION_KEY is required for Telegram update processing');
 
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false },
     max: Number(process.env.WORKER_DB_POOL_MAX || 2),
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000
   });
+
+  const handlers = {
+    'telegram.update': createTelegramUpdateHandler({ pool, decryptToken })
+  };
+
+  if (process.env.JOB_HANDLERS_MODULE) {
+    const handlersPath = path.isAbsolute(process.env.JOB_HANDLERS_MODULE)
+      ? process.env.JOB_HANDLERS_MODULE
+      : path.resolve(process.cwd(), process.env.JOB_HANDLERS_MODULE);
+    const loaded = require(handlersPath);
+    Object.assign(handlers, loaded.handlers || loaded);
+  }
 
   const worker = createQueueWorker({
     pool,
