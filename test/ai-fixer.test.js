@@ -134,4 +134,20 @@ test('repair policy requires completed execution and an explicitly repairable fa
     executionStatus: 'completed',
     repairable: false
   })), false);
+  assert.equal(canAttemptFix({
+    passed: false,
+    sandbox: {
+      status: 'passed',
+      executionStatus: 'completed',
+      repairable: false
+    }
+  }), true);
+  assert.equal(canAttemptFix({
+    passed: false,
+    sandbox: {
+      status: 'failed',
+      executionStatus: 'completed',
+      repairable: false
+    }
+  }), false);
 });
