@@ -51,7 +51,10 @@ test('manifest preflight rejects URL, git, file, and workspace dependency source
     'https://attacker.invalid/pkg.tgz',
     'git+https://attacker.invalid/pkg.git',
     'file:../local-package',
-    'workspace:*'
+    'workspace:*',
+    'owner/repository',
+    'owner/repository#main',
+    'git@github.com:owner/repository.git'
   ]) {
     assert.equal(validatePackageManifest({ dependencies: { suspect: spec } }).passed, false);
   }
@@ -78,7 +81,7 @@ test('npm command disables lifecycle scripts and routes registry traffic through
   assert.ok(args.includes('--https-proxy=http://egress-proxy.internal:3128'));
 });
 
-test('preparation generates and validates a real lockfile using a secret-free environment', () => {
+test('preparation validates the npm result using a secret-free environment', () => {
   const dir = fixture();
   const output = path.join(dir, 'output', 'package-lock.json');
   let invocation;
