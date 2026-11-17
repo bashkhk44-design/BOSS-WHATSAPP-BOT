@@ -170,6 +170,14 @@ test('PostgreSQL release handoff enforces customer then manager approval and imm
     );
 
     await assert.rejects(
+      pool.query(
+        'DELETE FROM project_deployment_authorizations WHERE id = $1',
+        [authorization.id]
+      ),
+      /immutable/
+    );
+
+    await assert.rejects(
       pool.query('UPDATE project_release_candidates SET artifact_sha256 = $2 WHERE id = $1', [candidate.id, 'c'.repeat(64)]),
       /immutable/
     );
