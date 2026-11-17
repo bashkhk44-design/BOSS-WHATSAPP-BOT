@@ -8,11 +8,12 @@ test('isolated deployment worker consumes only its registered job type in real P
   skip: !enabled && 'DATABASE_URL is not set; run only against a disposable CI database'
 }, async () => {
   const { Pool } = require('pg');
+  const { getPostgresSslConfig } = require('../postgres-ssl');
   const { enqueuePlatformJob } = require('../platform-queue');
   const { createQueueWorker } = require('../queue-worker');
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false },
+    ssl: getPostgresSslConfig(),
     max: 2,
     connectionTimeoutMillis: 10000
   });
