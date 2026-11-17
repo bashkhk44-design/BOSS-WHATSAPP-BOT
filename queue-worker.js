@@ -9,13 +9,18 @@ function createQueueWorker({
   workerId = randomUUID(),
   pollIntervalMs = 1000,
   leaseSeconds = 120,
+  leaseRenewalIntervalMs,
   logger = console,
   queueApi = queue
 }) {
   if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required');
   if (!handlers || typeof handlers !== 'object' || Object.keys(handlers).length < 1) throw new TypeError('A non-empty job handler map is required');
   if (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 100) throw new RangeError('pollIntervalMs must be at least 100ms');
-  if (!Number.isInteger(leaseSeconds) || leaseSeconds < 10) throw new RangeError('leaseSeconds must be at least 10 seconds');\n  if (!Number.isInteger(leaseRenewalIntervalMs) || leaseRenewalIntervalMs < 100) throw new RangeError('leaseRenewalIntervalMs must be at least 100ms');
+  if (!Number.isInteger(leaseSeconds) || leaseSeconds < 10) throw new RangeError('leaseSeconds must be at least 10 seconds');
+  const heartbeatIntervalMs = leaseRenewalIntervalMs === undefined
+    ? Math.max(1000, Math.floor(leaseSeconds * 1000 / 3))
+    : leaseRenewalIntervalMs;
+  if (!Number.isInteger(heartbeatIntervalMs) || heartbeatIntervalMs < 100) throw new RangeError('leaseRenewalIntervalMs must be at least 100ms');
 
   let stopping = false;
   let loopPromise = null;
