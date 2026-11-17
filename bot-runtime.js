@@ -8,7 +8,9 @@ function createBotRuntime({
   createCustomerBot,
   logger = console,
   maxBots = DEFAULT_MAX_BOTS,
-  heartbeatIntervalMs = 30000
+  heartbeatIntervalMs = 30000,
+  workerId = String(process.pid),
+  onStatusPersistError = null
 }) {
   if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required');
   if (typeof decryptToken !== 'function') throw new TypeError('decryptToken(record) is required');
@@ -18,6 +20,7 @@ function createBotRuntime({
   const runningBots = new Map();
   let runtimeStopping = false;
   let warnedStatusTable = false;
+  let statusPersistenceFailureNotified = false;
 
   async function persistStatus(state) {
     try {
@@ -43,7 +46,7 @@ function createBotRuntime({
       `, [
         state.id,
         state.status,
-        String(process.pid),
+        String(workerId),
         state.lastErrorCode || null,
         state.lastErrorMessage || null
       ]);
@@ -51,6 +54,12 @@ function createBotRuntime({
       if (!warnedStatusTable) {
         warnedStatusTable = true;
         logger.error('BOT RUNTIME STATUS PERSISTENCE UNAVAILABLE:', error.message);
+      }
+      if (!statusPersistenceFailureNotified && typeof onStatusPersistError === 'function') {
+        statusPersistenceFailureNotified = true;
+        try { onStatusPersistError(error); } catch (callbackError) {
+          logger.error('BOT RUNTIME STATUS FAILURE HANDLER ERROR:', callbackError.message);
+        }
       }
     }
   }

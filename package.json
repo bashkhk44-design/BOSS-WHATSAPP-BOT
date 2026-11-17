@@ -10,7 +10,8 @@
     "db:migrate": "node migrations/runner.js",
     "worker": "node worker.js",
     "start:worker": "node worker.js",
-    "start:webhook": "node webhook.js"
+    "start:webhook": "node webhook.js",
+    "start:customer-worker": "node customer-bot-worker.js"
   },
   "keywords": [],
   "type": "commonjs",
