@@ -121,8 +121,12 @@ function createImmutableReleaseArtifact({ report, bundle }) {
     if (!file || typeof file.path !== 'string' || typeof file.content !== 'string') {
       throw new Error('ملف ضمن حزمة الإصدار غير صالح.');
     }
-    if (/^(?:\\/|[A-Za-z]:|\\\\)/.test(file.path) ||
-        file.path.split(/[\\/]/).includes('..') || file.path.includes('\\0')) {
+    const normalizedPath = file.path.replaceAll(String.fromCharCode(92), '/');
+    if (file.path.startsWith('/') ||
+        /^[A-Za-z]:/.test(file.path) ||
+        file.path.startsWith(String.fromCharCode(92)) ||
+        normalizedPath.split('/').includes('..') ||
+        file.path.includes(String.fromCharCode(0))) {
       throw new Error('مسار ملف غير آمن ضمن حزمة الإصدار.');
     }
     if (seenPaths.has(file.path)) throw new Error('يوجد مسار مكرر ضمن حزمة الإصدار.');
