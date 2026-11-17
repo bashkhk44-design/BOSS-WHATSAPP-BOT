@@ -168,6 +168,31 @@ function hashFile(filePath) {
   return hash.digest('hex');
 }
 
+function normalizeRuntimeTreePermissions(rootDir, executableWrappers) {
+  const executableSet = new Set(executableWrappers || []);
+
+  function visit(directory, relativeDirectory) {
+    const names = fs.readdirSync(directory);
+    for (const name of names) {
+      const absolute = path.join(directory, name);
+      const relative = relativeDirectory ? relativeDirectory + '/' + name : name;
+      const stat = fs.lstatSync(absolute);
+      if (stat.isSymbolicLink()) fail('Runtime dependency tree contains a symbolic link: ' + relative);
+      if (stat.isDirectory()) {
+        visit(absolute, relative);
+        fs.chmodSync(absolute, 0o755);
+      } else if (stat.isFile()) {
+        if (stat.nlink !== 1) fail('Runtime dependency tree contains a hard-linked file: ' + relative);
+        fs.chmodSync(absolute, executableSet.has(relative) ? 0o755 : 0o644);
+      } else {
+        fail('Runtime dependency tree contains an unsupported filesystem entry: ' + relative);
+      }
+    }
+  }
+
+  visit(rootDir, '');
+}
+
 function computeDirectoryTreeDigest(rootDir) {
   if (typeof rootDir !== 'string' || !path.isAbsolute(rootDir)) {
     fail('Runtime dependency directory must be an absolute path.');
@@ -236,7 +261,9 @@ function prepareRuntimeDependencyTree({ outputDir, lockfilePath }) {
   if (!lockData.packages || typeof lockData.packages !== 'object' || Array.isArray(lockData.packages)) {
     fail('package-lock.json packages map is invalid.');
   }
+  computeDirectoryTreeDigest(nodeModulesDir);
   const binWrappers = createPackageBinWrappers({ nodeModulesDir, lockData });
+  normalizeRuntimeTreePermissions(nodeModulesDir, binWrappers);
   const tree = computeDirectoryTreeDigest(nodeModulesDir);
   const lockfileSha256 = crypto.createHash('sha256').update(fs.readFileSync(lockfilePath)).digest('hex');
   return {
@@ -254,6 +281,7 @@ module.exports = {
   packageBinEntries,
   expectedPackageName,
   createPackageBinWrappers,
+  normalizeRuntimeTreePermissions,
   computeDirectoryTreeDigest,
   prepareRuntimeDependencyTree
 };
