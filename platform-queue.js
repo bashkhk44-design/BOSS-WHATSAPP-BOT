@@ -125,6 +125,20 @@ async function claimPlatformJob(pool, workerId, jobTypes) {
       `, [workerId]);
   return result.rows[0] || null;
 }
+async function renewPlatformJobLease(pool, { jobId, workerId }) {
+  if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required');
+  if (jobId === undefined || jobId === null || !workerId || typeof workerId !== 'string') {
+    throw new TypeError('jobId and workerId are required to renew a lease');
+  }
+  const renewed = await pool.query(`
+    UPDATE platform_jobs
+    SET locked_at = NOW(), updated_at = NOW()
+    WHERE id = $1 AND locked_by = $2 AND status = 'processing'
+    RETURNING id, locked_at
+  `, [jobId, workerId]);
+  return renewed.rowCount > 0;
+}
+
 async function completePlatformJob(pool, { jobId, workerId, result = {} }) {
   const saved = await pool.query(`
     UPDATE platform_jobs
@@ -244,6 +258,7 @@ module.exports = {
   enqueuePlatformJob,
   normalizeJobTypes,
   claimPlatformJob,
+  renewPlatformJobLease,
   completePlatformJob,
   failPlatformJob,
   recoverExpiredPlatformJobs,

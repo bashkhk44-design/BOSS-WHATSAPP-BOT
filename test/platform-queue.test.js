@@ -141,3 +141,82 @@ test('queue worker records handler failures for retry/dead-letter policy', async
   assert.match(failure.error.message, /expected failure/);
   assert.equal(failure.retryDelaySeconds, 4);
 });
+
+test('lease renewal extends only the active job owned by the worker', async () => {
+  const { renewPlatformJobLease } = require('../platform-queue');
+  let call;
+  const pool = {
+    async query(sql, params) {
+      call = { sql, params };
+      return { rowCount: 1, rows: [{ id: 5 }] };
+    }
+  };
+  assert.equal(await renewPlatformJobLease(pool, { jobId: 5, workerId: 'worker-1' }), true);
+  assert.match(call.sql, /locked_at = NOW\(\)/);
+  assert.match(call.sql, /locked_by = \$2 AND status = 'processing'/);
+  assert.deepEqual(call.params, [5, 'worker-1']);
+});
+
+test('queue worker renews a long-running job lease until its handler finishes', async () => {
+  let claimed = false;
+  let renewals = 0;
+  let completed = false;
+  const queueApi = {
+    async recoverExpiredPlatformJobs() { return []; },
+    async claimPlatformJob() {
+      if (claimed) return null;
+      claimed = true;
+      return { id: 22, job_type: 'test.slow', attempts: 1 };
+    },
+    async renewPlatformJobLease(_pool, args) {
+      assert.deepEqual(args, { jobId: 22, workerId: 'heartbeat-worker' });
+      renewals += 1;
+      return true;
+    },
+    async completePlatformJob() { completed = true; },
+    async failPlatformJob() { assert.fail('job should not fail'); }
+  };
+  const worker = createQueueWorker({
+    pool: { query() {} },
+    workerId: 'heartbeat-worker',
+    handlers: { 'test.slow': async () => new Promise(resolve => setTimeout(() => resolve({ ok: true }), 280)) },
+    queueApi,
+    leaseSeconds: 10,
+    leaseRenewalIntervalMs: 100,
+    logger: { log() {}, warn() {}, error() {} }
+  });
+  assert.equal(await worker.processOne(), true);
+  assert.ok(renewals >= 2);
+  assert.equal(completed, true);
+});
+
+test('queue worker does not complete or fail a job after losing its lease', async () => {
+  let claimed = false;
+  let completed = false;
+  let failed = false;
+  const warnings = [];
+  const queueApi = {
+    async recoverExpiredPlatformJobs() { return []; },
+    async claimPlatformJob() {
+      if (claimed) return null;
+      claimed = true;
+      return { id: 23, job_type: 'test.lost', attempts: 1 };
+    },
+    async renewPlatformJobLease() { return false; },
+    async completePlatformJob() { completed = true; },
+    async failPlatformJob() { failed = true; }
+  };
+  const worker = createQueueWorker({
+    pool: { query() {} },
+    workerId: 'lost-lease-worker',
+    handlers: { 'test.lost': async () => new Promise(resolve => setTimeout(() => resolve({ ok: true }), 180)) },
+    queueApi,
+    leaseSeconds: 10,
+    leaseRenewalIntervalMs: 100,
+    logger: { log() {}, warn(message) { warnings.push(message); }, error() {} }
+  });
+  assert.equal(await worker.processOne(), true);
+  assert.equal(completed, false);
+  assert.equal(failed, false);
+  assert.ok(warnings.some(message => /lease lost/.test(message)));
+});
