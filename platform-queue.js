@@ -220,7 +220,8 @@ async function enqueueTelegramUpdate(pool, { botId, update }) {
   if (!Number.isSafeInteger(Number(botId)) || Number(botId) < 1) {
     throw new TypeError('A valid botId is required');
   }
-  if (!update || !Number.isSafeInteger(Number(update.update_id)) || Number(update.update_id) < 0) {
+  if (!update || typeof update !== 'object' || Array.isArray(update) ||
+      !Number.isSafeInteger(update.update_id) || update.update_id < 0) {
     throw new TypeError('Telegram update_id is required');
   }
   const result = await pool.query(`
