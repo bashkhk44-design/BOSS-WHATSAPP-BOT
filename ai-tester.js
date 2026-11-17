@@ -179,15 +179,31 @@ async function testProjectBundle({ bundle, dependencyArtifactDir }) {
     let runtimeNodeModulesDir;
     if (process.env.BOSS_SANDBOX_ENABLED === 'YES') {
       const lockPath = path.join(tempDir, 'package-lock.json');
-      const lockExists = fs.existsSync(lockPath);
-      const lockData = lockExists ? JSON.parse(fs.readFileSync(lockPath, 'utf8')) : null;
+      const declaredDependencies = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']
+        .some(field => packageData[field] && Object.keys(packageData[field]).length > 0);
+      let lockData = null;
+      let lockError = null;
+      if (fs.existsSync(lockPath)) {
+        try { lockData = JSON.parse(fs.readFileSync(lockPath, 'utf8')); }
+        catch (error) { lockError = error; }
+      }
       const lockedPackages = lockData?.packages && typeof lockData.packages === 'object'
         ? Object.keys(lockData.packages).filter(key => key !== '')
         : [];
-      if (lockedPackages.length > 0 && !dependencyArtifactDir) {
+      if (lockError || (declaredDependencies && !lockData?.packages)) {
+        sandbox = {
+          status: 'failed', passed: false,
+          details: 'A valid package-lock.json is required before dependency runtime tests can execute.'
+        };
+      } else if (lockedPackages.length > 0 && !dependencyArtifactDir) {
         sandbox = {
           status: 'failed', passed: false,
           details: 'Verified offline dependency artifacts are required before runtime tests can execute.'
+        };
+      } else if (declaredDependencies && lockedPackages.length === 0) {
+        sandbox = {
+          status: 'failed', passed: false,
+          details: 'Declared dependencies are missing from package-lock.json.'
         };
       } else {
         if (lockedPackages.length > 0) {
