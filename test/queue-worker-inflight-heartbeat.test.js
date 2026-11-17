@@ -11,6 +11,7 @@ test('queue worker waits for an in-flight lease heartbeat before completing a jo
   let completeCalls = 0;
   let failCalls = 0;
   let signalRenewalStarted;
+  const keepAlive = setInterval(() => {}, 1000);
   const renewalStartedGate = new Promise(resolve => { signalRenewalStarted = resolve; });
   const renewalGate = new Promise(resolve => { releaseRenewal = resolve; });
   const queueApi = {
@@ -43,20 +44,24 @@ test('queue worker waits for an in-flight lease heartbeat before completing a jo
     logger: { log() {}, warn() {}, error() {} }
   });
 
-  let settled = false;
-  const processing = worker.processOne().then(result => {
-    settled = true;
-    return result;
-  });
+  try {
+    let settled = false;
+    const processing = worker.processOne().then(result => {
+      settled = true;
+      return result;
+    });
 
-  await renewalStartedGate;
-  await new Promise(resolve => setTimeout(resolve, 25));
-  assert.equal(renewalStarted, true);
-  assert.equal(settled, false, 'job processing must wait for the active heartbeat');
-  assert.equal(completeCalls, 0, 'job must not complete before heartbeat result is known');
+    await renewalStartedGate;
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(renewalStarted, true);
+    assert.equal(settled, false, 'job processing must wait for the active heartbeat');
+    assert.equal(completeCalls, 0, 'job must not complete before heartbeat result is known');
 
-  releaseRenewal(false);
-  assert.equal(await processing, true);
-  assert.equal(completeCalls, 0, 'job must not complete after the heartbeat reports lease loss');
-  assert.equal(failCalls, 0, 'job must not be failed by a worker that lost its lease');
+    releaseRenewal(false);
+    assert.equal(await processing, true);
+    assert.equal(completeCalls, 0, 'job must not complete after the heartbeat reports lease loss');
+    assert.equal(failCalls, 0, 'job must not be failed by a worker that lost its lease');
+  } finally {
+    clearInterval(keepAlive);
+  }
 });
