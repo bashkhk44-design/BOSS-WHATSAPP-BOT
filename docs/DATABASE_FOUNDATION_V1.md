@@ -26,6 +26,12 @@
 - `platform_audit_logs`: administrative/security audit trail.
 - `schema_migrations`: applied migration ledger.
 
+## Explicit migration runner
+- Run `npm run db:migrate` only when an operator deliberately chooses to apply pending SQL migrations.
+- The application startup path does not invoke the runner.
+- The runner takes a PostgreSQL advisory lock, applies ordered SQL files, and records successful versions in `schema_migrations`.
+- Use a disposable Neon branch first; do not point this command at production until the tested rollout is explicitly approved.
+
 ## Rollout safety
 This PR only adds a migration file and documentation/tests. It does not execute SQL, change runtime code, change Render settings, or alter production data.
 
