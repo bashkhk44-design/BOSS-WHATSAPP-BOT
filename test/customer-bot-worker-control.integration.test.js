@@ -293,3 +293,52 @@ test('worker does not mark automatic recovery successful unless bot becomes heal
     await pool.end();
   }
 });
+
+
+test('worker cannot complete a manager command after its lease ownership changes', { skip: !enabled }, async () => {
+  const pool = new Pool({ connectionString: databaseUrl, ssl: false, max: 2 });
+  let botId;
+  const workerId = 'stale-command-owner-worker';
+  try {
+    const bot = await pool.query(`
+      INSERT INTO telegram_bots (name, username, active, token_ciphertext)
+      VALUES ('stale command owner fixture', 'stale_command_owner_bot', TRUE, 'test-ciphertext')
+      RETURNING id
+    `);
+    botId = bot.rows[0].id;
+    const command = await pool.query(`
+      INSERT INTO bot_runtime_commands (bot_id, action, status, requested_by)
+      VALUES ($1, 'start', 'queued', 'integration-test')
+      RETURNING id
+    `, [botId]);
+
+    const runtime = {
+      getRuntimeSnapshot: () => [],
+      async startBotById(id) {
+        assert.equal(String(id), String(botId));
+        await pool.query(`
+          UPDATE bot_runtime_commands
+          SET claimed_by = 'replacement-worker', claimed_at = NOW()
+          WHERE id = $1 AND status = 'processing'
+        `, [command.rows[0].id]);
+      },
+      async stopBotById() {},
+      async stopBotRuntime() {}
+    };
+    const worker = createCustomerBotWorker({
+      pool, runtime, workerId, capacity: 2, leaseSeconds: 30,
+      pollIntervalMs: 500, logger: { log() {}, error() {} }
+    });
+
+    assert.equal(await worker.runOnce(), true);
+    const result = await pool.query(
+      'SELECT status, claimed_by FROM bot_runtime_commands WHERE id = $1',
+      [command.rows[0].id]
+    );
+    assert.equal(result.rows[0].status, 'processing');
+    assert.equal(result.rows[0].claimed_by, 'replacement-worker');
+  } finally {
+    if (botId) await pool.query('DELETE FROM telegram_bots WHERE id = $1', [botId]);
+    await pool.end();
+  }
+});
