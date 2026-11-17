@@ -22,15 +22,21 @@ function createTelegramWebhookServer({
   pool,
   resolveSecret,
   maxBodyBytes = 1024 * 1024,
+  headersTimeoutMs = 10_000,
+  requestTimeoutMs = 30_000,
   logger = console
 }) {
   if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required');
   if (typeof resolveSecret !== 'function') throw new TypeError('resolveSecret(botId) is required');
   if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1024) throw new RangeError('maxBodyBytes must be at least 1024');
+  if (!Number.isInteger(headersTimeoutMs) || headersTimeoutMs < 1000) throw new RangeError('headersTimeoutMs must be at least 1000');
+  if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < headersTimeoutMs) {
+    throw new RangeError('requestTimeoutMs must be at least headersTimeoutMs');
+  }
 
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     const pathname = (req.url || '').split('?')[0];
-    const match = pathname.match(/^\/telegram\/webhook\/(\d+)$/);
+    const match = pathname.match(/^\\/telegram\\/webhook\\/(\\d+)$/);
 
     if (!match) return sendJson(res, 404, { ok: false, error: 'not_found' });
     if (req.method !== 'POST') {
@@ -41,6 +47,23 @@ function createTelegramWebhookServer({
     const botId = Number(match[1]);
     if (!Number.isSafeInteger(botId) || botId < 1) {
       return sendJson(res, 404, { ok: false, error: 'not_found' });
+    }
+
+    const contentType = String(req.headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
+    if (contentType !== 'application/json') {
+      return sendJson(res, 415, { ok: false, error: 'unsupported_media_type' });
+    }
+
+    const declaredLength = req.headers['content-length'];
+    if (declaredLength !== undefined) {
+      const lengthText = String(declaredLength);
+      if (!/^\\d+$/.test(lengthText) || !Number.isSafeInteger(Number(lengthText))) {
+        return sendJson(res, 400, { ok: false, error: 'invalid_content_length' });
+      }
+      if (Number(lengthText) > maxBodyBytes) {
+        req.resume();
+        return sendJson(res, 413, { ok: false, error: 'payload_too_large' });
+      }
     }
 
     try {
@@ -67,8 +90,6 @@ function createTelegramWebhookServer({
         return sendJson(res, 400, { ok: false, error: 'invalid_json' });
       }
 
-      // Telegram update_id is a JSON integer. Reject strings, fractions,
-      // negative values, and non-object payloads before touching the queue.
       if (!update || typeof update !== 'object' || Array.isArray(update) ||
           !Number.isSafeInteger(update.update_id) || update.update_id < 0) {
         return sendJson(res, 400, { ok: false, error: 'invalid_update' });
@@ -85,6 +106,11 @@ function createTelegramWebhookServer({
       return sendJson(res, 503, { ok: false, error: 'temporarily_unavailable' });
     }
   });
+
+  // Bound slow header delivery and total request-body receipt time.
+  server.headersTimeout = headersTimeoutMs;
+  server.requestTimeout = requestTimeoutMs;
+  return server;
 }
 
 module.exports = { createTelegramWebhookServer };
