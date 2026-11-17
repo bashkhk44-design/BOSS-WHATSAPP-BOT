@@ -11,10 +11,11 @@
 1. Existing client, project, bot, conversation, specification and secret rows are preserved.
 2. New ownership references on existing bots are nullable. Existing bots are deliberately not auto-assigned to a customer.
 3. A bot's project and client must match through a composite foreign key.
-4. Telegram updates are idempotent per bot via UNIQUE(bot_id, update_id).
-5. Jobs have bounded retries, explicit states and an index suitable for queue claiming.
-6. AI usage and audit events are attributable to a client/project/bot where known.
-7. No plaintext bot token is stored in these new tables.
+4. Any record with a project_id must also include its client_id; database CHECK constraints enforce this for bots, jobs, AI usage and audit logs.
+5. Telegram updates are idempotent per bot via UNIQUE(bot_id, update_id).
+6. Jobs have bounded retries, explicit states and an index suitable for queue claiming.
+7. AI usage and audit events are attributable to a client/project/bot where known.
+8. No plaintext bot token is stored in these new tables.
 
 ## New schema
 - `telegram_bots.client_id/project_id`: optional ownership link.
