@@ -60,6 +60,8 @@ function createCustomerBotWorker({
   capacity = DEFAULT_CAPACITY,
   leaseSeconds = DEFAULT_LEASE_SECONDS,
   pollIntervalMs = 3000,
+  botReadyTimeoutMs = 30000,
+  botReadyPollMs = 1000,
   logger = console
 }) {
   if (!pool || typeof pool.connect !== 'function') throw new TypeError('PostgreSQL pool is required');
@@ -67,6 +69,8 @@ function createCustomerBotWorker({
   if (!Number.isInteger(capacity) || capacity < 1 || capacity > 100) throw new RangeError('capacity must be between 1 and 100');
   if (!Number.isInteger(leaseSeconds) || leaseSeconds < 30) throw new RangeError('leaseSeconds must be at least 30 seconds');
   if (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 500) throw new RangeError('pollIntervalMs must be at least 500ms');
+  if (!Number.isInteger(botReadyTimeoutMs) || botReadyTimeoutMs < 1000) throw new RangeError('botReadyTimeoutMs must be at least 1000ms');
+  if (!Number.isInteger(botReadyPollMs) || botReadyPollMs < 100) throw new RangeError('botReadyPollMs must be at least 100ms');
 
   let stopping = false;
   let loopPromise = null;
@@ -76,7 +80,7 @@ function createCustomerBotWorker({
     try {
       await client.query('BEGIN');
       const result = await client.query(`
-        SELECT c.id, c.bot_id, c.action, c.target_worker_id
+        SELECT c.id, c.bot_id, c.action, c.target_worker_id, c.auto_remediation_attempt_id
         FROM bot_runtime_commands c
         WHERE (
             c.status = 'queued'
@@ -143,6 +147,31 @@ function createCustomerBotWorker({
         const claimedBotId = await claimNextBot(pool, workerId, leaseSeconds, botId);
         if (claimedBotId) {
           await runtime.startBotById(claimedBotId);
+          if (command.auto_remediation_attempt_id) {
+            const deadline = Date.now() + botReadyTimeoutMs;
+            let healthy = false;
+            while (Date.now() < deadline) {
+              const statusResult = await pool.query(`
+                SELECT status, worker_id, last_heartbeat_at
+                FROM bot_runtime_status
+                WHERE bot_id = $1
+              `, [botId]);
+              const status = statusResult.rows[0];
+              const heartbeatAt = status?.last_heartbeat_at
+                ? new Date(status.last_heartbeat_at).getTime()
+                : 0;
+              healthy = status?.status === 'running' &&
+                status.worker_id === workerId &&
+                heartbeatAt > 0 &&
+                Date.now() - heartbeatAt <= leaseSeconds * 1000;
+              if (healthy) break;
+              await new Promise(resolve => setTimeout(resolve, botReadyPollMs));
+            }
+            if (!healthy) {
+              try { await runtime.stopBotById(botId); } catch (_) {}
+              throw new Error('Automatic restart did not reach a healthy running state before timeout');
+            }
+          }
         } else {
           const owner = await pool.query(
             'SELECT worker_id, last_heartbeat_at FROM bot_runtime_status WHERE bot_id = $1',
