@@ -218,17 +218,17 @@ async function testProjectBundle({ bundle, dependencyArtifactDir, designArtifact
         : [];
       if (lockError || (declaredDependencies && !lockData?.packages)) {
         sandbox = {
-          status: 'failed', passed: false,
+          status: 'failed', executionStatus: 'not_confirmed', repairable: false, passed: false,
           details: 'A valid package-lock.json is required before dependency runtime tests can execute.'
         };
       } else if (lockedPackages.length > 0 && !dependencyArtifactDir) {
         sandbox = {
-          status: 'failed', passed: false,
+          status: 'failed', executionStatus: 'not_confirmed', repairable: false, passed: false,
           details: 'Verified offline dependency artifacts are required before runtime tests can execute.'
         };
       } else if (declaredDependencies && lockedPackages.length === 0) {
         sandbox = {
-          status: 'failed', passed: false,
+          status: 'failed', executionStatus: 'not_confirmed', repairable: false, passed: false,
           details: 'Declared dependencies are missing from package-lock.json.'
         };
       } else {
@@ -262,7 +262,8 @@ async function testProjectBundle({ bundle, dependencyArtifactDir, designArtifact
           };
         } catch (error) {
           sandbox = {
-            status: 'failed', passed: false,
+            status: 'failed', executionStatus: 'not_confirmed',
+            repairable: false, passed: false,
             details: 'Verified dependency runtime preparation failed: ' + error.message
           };
         }

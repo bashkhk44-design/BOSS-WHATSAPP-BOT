@@ -13,6 +13,13 @@ function parseJson(text) {
   return JSON.parse(cleaned);
 }
 
+function canAttemptFix(testResult) {
+  const sandbox = testResult?.sandbox;
+  return testResult?.passed !== true &&
+    sandbox?.executionStatus === 'completed' &&
+    (sandbox.status === 'passed' || sandbox.repairable === true);
+}
+
 function originalFilesPreserved(originalBundle, candidateBundle) {
   const candidatePaths = new Set(candidateBundle.files.map(file => file.path));
   return originalBundle.files.every(file => candidatePaths.has(file.path));
@@ -34,7 +41,9 @@ async function fixProject({
   design,
   designArtifact,
   bundle,
-  maxAttempts = 2
+  maxAttempts = 2,
+  testRunner = testProjectBundle,
+  generate = generateText
 }) {
   if (!project || !analysis?.text || !design?.text) {
     throw new Error('يلزم وجود المشروع والتحليل والتصميم.');
@@ -78,7 +87,7 @@ async function fixProject({
 `;
 
   for (let attempt = 1; attempt <= limit; attempt++) {
-    const testResult = await testProjectBundle({
+    const testResult = await testRunner({
       bundle: currentBundle,
       designArtifact
     });
@@ -94,11 +103,22 @@ async function fixProject({
       };
     }
 
+    if (!canAttemptFix(testResult)) {
+      return {
+        passed: false,
+        bundle: currentBundle,
+        attempts,
+        testResult,
+        originalPreserved: originalFilesPreserved(originalBundle, currentBundle),
+        summary: 'توقف الإصلاح لأن تنفيذ الاختبارات لم يكتمل أو أن الفشل غير قابل للإصلاح الآلي.'
+      };
+    }
+
     const attemptInfo = {
       attempt,
       stage: 'repair',
       passed: false,
-      errors: testResult.checks.filter(c => !c.passed)
+      errors: (testResult.checks || []).filter(c => !c.passed)
     };
 
     attempts.push(attemptInfo);
@@ -118,7 +138,7 @@ async function fixProject({
     });
 
     try {
-      const response = await generateText({ systemInstruction, input, stage:'fix', timeoutMs:180000 });
+      const response = await generate({ systemInstruction, input, stage:'fix', timeoutMs:180000 });
       let repaired;
       try { repaired = parseJson(response.text); }
       catch { throw new Error('نتيجة AI FIXER ليست JSON صالحاً.'); }
@@ -141,7 +161,7 @@ async function fixProject({
     }
   }
 
-  const finalTest = await testProjectBundle({
+  const finalTest = await testRunner({
     bundle: currentBundle,
     designArtifact
   });
@@ -158,4 +178,4 @@ async function fixProject({
   };
 }
 
-module.exports = { fixProject };
+module.exports = { fixProject, canAttemptFix };
