@@ -55,6 +55,16 @@ test('AI intake cannot finish while missing items remain', () => {
   assert.deepEqual(result.missingItems, ['تحديد صلاحيات الموظفين']);
 });
 
+test('AI intake cannot finish without a project goal and core features', () => {
+  const result = normalizeIntakeResult({
+    assistant_message: 'ما الهدف الأساسي من البوت وما الوظائف التي تريدها؟',
+    fields: { description: 'بوت لمتجر' },
+    missing_items: [],
+    ready_for_review: true
+  });
+  assert.equal(result.readyForReview, false);
+});
+
 test('AI intake requires a customer-facing next message', () => {
   assert.throws(
     () => normalizeIntakeResult({ fields: {}, ready_for_review: true }),
