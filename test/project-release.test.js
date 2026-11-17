@@ -52,7 +52,7 @@ test('release report requires approved-version design and completed passing sand
 });
 
 test('release artifact hash is stable and independent of input file order', () => {
-  const report = buildReleaseReport({ project, design, testResult, deployment: { ready: false, checks: [] } });
+  const report = buildReleaseReport({ project, spec: {}, design, testResult, deployment: { ready: false, checks: [] } });
   const first = createImmutableReleaseArtifact({ report, bundle });
   const second = createImmutableReleaseArtifact({ report, bundle: { files: [...bundle.files].reverse() } });
   assert.equal(first.artifactSha256, second.artifactSha256);
@@ -61,7 +61,7 @@ test('release artifact hash is stable and independent of input file order', () =
 });
 
 test('release artifact rejects unsafe paths and malformed files', () => {
-  const report = buildReleaseReport({ project, design, testResult, deployment: {} });
+  const report = buildReleaseReport({ project, spec: {}, design, testResult, deployment: {} });
   assert.throws(() => createImmutableReleaseArtifact({
     report, bundle: { files: [{ path: '../secret', content: 'x' }] }
   }), /مسار ملف غير آمن/);
