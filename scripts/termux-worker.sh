@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -Eeuo pipefail
 
-ROOT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
 CONFIG_FILE=".env.worker.local"
