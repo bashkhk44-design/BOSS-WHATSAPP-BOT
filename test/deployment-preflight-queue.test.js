@@ -35,6 +35,7 @@ test('enqueue binds a durable preflight job to approved release, actor, owner an
   const pool = {
     async query(sql, params) {
       calls.push({ sql, params });
+      if (sql.includes('FROM platform_jobs') && sql.includes("status IN ('queued', 'processing', 'retrying')")) return { rowCount: 0, rows: [] };
       if (sql.includes('SELECT client_id')) return { rowCount: 1, rows: [{ client_id: '2' }] };
       if (sql.includes('SELECT env_name')) return { rowCount: 1, rows: [{ env_name: 'PAYMENT_API_KEY' }] };
       if (sql.includes('INSERT INTO platform_jobs')) {
@@ -55,11 +56,12 @@ test('enqueue binds a durable preflight job to approved release, actor, owner an
   });
   assert.equal(result.created, true);
   assert.equal(result.job.id, '99');
-  assert.equal(calls[2].params[0], 'deployment.preflight');
-  assert.equal(calls[2].params[1], '2');
-  assert.equal(calls[2].params[2], '3');
-  assert.equal(calls[2].params[5], 10);
-  assert.equal(calls[2].params[6], 3);
+  const insertCall = calls.find(call => call.sql.includes('INSERT INTO platform_jobs'));
+  assert.equal(insertCall.params[0], 'deployment.preflight');
+  assert.equal(insertCall.params[1], '2');
+  assert.equal(insertCall.params[2], '3');
+  assert.equal(insertCall.params[5], 10);
+  assert.equal(insertCall.params[6], 3);
   assert.equal(result.job.payload.releaseId, '7');
   assert.equal(result.job.payload.artifactSha256, release.artifact_sha256);
   assert.equal(result.job.payload.requestedBy, '10001');
