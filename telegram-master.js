@@ -794,8 +794,12 @@ bot.on('message:text', async (ctx) => {
             token: newToken
           });
 
+          let runtimeStarted = false;
+          let runtimeMessage = '⚠️ تم تسجيله، لكن لم يبدأ التشغيل؛ راجع السعة أو سجل الأخطاء.';
           try {
-            await startBotById(saved.id);
+            const state = await startBotById(saved.id);
+            runtimeStarted = true;
+            runtimeMessage = '🟢 ' + (state.status === 'running' ? 'يعمل الآن' : 'بدأ التشغيل وحالته: ' + state.status);
           } catch (runtimeError) {
             console.error('NEW CUSTOMER BOT START ERROR:', saved.id, runtimeError.message);
           }
@@ -807,7 +811,7 @@ bot.on('message:text', async (ctx) => {
             `الاسم: ${saved.name}\n` +
             `الحساب: @${me.username}\n` +
             `رقم التسجيل: ${saved.id}\n` +
-            `الحالة: 🟢 مسجل في قاعدة البيانات\n\n` +
+            `حالة التشغيل: ${runtimeMessage}\n\n` +
             'تم حفظ الرمز بصورة مشفرة.',
             { reply_markup: menu() }
           );
