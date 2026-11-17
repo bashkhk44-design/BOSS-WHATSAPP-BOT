@@ -680,14 +680,14 @@ bot.callbackQuery(/^project:pipeline:(\d+)$/, async (ctx) => {
         '\nالمشروع: ' + (project.project_name || project.name) +
         '\nالإصدار: R' + release.release_version +
         '\nالمواصفات المعتمدة: v' + release.spec_version +
-        '\nملخص المواصفات: ' + JSON.stringify(result.releaseReport.approvals.customerSpec.details).slice(0, 900) +
-        '\nملخص التصميم: ' + result.releaseReport.design.summary.slice(0, 900) +
+        '\nملخص المواصفات: ' + JSON.stringify(result.releaseReport.approvals.customerSpec.details).slice(0, 650) +
+        '\nملخص التصميم: ' + result.releaseReport.design.summary.slice(0, 650) +
         '\nبصمة الإصدار: ' + release.artifact_sha256 +
         '\n\nملخص الاختبارات: ' + result.releaseReport.tests.summary.passed + '/' + result.releaseReport.tests.summary.tests + ' ناجحة' +
         '\nاختبارات القبول: ' + result.releaseReport.tests.acceptanceTests.length +
         '\nفحوصات ما قبل النشر غير المستوفاة: ' + result.releaseReport.risks.length +
         (result.releaseReport.risks.length
-          ? '\n' + result.releaseReport.risks.map(item => '• ' + item.check + ': ' + item.details).join('\n').slice(0, 1800)
+          ? '\n' + result.releaseReport.risks.map(item => '• ' + item.check + ': ' + item.details).join('\n').slice(0, 1200)
           : '') +
         '\n\nبموافقتك تؤكد قبولك لإصدار المواصفات والتصميم ونتيجة الاختبارات الموضحة أعلاه. موافقتك لا تعني النشر؛ إنها اعتماد للتسليم فقط.',
         { reply_markup: new InlineKeyboard()
