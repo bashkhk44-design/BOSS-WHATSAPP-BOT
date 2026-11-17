@@ -2,16 +2,20 @@
 
 const FREE_GEMINI_MODELS = new Set(['gemini-3.8-flash']);
 
+function getGeminiModel() {
+  const requested = process.env.GEMINI_MODEL || process.env.GEMINI_FREE_MODEL || 'gemini-3.8-flash';
+  return FREE_GEMINI_MODELS.has(requested) ? requested : 'gemini-3.8-flash';
+}
+
 function providers() {
   const list = [];
 
   // Gemini is the primary provider. Alternative providers are strictly opt-in.
   if (process.env.GEMINI_API_KEY) {
-    const requested = process.env.GEMINI_MODEL || process.env.GEMINI_FREE_MODEL || 'gemini-3.8-flash';
     list.push({
       id: 'gemini',
       key: process.env.GEMINI_API_KEY,
-      model: FREE_GEMINI_MODELS.has(requested) ? requested : 'gemini-3.8-flash'
+      model: getGeminiModel()
     });
   }
 
@@ -159,4 +163,4 @@ async function generateText({
   );
 }
 
-module.exports = { generateText, providers };
+module.exports = { generateText, providers, getGeminiModel };

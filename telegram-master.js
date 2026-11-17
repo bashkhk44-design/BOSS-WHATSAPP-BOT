@@ -26,6 +26,7 @@ const { startIntakeBot, stopIntakeBot } = require('./intake-bot');
 const { analyzeProject } = require('./gemini-analyst');
 const { designProject } = require('./ai-designer');
 const { runProjectPipeline } = require('./project-pipeline');
+const { getGeminiModel } = require('./ai-router');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const adminId = process.env.TELEGRAM_ADMIN_ID;
@@ -643,7 +644,7 @@ bot.callbackQuery(/^settings:(main|database|security|services|gemini|gemini:test
       const ai = new GoogleGenAI({
         apiKey: process.env.GEMINI_API_KEY
       });
-      const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+      const model = getGeminiModel();
 
       const response = await ai.interactions.create({
         model,
