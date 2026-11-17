@@ -49,3 +49,34 @@ test('runtime monitor rejects unsafe polling intervals', () => {
     pool: { query: async () => ({ rows: [] }) }, intervalMs: 100
   }), /intervalMs/);
 });
+
+test('runtime monitor only queues repairs when explicit opt-in is enabled', async () => {
+  let calls = 0;
+  const pool = {
+    async query(sql) {
+      if (/FROM bot_worker_status/.test(sql)) return { rows: [] };
+      return { rows: [
+        { id: 77, name: 'stale-bot', status: 'running', worker_id: 'worker-x',
+          last_heartbeat_at: new Date(Date.now() - 180000), last_error_code: null }
+      ] };
+    }
+  };
+  const autoRemediator = {
+    async consider(botId) {
+      calls += 1;
+      assert.equal(botId, '77');
+      return { eligible: true, queued: true, attemptId: '1', commandId: '2' };
+    }
+  };
+  const logger = { log() {}, error() {} };
+
+  const readOnly = createRuntimeMonitor({ pool, logger, autoRemediator, autoRemediationEnabled: false });
+  const readOnlyReport = await readOnly.check();
+  assert.equal(calls, 0);
+  assert.deepEqual(readOnlyReport.remediation, []);
+
+  const enabled = createRuntimeMonitor({ pool, logger, autoRemediator, autoRemediationEnabled: true });
+  const enabledReport = await enabled.check();
+  assert.equal(calls, 1);
+  assert.equal(enabledReport.remediation[0].queued, true);
+});
