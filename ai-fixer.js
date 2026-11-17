@@ -14,8 +14,10 @@ function parseJson(text) {
 }
 
 function canAttemptFix(testResult) {
-  return testResult?.sandbox?.executionStatus === 'completed' &&
-    testResult?.sandbox?.repairable === true;
+  const sandbox = testResult?.sandbox;
+  return testResult?.passed !== true &&
+    sandbox?.executionStatus === 'completed' &&
+    (sandbox.status === 'passed' || sandbox.repairable === true);
 }
 
 function originalFilesPreserved(originalBundle, candidateBundle) {
