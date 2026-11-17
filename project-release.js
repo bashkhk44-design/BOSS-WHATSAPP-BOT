@@ -198,6 +198,9 @@ async function initProjectReleaseDatabase() {
     CREATE OR REPLACE FUNCTION prevent_project_deployment_authorization_mutation()
     RETURNS trigger AS $deployment_auth$
     BEGIN
+      IF TG_OP = 'DELETE' AND pg_trigger_depth() > 1 THEN
+        RETURN OLD;
+      END IF;
       RAISE EXCEPTION 'deployment authorizations are immutable';
     END;
     $deployment_auth$ LANGUAGE plpgsql
