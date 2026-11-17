@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { validateWorkerEnvironment } = require('../worker');
+const { validateWorkerEnvironment, getWorkerSslConfig } = require('../worker');
 
 const validEnvironment = {
   DATABASE_URL: 'postgresql://test_user:test_password@localhost:5432/boss_test',
@@ -63,6 +63,15 @@ test('worker startup rejects unknown database SSL modes instead of silently enab
       /DATABASE_SSL must be either require or disable/
     );
   }
+});
+
+test('worker PostgreSQL connections verify TLS certificates by default and when required', () => {
+  assert.equal(getWorkerSslConfig({}), true);
+  assert.equal(getWorkerSslConfig({ DATABASE_SSL: 'require' }), true);
+});
+
+test('worker PostgreSQL TLS can only be disabled through explicit configuration', () => {
+  assert.equal(getWorkerSslConfig({ DATABASE_SSL: 'disable' }), false);
 });
 
 test('worker startup rejects unsafe database pool and queue timing limits', () => {
