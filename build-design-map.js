@@ -111,7 +111,8 @@ function validateDesignMap({ map, designArtifact, files }) {
             typeof testCase.testName !== 'string' ||
             !actualFiles.has(testCase.filePath) ||
             !paths.includes(testCase.filePath) ||
-            !/(?:^|\\/)(?:test|tests)\\/.*\\.(?:test|spec)\\.[cm]?js$|(?:^|\\/)[^/]+\\.(?:test|spec)\\.[cm]?js$/.test(testCase.filePath) ||
+            !testCase.filePath.split('/').some(part => part === 'test' || part === 'tests') ||
+            !/\.(?:test|spec)\.(?:js|cjs|mjs)$/.test(testCase.filePath) ||
             !testCase.testName.startsWith(marker) ||
             testCase.testName.length > 240) {
           throw new Error('حالة اختبار القبول غير صالحة أو غير مرتبطة بملف اختبار: ' + key);
