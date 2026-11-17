@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { validateSandboxImage, validateRuntimeNodeModules, hasProjectTests, buildSandboxArgs, runSandboxTests } = require('../project-sandbox');
+const { validateSandboxImage, validateRuntimeNodeModules, ensureRuntimeMountPoint, hasProjectTests, buildSandboxArgs, runSandboxTests } = require('../project-sandbox');
 const IMAGE = 'node:22-alpine@sha256:' + 'a'.repeat(64);
 
 test('sandbox requires immutable image digest', () => {
@@ -51,6 +51,31 @@ test('runner invokes isolated docker container without passing secrets', () => {
     assert.equal(result.status, 'passed');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+test('runtime mount point rejects bundled node_modules content', () => {
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-sandbox-project-'));
+  try {
+    fs.mkdirSync(path.join(projectDir, 'node_modules'));
+    fs.writeFileSync(path.join(projectDir, 'node_modules', 'unexpected.js'), 'bad');
+    assert.throws(() => ensureRuntimeMountPoint(projectDir), /must not contain files/);
+  } finally {
+    fs.rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
+test('runtime mount point rejects symlinked node_modules directories', () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-sandbox-project-link-'));
+  const projectDir = path.join(parent, 'project');
+  const target = path.join(parent, 'target');
+  try {
+    fs.mkdirSync(projectDir);
+    fs.mkdirSync(target);
+    fs.symlinkSync(target, path.join(projectDir, 'node_modules'), 'dir');
+    assert.throws(() => ensureRuntimeMountPoint(projectDir), /real directory/);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 test('runner reports container failure', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-sandbox-'));
   try {
@@ -107,6 +132,8 @@ test('runner passes the verified runtime mount without exposing environment secr
       files: [{ path: 'test/app.test.js' }], image: IMAGE,
       spawn: (command, args, options) => {
         invocation = { command, args, options };
+        assert.equal(fs.statSync(path.join(projectDir, 'node_modules')).isDirectory(), true);
+        assert.deepEqual(fs.readdirSync(path.join(projectDir, 'node_modules')), []);
         return { status: 0, stdout: 'tests passed', stderr: '' };
       }
     });

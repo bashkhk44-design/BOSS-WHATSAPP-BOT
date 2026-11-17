@@ -8,6 +8,7 @@ const { validateBundle } = require('./ai-builder');
 const { runSandboxTests } = require('./project-sandbox');
 const { validateDependencyPreflight } = require('./dependency-preflight');
 const { unpackVerifiedDependencies } = require('./offline-dependency-unpack');
+const { prepareRuntimeDependencyTree } = require('./runtime-dependency-tree');
 
 function validateManifest(manifest, packageData) {
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
@@ -177,6 +178,7 @@ async function testProjectBundle({ bundle, dependencyArtifactDir }) {
 
     let sandbox = { status: 'disabled', passed: null };
     let runtimeNodeModulesDir;
+    let runtimeTree;
     if (process.env.BOSS_SANDBOX_ENABLED === 'YES') {
       const lockPath = path.join(tempDir, 'package-lock.json');
       const declaredDependencies = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']
@@ -206,21 +208,38 @@ async function testProjectBundle({ bundle, dependencyArtifactDir }) {
           details: 'Declared dependencies are missing from package-lock.json.'
         };
       } else {
-        if (lockedPackages.length > 0) {
-          runtimeTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-bot-runtime-'));
-          const runtimeOutputDir = path.join(runtimeTempDir, 'verified-runtime');
-          const unpacked = unpackVerifiedDependencies({
-            artifactDir: dependencyArtifactDir,
-            lockfilePath: lockPath,
-            outputDir: runtimeOutputDir
-          });
-          runtimeNodeModulesDir = path.join(unpacked.outputDir, 'node_modules');
+        try {
+          if (lockedPackages.length > 0) {
+            runtimeTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-bot-runtime-'));
+            const runtimeOutputDir = path.join(runtimeTempDir, 'verified-runtime');
+            const unpacked = unpackVerifiedDependencies({
+              artifactDir: dependencyArtifactDir,
+              lockfilePath: lockPath,
+              outputDir: runtimeOutputDir
+            });
+            runtimeTree = prepareRuntimeDependencyTree({
+              outputDir: unpacked.outputDir,
+              lockfilePath: lockPath
+            });
+            runtimeNodeModulesDir = runtimeTree.nodeModulesDir;
+            add('verified-runtime-dependency-tree', true,
+              'SHA-256 ' + runtimeTree.treeSha256 + '; ' + runtimeTree.fileCount +
+              ' files; ' + runtimeTree.binWrappers.length + ' executable wrappers.');
+          }
+          fs.chmodSync(tempDir, 0o755);
+          sandbox = {
+            ...runSandboxTests({
+              projectDir: tempDir, files: validated.files,
+              image: process.env.BOSS_SANDBOX_IMAGE, runtimeNodeModulesDir
+            }),
+            dependencyTreeSha256: runtimeTree?.treeSha256 || null
+          };
+        } catch (error) {
+          sandbox = {
+            status: 'failed', passed: false,
+            details: 'Verified dependency runtime preparation failed: ' + error.message
+          };
         }
-        fs.chmodSync(tempDir, 0o755);
-        sandbox = runSandboxTests({
-          projectDir: tempDir, files: validated.files,
-          image: process.env.BOSS_SANDBOX_IMAGE, runtimeNodeModulesDir
-        });
       }
       if (sandbox.status === 'failed') add('sandbox-runtime-tests', false, sandbox.details);
       else if (sandbox.status === 'passed') add('sandbox-runtime-tests', true, sandbox.details);
