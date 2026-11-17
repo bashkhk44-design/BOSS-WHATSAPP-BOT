@@ -76,7 +76,8 @@ function createBinWrapper({ binDir, command, target }) {
     "const { pathToFileURL } = require('node:url');",
     'const target = path.resolve(__dirname, ' + JSON.stringify(relativeTarget) + ');',
     'process.argv[1] = target;',
-    'import(pathToFileURL(target).href).catch(error => { console.error(error); process.exitCode = 1; });',
+    "if (path.extname(target) === '') require(target);",
+    "else import(pathToFileURL(target).href).catch(error => { console.error(error); process.exitCode = 1; });",
     ''
   ].join('\n');
   fs.mkdirSync(binDir, { recursive: true, mode: 0o755 });
@@ -138,6 +139,10 @@ function createPackageBinWrappers({ nodeModulesDir, lockData }) {
       const target = path.resolve(packageDir, relativeTarget);
       if (!isInside(packageDir, target) || target === packageDir) {
         fail('Package executable target escaped its package directory.');
+      }
+      const targetExtension = path.extname(target).toLowerCase();
+      if (!['', '.js', '.cjs', '.mjs'].includes(targetExtension)) {
+        fail('Only JavaScript package executable targets are supported: ' + lockPath);
       }
       const targetStat = fs.lstatSync(target);
       if (targetStat.isSymbolicLink() || !targetStat.isFile() || targetStat.nlink !== 1) {
