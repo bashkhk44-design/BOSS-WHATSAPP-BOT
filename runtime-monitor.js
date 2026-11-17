@@ -42,9 +42,9 @@ function createRuntimeMonitor({
       else if (row.status === 'stopped') reason = 'unexpectedly_stopped';
 
       if (row.worker_id) {
-        const current = workers.get(row.worker_id) || { workerId: row.worker_id, bots: 0, latestHeartbeat: 0 };
+        const current = workers.get(row.worker_id) || { workerId: row.worker_id, bots: 0, latestBotHeartbeat: 0 };
         current.bots += 1;
-        current.latestHeartbeat = Math.max(current.latestHeartbeat, heartbeat);
+        current.latestBotHeartbeat = Math.max(current.latestBotHeartbeat, heartbeat);
         workers.set(row.worker_id, current);
       }
 
@@ -66,7 +66,8 @@ function createRuntimeMonitor({
       healthyBots: result.rows.length - issues.length,
       workers: Array.from(workers.values()).map(worker => ({
         ...worker,
-        stale: !worker.latestHeartbeat || currentTime - worker.latestHeartbeat > staleAfterSeconds * 1000
+        heartbeatSource: 'bot_runtime_status',
+        health: 'not_independently_measured'
       })),
       issues
     };
