@@ -65,11 +65,33 @@ async function enqueueDeploymentPreflight({
   );
   const envNames = envResult.rows.map(row => String(row.env_name)).sort();
   const envNamesSha256 = sha256(stableJson(envNames));
+  const active = await pool.query(`
+    SELECT *
+    FROM platform_jobs
+    WHERE job_type = 'deployment.preflight'
+      AND project_id = $1
+      AND payload->>'releaseId' = $2
+      AND payload->>'envNamesSha256' = $3
+      AND status IN ('queued', 'processing', 'retrying')
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `, [release.project_id, String(release.id), envNamesSha256]);
+  if (active.rowCount) {
+    return {
+      created: false,
+      job: active.rows[0],
+      idempotencyKey: active.rows[0].idempotency_key,
+      envNamesSha256
+    };
+  }
+
+  // Completed/failed runs can be retried. An active-job lookup prevents ordinary repeated button presses from creating parallel runs.
   const idempotencyKey = [
     'deployment.preflight',
     String(release.id),
     release.artifact_sha256,
-    envNamesSha256
+    envNamesSha256,
+    randomUUID()
   ].join(':');
 
   const queued = await enqueuePlatformJob(pool, {
