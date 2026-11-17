@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { pool } = require('./db');
+function getPool() { return require('./db').pool; }
 
 const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024;
 
@@ -152,7 +152,7 @@ function createImmutableReleaseArtifact({ report, bundle }) {
 }
 
 async function initProjectReleaseDatabase() {
-  await pool.query(`
+  await getPool().query(`
     CREATE TABLE IF NOT EXISTS project_release_candidates (
       id BIGSERIAL PRIMARY KEY,
       project_id BIGINT NOT NULL REFERENCES client_projects(id) ON DELETE CASCADE,
@@ -171,7 +171,7 @@ async function initProjectReleaseDatabase() {
     )
   `);
 
-  await pool.query(`
+  await getPool().query(`
     CREATE TABLE IF NOT EXISTS project_release_approvals (
       id BIGSERIAL PRIMARY KEY,
       release_id BIGINT NOT NULL REFERENCES project_release_candidates(id) ON DELETE CASCADE,
@@ -183,12 +183,12 @@ async function initProjectReleaseDatabase() {
     )
   `);
 
-  await pool.query(`
+  await getPool().query(`
     CREATE INDEX IF NOT EXISTS project_release_project_idx
     ON project_release_candidates(project_id, release_version DESC)
   `);
 
-  await pool.query(`
+  await getPool().query(`
     CREATE OR REPLACE FUNCTION prevent_project_release_artifact_mutation()
     RETURNS trigger AS $release$
     BEGIN
@@ -209,11 +209,11 @@ async function initProjectReleaseDatabase() {
     $release$ LANGUAGE plpgsql
   `);
 
-  await pool.query(`
+  await getPool().query(`
     DROP TRIGGER IF EXISTS project_release_artifact_immutable
     ON project_release_candidates
   `);
-  await pool.query(`
+  await getPool().query(`
     CREATE TRIGGER project_release_artifact_immutable
     BEFORE UPDATE ON project_release_candidates
     FOR EACH ROW EXECUTE FUNCTION prevent_project_release_artifact_mutation()
@@ -222,7 +222,7 @@ async function initProjectReleaseDatabase() {
 
 async function createReleaseCandidate({ project, designJobId, adminTelegramId, report, bundle }) {
   const snapshot = createImmutableReleaseArtifact({ report, bundle });
-  const client = await pool.connect();
+  const client = await getPool().connect();
   try {
     await client.query('BEGIN');
     const current = await client.query(`
@@ -290,7 +290,7 @@ async function createReleaseCandidate({ project, designJobId, adminTelegramId, r
 
 async function getReleaseCandidate(releaseId) {
   if (!/^\d+$/.test(String(releaseId || ''))) throw new Error('رقم الإصدار غير صالح.');
-  const result = await pool.query(`
+  const result = await getPool().query(`
     SELECT r.*, p.name AS project_name,
            c.telegram_user_id AS customer_telegram_id
     FROM project_release_candidates r
@@ -309,7 +309,7 @@ async function decideRelease({ releaseId, role, telegramUserId, decision }) {
     throw new Error('بيانات قرار الإصدار غير صالحة.');
   }
 
-  const client = await pool.connect();
+  const client = await getPool().connect();
   try {
     await client.query('BEGIN');
     const found = await client.query(`
