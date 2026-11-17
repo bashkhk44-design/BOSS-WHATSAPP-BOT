@@ -3,16 +3,24 @@
 require('dotenv').config();
 
 const { Pool } = require('pg');
-const { decryptToken } = require('./db');
 const { deriveTelegramWebhookSecret } = require('./telegram-webhook-secret');
 const { createTelegramWebhookServer } = require('./telegram-webhook-server');
 
-async function main() {
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-  if (!/^[0-9a-fA-F]{64}$/.test(process.env.BOTS_ENCRYPTION_KEY || '')) {
+function validateWebhookEnvironment(env = process.env) {
+  if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+  if (!/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL)) {
+    throw new Error('DATABASE_URL must use the PostgreSQL protocol');
+  }
+  if (!/^[0-9a-fA-F]{64}$/.test(env.BOTS_ENCRYPTION_KEY || '')) {
     throw new Error('BOTS_ENCRYPTION_KEY must be a 32-byte hex key');
   }
+  return true;
+}
 
+async function main() {
+  validateWebhookEnvironment();
+
+  const { decryptToken } = require('./db');
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false },
@@ -25,13 +33,12 @@ async function main() {
   const server = createTelegramWebhookServer({
     pool,
     resolveSecret: async botId => {
-      const result = await pool.query(`
-        SELECT id, token_ciphertext, token_iv, token_auth_tag
-        FROM telegram_bots
-        WHERE id = $1 AND active = TRUE
-          AND token_ciphertext IS NOT NULL
-        LIMIT 1
-      `, [botId]);
+      const result = await pool.query(
+        'SELECT id, token_ciphertext, token_iv, token_auth_tag ' +
+        'FROM telegram_bots WHERE id = $1 AND active = TRUE ' +
+        'AND token_ciphertext IS NOT NULL LIMIT 1',
+        [botId]
+      );
       if (!result.rowCount) return null;
       const token = decryptToken(result.rows[0]);
       return deriveTelegramWebhookSecret(botId, token, encryptionKey);
@@ -43,13 +50,13 @@ async function main() {
     server.once('error', reject);
     server.listen(port, '0.0.0.0', resolve);
   });
-  console.log(`BOSS Telegram webhook ingress listening on port ${port}`);
+  console.log('BOSS Telegram webhook ingress listening on port ' + port);
 
   let closing = false;
   const shutdown = async signal => {
     if (closing) return;
     closing = true;
-    console.log(`Webhook ingress stopping: ${signal}`);
+    console.log('Webhook ingress stopping: ' + signal);
     await new Promise(resolve => server.close(resolve));
     await pool.end();
   };
@@ -70,4 +77,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main };
+module.exports = { main, validateWebhookEnvironment };
