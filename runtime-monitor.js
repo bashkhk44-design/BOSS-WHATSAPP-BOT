@@ -8,7 +8,9 @@ function createRuntimeMonitor({
   intervalMs = DEFAULT_INTERVAL_MS,
   staleAfterSeconds = DEFAULT_STALE_AFTER_SECONDS,
   logger = console,
-  now = () => Date.now()
+  now = () => Date.now(),
+  autoRemediator = null,
+  autoRemediationEnabled = false
 }) {
   if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required');
   if (!Number.isInteger(intervalMs) || intervalMs < 1000) throw new RangeError('intervalMs must be at least 1000ms');
@@ -87,6 +89,23 @@ function createRuntimeMonitor({
       logger.log('BOSS RUNTIME HEALTH OK: ' + report.healthyBots + '/' + report.activeBots +
         ' active bot(s), ' + report.workers.length + ' worker(s) observed.');
     }
+
+    report.remediation = [];
+    if (autoRemediationEnabled && autoRemediator) {
+      for (const issue of report.issues) {
+        try {
+          const result = await autoRemediator.consider(issue.botId);
+          report.remediation.push({ botId: issue.botId, ...result });
+        } catch (error) {
+          logger.error('AUTO REMEDIATION DECISION FAILED FOR BOT ' + issue.botId + ':', error.message);
+          report.remediation.push({
+            botId: issue.botId,
+            eligible: false,
+            reason: 'remediation_service_error'
+          });
+        }
+      }
+    }
     return report;
   }
 
@@ -122,10 +141,24 @@ async function main() {
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000
   });
+  const autoRemediationEnabled = process.env.AUTO_REMEDIATION_ENABLED === 'YES';
+  const autoRemediator = autoRemediationEnabled
+    ? require('./auto-remediation').createAutoRemediator({
+        pool,
+        staleAfterSeconds: Number(process.env.RUNTIME_MONITOR_STALE_SECONDS || DEFAULT_STALE_AFTER_SECONDS)
+      })
+    : null;
+  if (autoRemediationEnabled) {
+    console.log('AUTO REMEDIATION ENABLED: safe restart policy, durable audit, cooldown and attempt limits active.');
+  } else {
+    console.log('AUTO REMEDIATION DISABLED: monitor is read-only.');
+  }
   const monitor = createRuntimeMonitor({
     pool,
     intervalMs: Number(process.env.RUNTIME_MONITOR_INTERVAL_MS || DEFAULT_INTERVAL_MS),
-    staleAfterSeconds: Number(process.env.RUNTIME_MONITOR_STALE_SECONDS || DEFAULT_STALE_AFTER_SECONDS)
+    staleAfterSeconds: Number(process.env.RUNTIME_MONITOR_STALE_SECONDS || DEFAULT_STALE_AFTER_SECONDS),
+    autoRemediator,
+    autoRemediationEnabled
   });
   let closing = false;
   const shutdown = async signal => {
