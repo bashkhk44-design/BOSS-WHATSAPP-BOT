@@ -3,6 +3,7 @@
 require('dotenv').config();
 
 const { Pool } = require('pg');
+const { getPostgresSslConfig } = require('./postgres-ssl');
 const { createQueueWorker } = require('./queue-worker');
 const {
   stableJson,
@@ -161,7 +162,7 @@ async function main({
 
   const pool = new PoolClass({
     connectionString: env.DATABASE_URL,
-    ssl: env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false },
+    ssl: getPostgresSslConfig(env),
     max: Number(env.DEPLOYMENT_PREFLIGHT_DB_POOL_MAX || 2),
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000
