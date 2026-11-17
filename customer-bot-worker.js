@@ -307,13 +307,14 @@ async function main() {
     throw new Error('Set CUSTOMER_BOT_WORKER_ENABLED=YES only on a dedicated test/worker service');
   }
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+  const { getPostgresSslConfig } = require('./postgres-ssl');
   const { Pool } = require('pg');
   const { decryptToken } = require('./db');
   const { createCustomerBot } = require('./customer-bot');
   const { createBotRuntime } = require('./bot-runtime');
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false },
+    ssl: getPostgresSslConfig(),
     max: Number(process.env.WORKER_DB_POOL_MAX || 3),
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000
