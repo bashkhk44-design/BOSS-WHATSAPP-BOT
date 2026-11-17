@@ -55,7 +55,7 @@ test('AI intake cannot finish while missing items remain', () => {
   assert.ok(result.missingItems.includes('تحديد صلاحيات الموظفين'));
   assert.ok(result.missingItems.includes('تحديد هدف المشروع وطريقة عمله'));
   assert.ok(result.missingItems.includes('تحديد الوظائف الأساسية المطلوبة'));
-  assert.match(result.assistantMessage, /بقيت نقطة تحتاج توضيحاً/);
+  assert.match(result.assistantMessage, /ما المهمة الأساسية/);
 });
 
 test('AI intake cannot finish without a project goal and core features', () => {
@@ -124,4 +124,22 @@ test('AI intake preserves model gaps and adds deterministic required gaps', () =
     'تحديد الوظائف الأساسية المطلوبة',
     'تحديد رحلة العميل والأزرار أو توضيح أن التفاعل نصي دون قوائم'
   ]);
+});
+
+
+test('AI intake asks about a model-reported gap instead of claiming completion', () => {
+  const result = normalizeIntakeResult({
+    assistant_message: 'اكتمل جمع المتطلبات.',
+    fields: {
+      description: 'بوت حجوزات',
+      features: 'إنشاء وإلغاء الحجوزات',
+      buttons: 'اختيار الموعد وتأكيد الحجز'
+    },
+    missing_items: ['تحديد سياسة الإلغاء'],
+    ready_for_review: true
+  });
+
+  assert.equal(result.readyForReview, false);
+  assert.match(result.assistantMessage, /تحديد سياسة الإلغاء/);
+  assert.match(result.assistantMessage, /ما التفاصيل/);
 });
