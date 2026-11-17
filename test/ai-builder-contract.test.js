@@ -26,7 +26,7 @@ function fixture() {
   const files = [
     { path: 'package.json', content: '{}' },
     { path: 'src/index.js', content: 'module.exports = true;' },
-    { path: 'test/acceptance.test.js', content: "const test = require('node:test');\\ntest('[BOSS_ACCEPTANCE:acceptance_one] scenario', () => {});\\n" }
+    { path: 'test/acceptance.test.js', content: "const test = require('node:test');\ntest('[BOSS_ACCEPTANCE:acceptance_one] scenario', () => {});\n" }
   ];
   const mappings = collectDesignElements(designArtifact).map(item => ({
     ...item,
