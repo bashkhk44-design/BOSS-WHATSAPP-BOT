@@ -65,7 +65,7 @@ function validateEgressProxy(proxyValue, policyValue) {
   return proxy.toString();
 }
 
-function buildNpmArgs({ projectDir, outputFile, proxy }) {
+function buildNpmArgs({ projectDir, proxy }) {
   return [
     'install', '--package-lock-only', '--ignore-scripts',
     '--package-lock=true', '--lockfile-version=3',
@@ -74,8 +74,7 @@ function buildNpmArgs({ projectDir, outputFile, proxy }) {
     '--strict-ssl=true', '--fetch-retries=0',
     '--no-audit', '--no-fund',
     '--userconfig=' + path.join(projectDir, '.npmrc-empty'),
-    '--globalconfig=' + path.join(projectDir, '.npmrc-empty'),
-    '--package-lock-only'
+    '--globalconfig=' + path.join(projectDir, '.npmrc-empty')
   ];
 }
 
