@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { testProjectBundle } = require('../ai-tester');
+const { collectDesignElements } = require('../build-design-map');
 
 function makeBundle(lockContent = JSON.stringify({
   name: 'fixture',
@@ -82,4 +83,69 @@ test('runtime test fails closed for malformed package-lock instead of throwing',
     if (previousImage === undefined) delete process.env.BOSS_SANDBOX_IMAGE;
     else process.env.BOSS_SANDBOX_IMAGE = previousImage;
   }
+});
+
+
+function makeDesignArtifact() {
+  return {
+    schemaVersion: 1,
+    specVersion: 2,
+    sourceFingerprint: 'c'.repeat(64),
+    sourceRequirements: [{ id: 'SPEC_FEATURES' }],
+    flows: [{
+      id: 'main_flow',
+      requirementRefs: ['SPEC_FEATURES'],
+      steps: [{ id: 'start_step', requirementRefs: ['SPEC_FEATURES'] }]
+    }],
+    states: [{ id: 'start', requirementRefs: ['SPEC_FEATURES'] }],
+    transitions: [],
+    messages: [],
+    buttons: [],
+    errorStates: [],
+    acceptanceTests: [{
+      id: 'main_test',
+      requirementRefs: ['SPEC_FEATURES']
+    }]
+  };
+}
+
+function addDesignMap(bundle, artifact) {
+  const mappings = collectDesignElements(artifact).map(item => ({
+    ...item,
+    filePaths: ['test/app.test.js']
+  }));
+  bundle.files.push({
+    path: 'boss-design-map.json',
+    content: JSON.stringify({
+      schemaVersion: 1,
+      specVersion: artifact.specVersion,
+      sourceFingerprint: artifact.sourceFingerprint,
+      mappings
+    })
+  });
+  return bundle;
+}
+
+test('tester requires a complete design map tied to the approved artifact', async () => {
+  const artifact = makeDesignArtifact();
+  const bundle = addDesignMap(makeBundle(), artifact);
+  const result = await testProjectBundle({ bundle, designArtifact: artifact });
+
+  assert.equal(result.passed, true);
+  assert.equal(result.designFingerprint, artifact.sourceFingerprint);
+  assert.equal(result.checks.find(item => item.name === 'design-to-file-map').passed, true);
+});
+
+test('tester rejects a missing design mapping before the project can pass', async () => {
+  const artifact = makeDesignArtifact();
+  const bundle = addDesignMap(makeBundle(), artifact);
+  const mapFile = bundle.files.find(file => file.path === 'boss-design-map.json');
+  const map = JSON.parse(mapFile.content);
+  map.mappings.pop();
+  mapFile.content = JSON.stringify(map);
+
+  const result = await testProjectBundle({ bundle, designArtifact: artifact });
+
+  assert.equal(result.passed, false);
+  assert.equal(result.checks.find(item => item.name === 'design-to-file-map').passed, false);
 });
