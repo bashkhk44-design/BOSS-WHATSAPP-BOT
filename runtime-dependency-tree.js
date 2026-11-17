@@ -37,6 +37,16 @@ function packageBinEntries(packageJson) {
   return Object.entries(packageJson.bin);
 }
 
+function expectedPackageName(lockPath) {
+  const marker = '/node_modules/';
+  const nested = lockPath.lastIndexOf(marker);
+  const relative = nested >= 0
+    ? lockPath.slice(nested + marker.length)
+    : lockPath.slice('node_modules/'.length);
+  const parts = relative.split('/');
+  return parts[0].startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+}
+
 function nearestNodeModulesDir(packageDir, nodeModulesRoot) {
   let current = path.dirname(packageDir);
   while (isInside(nodeModulesRoot, current)) {
@@ -84,7 +94,7 @@ function createPackageBinWrappers({ nodeModulesDir, lockData }) {
   const created = [];
   const seen = new Set();
 
-  for (const [lockPath] of entries) {
+  for (const [lockPath, lockEntry] of entries) {
     if (typeof lockPath !== 'string' || !lockPath.startsWith('node_modules/') ||
         !safePackageRelativePath(lockPath)) {
       fail('Unsafe package-lock path while preparing executable wrappers.');
@@ -104,10 +114,22 @@ function createPackageBinWrappers({ nodeModulesDir, lockData }) {
       fail('Package metadata is missing or unsafe: ' + lockPath);
     }
     const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    if (!lockEntry || packageJson.name !== expectedPackageName(lockPath) ||
+        packageJson.version !== lockEntry.version) {
+      fail('Package identity does not match package-lock while preparing executable wrappers: ' + lockPath);
+    }
     const binEntries = packageBinEntries(packageJson);
     if (!binEntries.length) continue;
 
     const binDir = path.join(nearestNodeModulesDir(packageDir, nodeModulesDir), '.bin');
+    if (fs.existsSync(binDir)) {
+      const binDirStat = fs.lstatSync(binDir);
+      if (binDirStat.isSymbolicLink() || !binDirStat.isDirectory()) {
+        fail('Package executable directory is not a real directory.');
+      }
+    } else {
+      fs.mkdirSync(binDir, { recursive: true, mode: 0o755 });
+    }
     for (const [command, relativeTargetValue] of binEntries) {
       if (!safePackageRelativePath(relativeTargetValue)) {
         fail('Package executable target path is unsafe: ' + lockPath);
@@ -129,6 +151,21 @@ function createPackageBinWrappers({ nodeModulesDir, lockData }) {
     }
   }
   return created.sort();
+}
+
+function hashFile(filePath) {
+  const hash = crypto.createHash('sha256');
+  const fd = fs.openSync(filePath, 'r');
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  try {
+    let bytesRead;
+    while ((bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return hash.digest('hex');
 }
 
 function computeDirectoryTreeDigest(rootDir) {
@@ -157,7 +194,7 @@ function computeDirectoryTreeDigest(rootDir) {
         visit(absolute, relative);
       } else if (stat.isFile()) {
         if (stat.nlink !== 1) fail('Runtime dependency tree contains a hard-linked file: ' + relative);
-        const digest = crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex');
+        const digest = hashFile(absolute);
         records.push([relative, 'file', stat.mode & 0o777, stat.size, digest]);
       } else {
         fail('Runtime dependency tree contains an unsupported filesystem entry: ' + relative);
@@ -201,8 +238,10 @@ function prepareRuntimeDependencyTree({ outputDir, lockfilePath }) {
   }
   const binWrappers = createPackageBinWrappers({ nodeModulesDir, lockData });
   const tree = computeDirectoryTreeDigest(nodeModulesDir);
+  const lockfileSha256 = crypto.createHash('sha256').update(fs.readFileSync(lockfilePath)).digest('hex');
   return {
     nodeModulesDir,
+    lockfileSha256,
     treeSha256: tree.sha256,
     fileCount: tree.fileCount,
     directoryCount: tree.directoryCount,
@@ -213,6 +252,7 @@ function prepareRuntimeDependencyTree({ outputDir, lockfilePath }) {
 module.exports = {
   safePackageRelativePath,
   packageBinEntries,
+  expectedPackageName,
   createPackageBinWrappers,
   computeDirectoryTreeDigest,
   prepareRuntimeDependencyTree
