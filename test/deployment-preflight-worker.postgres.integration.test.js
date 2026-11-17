@@ -25,8 +25,8 @@ test('isolated deployment worker consumes only its registered job type in real P
     );
     clientId = client.rows[0].id;
     const project = await pool.query(
-      'INSERT INTO client_projects (client_id, name) VALUES ($1, $2) RETURNING id',
-      [clientId, 'Disposable deployment worker integration']
+      'INSERT INTO client_projects (client_id) VALUES ($1) RETURNING id',
+      [clientId]
     );
     projectId = project.rows[0].id;
     const preflight = await enqueuePlatformJob(pool, {
