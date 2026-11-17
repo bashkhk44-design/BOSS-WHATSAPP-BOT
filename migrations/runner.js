@@ -61,7 +61,7 @@ function createMigrationRunner({
           }
 
           const sql = fsApi.readFileSync(path.join(migrationsDir, filename), 'utf8');
-          if (!/^\s*--[\s\S]*?\bBEGIN\s*;/i.test(sql) || !/\bCOMMIT\s*;\s*$/i.test(sql)) {
+          if (!/^\s*BEGIN\s*;/i.test(sql) || !/\bCOMMIT\s*;\s*$/i.test(sql)) {
             throw new Error(`Migration ${filename} must contain a transaction ending in COMMIT;`);
           }
 
