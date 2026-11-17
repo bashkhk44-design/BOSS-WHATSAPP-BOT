@@ -173,9 +173,10 @@ function formatDeploymentPreflightJob(job, release) {
   const result = job.result && typeof job.result === 'object' ? job.result : null;
   if (result) {
     lines.push(
-      'فحص Docker نُفذ: ' + (result.isolatedPreflightExecuted ? 'نعم' : 'لا'),
+      'محاولة الفحص المعزول: ' + (result.isolatedPreflightAttempted ? 'نعم' : 'لا'),
+      'تشغيل الحاوية مؤكد: ' + (result.isolatedPreflightExecuted ? 'نعم' : 'لا'),
       'إصدار Node داخل الحاوية: ' + String(result.runtimeVersion || 'غير متحقق'),
-      'مسار الصحة: ' + (result.healthStatus ? 'HTTP ' + result.healthStatus : 'لم ينجح')
+      'مسار الصحة: ' + (result.dockerHealthProbePassed ? 'ناجح' : (result.healthStatus ? 'HTTP ' + result.healthStatus : 'لم ينجح'))
     );
     if (Array.isArray(result.checks)) {
       lines.push('', 'نتائج الفحوصات:');
