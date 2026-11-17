@@ -32,6 +32,7 @@ async function fixProject({
   project,
   analysis,
   design,
+  designArtifact,
   bundle,
   maxAttempts = 2
 }) {
@@ -53,6 +54,7 @@ async function fixProject({
 قواعد إلزامية:
 - أصلح الأخطاء الواردة في تقرير الاختبار فقط.
 - حافظ على ميزات المشروع وسلوكه وتصميمه.
+- حافظ على boss-design-map.json ومراجع التصميم المعتمد؛ لا تحذف أو تغيّر أي mapping إلا إذا كان تصحيح ملف فعلياً يتطلب ذلك، ويجب أن تبقى كل عناصر التصميم مرتبطة بملفات موجودة.
 - لا تحذف ملفات أو ميزات لمجرد تجاوز الاختبار.
 - لا تخترع مفاتيح API أو كلمات مرور أو بيانات سرية.
 - لا تنشئ ملفات .env أو node_modules أو .git.
@@ -77,7 +79,8 @@ async function fixProject({
 
   for (let attempt = 1; attempt <= limit; attempt++) {
     const testResult = await testProjectBundle({
-      bundle: currentBundle
+      bundle: currentBundle,
+      designArtifact
     });
 
     if (testResult.passed) {
@@ -109,6 +112,7 @@ async function fixProject({
       },
       analystReport: analysis.text,
       designDocument: design.text,
+      designArtifact: designArtifact || design.artifact || null,
       currentFiles: currentBundle.files,
       testErrors: attemptInfo.errors
     });
@@ -138,7 +142,8 @@ async function fixProject({
   }
 
   const finalTest = await testProjectBundle({
-    bundle: currentBundle
+    bundle: currentBundle,
+    designArtifact
   });
 
   return {
