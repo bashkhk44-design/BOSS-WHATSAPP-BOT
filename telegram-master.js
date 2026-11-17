@@ -20,9 +20,9 @@ const {
   failProjectAiJob,
   recoverInterruptedProjectAiJobs,
   getProjectApprovalState,
-  approveProjectMilestone,
-  buildConstructionPoints
+  approveProjectMilestone
 } = require('./project-db');
+const { buildConstructionPoints } = require('./project-construction-points');
 const { startIntakeBot, stopIntakeBot } = require('./intake-bot');
 const { analyzeProject } = require('./gemini-analyst');
 const { designProject } = require('./ai-designer');
