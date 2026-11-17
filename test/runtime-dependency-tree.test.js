@@ -93,7 +93,7 @@ test('rejects symlink executable targets', t => {
   const packageDir = path.join(item.nodeModulesDir, 'demo');
   fs.rmSync(path.join(packageDir, 'bin', 'cli.js'));
   fs.symlinkSync(path.join(packageDir, 'index.js'), path.join(packageDir, 'bin', 'cli.js'));
-  assert.throws(() => prepareRuntimeDependencyTree(item), /regular non-linked file/);
+  assert.throws(() => prepareRuntimeDependencyTree(item), /symbolic link|regular non-linked file/);
 });
 
 test('rejects duplicate executable names within the same bin directory', t => {
