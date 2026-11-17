@@ -1,5 +1,6 @@
 'use strict';
 
+const { randomUUID } = require('node:crypto');
 const { enqueuePlatformJob } = require('./platform-queue');
 const {
   stableJson,
