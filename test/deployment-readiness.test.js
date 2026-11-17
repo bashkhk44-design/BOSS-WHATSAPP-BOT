@@ -20,7 +20,7 @@ function fixture() {
           summary: {
             tests: 2, passed: 2, failed: 0, skipped: 0, todo: 0, cancelled: 0
           },
-          acceptanceTests: [{ passed: true }, { passed: true }]
+          acceptanceTests: [{ id: 'A1', name: 'basic flow', passed: true }, { id: 'A2', name: 'recovery flow', passed: true }]
         }
       }
     }
@@ -86,6 +86,14 @@ test('readiness rejects incomplete, skipped or failed acceptance evidence', () =
   assert.ok(result.blockers.includes('release_test_evidence_incomplete'));
 });
 
+test('readiness rejects non-finite or unsafe test counts', () => {
+  const input = fixture();
+  input.release.artifact.report.tests.summary.tests = Number.POSITIVE_INFINITY;
+  input.release.artifact.report.tests.summary.passed = Number.POSITIVE_INFINITY;
+  const result = evaluateDeploymentReadiness(input);
+  assert.ok(result.blockers.includes('release_test_evidence_incomplete'));
+});
+
 test('readiness requires an explicitly confirmed target matching the artifact', () => {
   const input = fixture();
   input.target.confirmed = false;
@@ -119,6 +127,20 @@ test('readiness fingerprint changes when the target changes', () => {
   const before = evaluateDeploymentReadiness(input);
   input.target.serviceId = 'different-service';
   input.executionApproval.serviceId = 'different-service';
+  const after = evaluateDeploymentReadiness(input);
+  assert.notEqual(before.readinessSha256, after.readinessSha256);
+});
+
+test('readiness fingerprint binds approval identities and test evidence', () => {
+  const input = fixture();
+  const before = evaluateDeploymentReadiness(input);
+  input.executionApproval.approvedBy = '10002';
+  input.authorization.authorized_by = '10002';
+  input.release.artifact.report.tests.summary.tests = 3;
+  input.release.artifact.report.tests.summary.passed = 3;
+  input.release.artifact.report.tests.acceptanceTests.push({
+    id: 'A3', name: 'new acceptance flow', passed: true
+  });
   const after = evaluateDeploymentReadiness(input);
   assert.notEqual(before.readinessSha256, after.readinessSha256);
 });
