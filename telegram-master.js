@@ -680,6 +680,8 @@ bot.callbackQuery(/^project:pipeline:(\d+)$/, async (ctx) => {
         '\nالمشروع: ' + (project.project_name || project.name) +
         '\nالإصدار: R' + release.release_version +
         '\nالمواصفات المعتمدة: v' + release.spec_version +
+        '\nملخص المواصفات: ' + JSON.stringify(result.releaseReport.approvals.customerSpec.details).slice(0, 900) +
+        '\nملخص التصميم: ' + result.releaseReport.design.summary.slice(0, 900) +
         '\nبصمة الإصدار: ' + release.artifact_sha256 +
         '\n\nملخص الاختبارات: ' + result.releaseReport.tests.summary.passed + '/' + result.releaseReport.tests.summary.tests + ' ناجحة' +
         '\nاختبارات القبول: ' + result.releaseReport.tests.acceptanceTests.length +
@@ -703,6 +705,81 @@ bot.callbackQuery(/^project:pipeline:(\d+)$/, async (ctx) => {
       '❌ تعذر إكمال التنفيذ: ' +
       String(error.message || error).slice(0, 2000)
     );
+  }
+});
+
+
+bot.callbackQuery(/^project:release:customer:(approved|rejected):(\d+)$/, async (ctx) => {
+  try {
+    const decision = await decideRelease({
+      releaseId: ctx.match[2],
+      role: 'customer',
+      telegramUserId: ctx.from.id,
+      decision: ctx.match[1]
+    });
+    await ctx.answerCallbackQuery({
+      text: decision.status === 'awaiting_manager' ? 'تم تسجيل موافقتك.' : 'تم تسجيل الرفض.'
+    });
+    await ctx.reply(
+      decision.status === 'awaiting_manager'
+        ? '✅ تم تسجيل موافقتك على تقرير الإصدار ونتيجة الاختبارات. ينتظر الآن اعتماد المدير. لم يتم النشر.'
+        : 'تم تسجيل رفض الإصدار. سيقوم فريق المشروع بمراجعته.'
+    );
+    if (decision.status === 'awaiting_manager') {
+      try {
+        await ctx.api.sendMessage(
+          adminId,
+          '📋 موافقة العميل وصلت للإصدار R' + decision.release_version +
+          ' للمشروع #' + decision.project_id +
+          '.\\nيمكنك مراجعة الإصدار واعتماده أو رفضه.',
+          { reply_markup: new InlineKeyboard()
+            .text('✅ اعتماد المدير', 'project:release:manager:approved:' + decision.id)
+            .row()
+            .text('❌ رفض الإصدار', 'project:release:manager:rejected:' + decision.id) }
+        );
+      } catch (notifyError) {
+        console.error('RELEASE MANAGER NOTIFICATION ERROR:', notifyError.message);
+      }
+    } else {
+      await ctx.api.sendMessage(adminId, '❌ رفض العميل الإصدار R' + decision.release_version + ' للمشروع #' + decision.project_id + '.');
+    }
+  } catch (error) {
+    await ctx.answerCallbackQuery({ text: String(error.message || error).slice(0, 180) });
+  }
+});
+
+bot.callbackQuery(/^project:release:manager:(approved|rejected):(\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  try {
+    const current = await getReleaseCandidate(ctx.match[2]);
+    if (!current) throw new Error('الإصدار غير موجود.');
+    const decision = await decideRelease({
+      releaseId: ctx.match[2],
+      role: 'manager',
+      telegramUserId: ctx.from.id,
+      decision: ctx.match[1]
+    });
+    await ctx.answerCallbackQuery({
+      text: decision.status === 'approved' ? 'اعتمد الإصدار.' : 'تم رفض الإصدار.'
+    });
+    await ctx.reply(
+      (decision.status === 'approved' ? '✅ اكتمل اعتماد الإصدار ' : '❌ تم رفض الإصدار ') +
+      'R' + decision.release_version + ' للمشروع #' + decision.project_id +
+      '.\\nحالة النشر: لم يتم النشر، ويتطلب النشر موافقة وإجراءً منفصلين.'
+    );
+    try {
+      await ctx.api.sendMessage(
+        current.customer_telegram_id,
+        (decision.status === 'approved'
+          ? '✅ اعتمد المدير إصدارك R' + decision.release_version + '.'
+          : '❌ رفض المدير إصدار R' + decision.release_version + '.') +
+        '\\nلم يتم تنفيذ أي نشر تلقائي.'
+      );
+    } catch (notifyError) {
+      console.error('RELEASE CUSTOMER FINAL NOTIFICATION ERROR:', notifyError.message);
+    }
+  } catch (error) {
+    await ctx.answerCallbackQuery({ text: String(error.message || error).slice(0, 180) });
   }
 });
 
