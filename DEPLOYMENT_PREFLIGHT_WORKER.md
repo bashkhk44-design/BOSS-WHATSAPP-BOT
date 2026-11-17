@@ -27,7 +27,7 @@ Start only as a separate worker process:
 
 `npm run start:deployment-preflight-worker`
 
-The process intentionally does not require `TELEGRAM_BOT_TOKEN` or `BOTS_ENCRYPTION_KEY`. Do not run it in the manager web service. The host must provide a Docker daemon and the exact pinned image must already be present locally because the sandbox uses `--pull=never`.
+The process intentionally does not require `TELEGRAM_BOT_TOKEN` or `BOTS_ENCRYPTION_KEY`. Do not run it in the manager web service. The host must provide a Docker daemon and the exact pinned image must already be present locally because the sandbox uses `--pull=never`. Docker daemon access is effectively host-privileged, so run this process only on a dedicated isolated runner host with no unrelated sensitive workloads; never expose the Docker socket to customer containers or the manager web service.
 
 ## Safety and deployment boundary
 
