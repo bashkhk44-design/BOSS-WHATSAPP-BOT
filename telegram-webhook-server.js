@@ -67,7 +67,10 @@ function createTelegramWebhookServer({
         return sendJson(res, 400, { ok: false, error: 'invalid_json' });
       }
 
-      if (!update || !Number.isSafeInteger(Number(update.update_id))) {
+      // Telegram update_id is a JSON integer. Reject strings, fractions,
+      // negative values, and non-object payloads before touching the queue.
+      if (!update || typeof update !== 'object' || Array.isArray(update) ||
+          !Number.isSafeInteger(update.update_id) || update.update_id < 0) {
         return sendJson(res, 400, { ok: false, error: 'invalid_update' });
       }
 
