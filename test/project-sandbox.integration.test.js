@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { runSandboxTests } = require('../project-sandbox');
 
-test('executes a project test inside the network-disabled Docker sandbox', () => {
+test('executes a project test inside the network-disabled Docker sandbox', { skip: !process.env.BOSS_SANDBOX_IMAGE }, () => {
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-sandbox-integration-'));
   try {
     fs.writeFileSync(path.join(projectDir, 'smoke.test.js'), [
