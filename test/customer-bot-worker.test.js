@@ -26,15 +26,28 @@ test('claims the next eligible bot transactionally with SKIP LOCKED', async () =
   assert.equal(calls[4].sql, 'RELEASE');
 });
 
-test('does not claim another bot when worker capacity is full', async () => {
-  let connects = 0;
-  const pool = { async connect() { connects += 1; throw new Error('must not claim'); } };
+test('does not claim another bot when worker capacity is full but still checks manager commands', async () => {
+  let botClaims = 0;
+  const pool = {
+    async connect() {
+      return {
+        async query(sql) {
+          if (sql === 'BEGIN' || sql === 'COMMIT') return { rowCount: 0, rows: [] };
+          if (sql.includes('SELECT c.id, c.bot_id')) return { rowCount: 0, rows: [] };
+          if (sql.includes('SELECT b.id')) { botClaims += 1; throw new Error('must not claim another bot'); }
+          throw new Error('Unexpected SQL: ' + sql.slice(0, 80));
+        },
+        release() {}
+      };
+    }
+  };
   const runtime = {
     getRuntimeSnapshot: () => [
       { id: '1', status: 'running' },
       { id: '2', status: 'retrying' }
     ],
     async startBotById() {},
+    async stopBotById() {},
     async stopBotRuntime() {}
   };
   const worker = createCustomerBotWorker({
@@ -43,7 +56,7 @@ test('does not claim another bot when worker capacity is full', async () => {
     logger: { log() {}, error() {} }
   });
   assert.equal(await worker.runOnce(), false);
-  assert.equal(connects, 0);
+  assert.equal(botClaims, 0);
 });
 
 test('worker capacity and lease settings are bounded', () => {
