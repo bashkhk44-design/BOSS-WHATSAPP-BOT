@@ -52,7 +52,9 @@ test('AI intake cannot finish while missing items remain', () => {
     ready_for_review: true
   });
   assert.equal(result.readyForReview, false);
-  assert.deepEqual(result.missingItems, ['تحديد صلاحيات الموظفين']);
+  assert.ok(result.missingItems.includes('تحديد صلاحيات الموظفين'));
+  assert.ok(result.missingItems.includes('تحديد هدف المشروع وطريقة عمله'));
+  assert.ok(result.missingItems.includes('تحديد الوظائف الأساسية المطلوبة'));
 });
 
 test('AI intake cannot finish without a project goal and core features', () => {
