@@ -146,7 +146,7 @@ async function fixProject({
     bundle: currentBundle,
     attempts,
     testResult: finalTest,
-    originalPreserved: JSON.stringify(originalBundle) === originalSnapshot,
+    originalPreserved: originalFilesPreserved(originalBundle, currentBundle),
     summary: finalTest.passed
       ? 'تم الإصلاح واجتازت الحزمة الاختبارات.'
       : 'لم تنجح الاختبارات بعد ' + limit + ' محاولة إصلاح.'
