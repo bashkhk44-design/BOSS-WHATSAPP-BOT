@@ -34,7 +34,7 @@ const TAP_FAIL = [
   '# cancelled 0',
   '# skipped 0',
   '# todo 0'
-].join('\\n');
+].join('\n');
 
 test('sandbox requires immutable image digest', () => {
   assert.throws(() => validateSandboxImage('node:22-alpine'), /sha256 digest/);
