@@ -14,7 +14,7 @@ function fixture() {
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
     name: 'safe-fixture',
     version: '1.0.0',
-    dependencies: { is-number: '^7.0.0' },
+    dependencies: { 'is-number': '^7.0.0' },
     scripts: { start: 'node index.js' }
   }));
   return dir;
