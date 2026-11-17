@@ -74,3 +74,21 @@ test('migration discovery is ordered and ignores non-migration files', (t) => {
   }
   assert.deepEqual(listMigrationFiles(directory), ['001_first.sql', '002_second.sql']);
 });
+
+test('foundation migration has balanced PL/pgSQL dollar delimiters and ownership checks', () => {
+  const sql = fs.readFileSync(
+    path.join(__dirname, '..', 'migrations', '001_foundation_database.sql'),
+    'utf8'
+  );
+  assert.equal((sql.match(/DO \$\$/g) || []).length, 3);
+  assert.equal((sql.match(/END \$\$;/g) || []).length, 3);
+  assert.doesNotMatch(sql, /DO \$(?:\s|\n)/);
+  for (const constraint of [
+    'telegram_bots_project_requires_client',
+    'platform_jobs_project_requires_client',
+    'ai_usage_project_requires_client',
+    'platform_audit_project_requires_client'
+  ]) {
+    assert.ok(sql.includes(constraint), `missing ownership constraint: ${constraint}`);
+  }
+});
