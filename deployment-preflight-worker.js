@@ -114,7 +114,7 @@ function createDeploymentPreflightHandler({
     `, [release.project_id, release.id]);
     const rollbackRelease = rollbackResult.rows[0] || null;
 
-    const result = preflight({
+    const result = await preflight({
       release,
       authorization,
       target: null,
