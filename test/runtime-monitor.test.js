@@ -10,6 +10,12 @@ test('runtime monitor reports healthy bots and stale or failed bots without chan
   const pool = {
     async query(sql) {
       queries += 1;
+      if (/FROM bot_worker_status/.test(sql)) {
+        return { rows: [
+          { worker_id: 'worker-a', status: 'running', capacity: 25, last_heartbeat_at: new Date(now - 5000) },
+          { worker_id: 'worker-b', status: 'stopped', capacity: 25, last_heartbeat_at: new Date(now - 5000) }
+        ] };
+      }
       assert.match(sql, /LEFT JOIN bot_runtime_status/);
       return { rows: [
         { id: 1, name: 'healthy', status: 'running', worker_id: 'worker-a', last_heartbeat_at: new Date(now - 10000), last_error_code: null },
@@ -25,15 +31,15 @@ test('runtime monitor reports healthy bots and stale or failed bots without chan
   });
 
   const report = await monitor.pollOnce();
-  assert.equal(queries, 1);
+  assert.equal(queries, 2);
   assert.equal(report.activeBots, 4);
   assert.equal(report.healthyBots, 1);
   assert.deepEqual(report.issues.map(item => item.reason), [
     'stale_heartbeat', 'error', 'missing_heartbeat'
   ]);
   assert.equal(report.workers.length, 2);
-  assert.equal(report.workers.find(item => item.workerId === 'worker-a').health, 'not_independently_measured');
-  assert.equal(report.workers.find(item => item.workerId === 'worker-b').heartbeatSource, 'bot_runtime_status');
+  assert.equal(report.workers.find(item => item.workerId === 'worker-a').health, 'healthy');
+  assert.equal(report.workers.find(item => item.workerId === 'worker-b').health, 'stale_or_stopped');
 });
 
 test('runtime monitor rejects unsafe polling intervals', () => {
