@@ -945,13 +945,66 @@ async function startTelegramServices() {
 
 async function recoverRuntimeAfterLockLoss(err) {
   if (shuttingDown) return;
+  runtimeRecoveryRequested = true;
+  if (runtimeRecoveryPromise) return runtimeRecoveryPromise;
 
   console.error(
-    'FATAL: Telegram runtime lock was lost. Restarting service to acquire a fresh lock.',
+    'WARNING: Telegram runtime lock was lost. Stopping Telegram services and attempting safe lock recovery.',
     err?.message || err || ''
   );
 
-  await shutdown('TELEGRAM_RUNTIME_LOCK_LOST', 1);
+  // During initial startup, the startup loop already owns recovery.
+  if (startupInProgress) return;
+
+  runtimeRecoveryPromise = (async () => {
+    await stopTelegramServicesForRecovery();
+
+    while (!shuttingDown) {
+      try {
+        const locked = await acquireTelegramRuntimeLock();
+
+        if (!locked) {
+          console.log('Runtime lock is held by another instance; retrying recovery in 5 seconds.');
+          await recoveryDelay(5000);
+          continue;
+        }
+
+        runtimeRecoveryRequested = false;
+
+        if (!(await isTelegramRuntimeLockHeld())) {
+          runtimeRecoveryRequested = true;
+          await stopTelegramServicesForRecovery();
+          await recoveryDelay(5000);
+          continue;
+        }
+
+        const recoveredJobs = await recoverInterruptedProjectAiJobs();
+        console.log('Recovered ' + recoveredJobs + ' interrupted AI job(s) after lock loss');
+
+        await startTelegramServices();
+
+        if (!(await runtimeLockIsSafe()) || runtimeRecoveryRequested) {
+          throw new Error('Runtime lock was lost while restarting Telegram services');
+        }
+
+        process.emit('boss:runtime-ready');
+        console.log('Telegram runtime recovered successfully without exiting the service.');
+        return;
+      } catch (recoveryError) {
+        console.error('RUNTIME LOCK RECOVERY ATTEMPT FAILED:', recoveryError.message);
+        runtimeRecoveryRequested = true;
+        await stopTelegramServicesForRecovery();
+
+        if (!shuttingDown) {
+          await recoveryDelay(5000);
+        }
+      }
+    }
+  })().finally(() => {
+    runtimeRecoveryPromise = null;
+  });
+
+  return runtimeRecoveryPromise;
 }
 
 async function start() {
@@ -1023,6 +1076,13 @@ async function start() {
 
   } finally {
     startupInProgress = false;
+
+    // Close the narrow race where the lock is lost as startup is completing.
+    if (runtimeRecoveryRequested && !shuttingDown && !runtimeRecoveryPromise) {
+      void recoverRuntimeAfterLockLoss(
+        new Error('Runtime lock loss detected while startup was completing')
+      );
+    }
   }
 }
 
