@@ -260,8 +260,24 @@ function createBotRuntime({
   };
 }
 
-const { pool, decryptToken } = require('./db');
-const { createCustomerBot } = require('./customer-bot');
-const runtime = createBotRuntime({ pool, decryptToken, createCustomerBot });
+let defaultRuntime = null;
 
-module.exports = { createBotRuntime, ...runtime };
+function getDefaultRuntime() {
+  if (!defaultRuntime) {
+    const { pool, decryptToken } = require('./db');
+    const { createCustomerBot } = require('./customer-bot');
+    defaultRuntime = createBotRuntime({ pool, decryptToken, createCustomerBot });
+  }
+  return defaultRuntime;
+}
+
+module.exports = {
+  createBotRuntime,
+  startBotRuntime: (...args) => getDefaultRuntime().startBotRuntime(...args),
+  stopBotRuntime: (...args) => getDefaultRuntime().stopBotRuntime(...args),
+  startBotById: (...args) => getDefaultRuntime().startBotById(...args),
+  stopBotById: (...args) => getDefaultRuntime().stopBotById(...args),
+  getRunningBotCount: (...args) => getDefaultRuntime().getRunningBotCount(...args),
+  getBotRuntimeStatus: (...args) => getDefaultRuntime().getBotRuntimeStatus(...args),
+  getRuntimeSnapshot: (...args) => getDefaultRuntime().getRuntimeSnapshot(...args)
+};
