@@ -59,14 +59,16 @@ function buildReleaseReport({ project, spec, design, testResult, deployment }) {
     approvals: {
       customerSpec: {
         status: 'approved',
-        specVersion: Number(project.spec_version)
+        specVersion: Number(project.spec_version),
+        details: spec && typeof spec === 'object' ? spec : {}
       },
       managerConstructionPoints: 'approved',
       managerDesign: 'approved'
     },
     design: {
       specVersion: Number(design.artifact.specVersion),
-      sourceFingerprint: design.artifact.sourceFingerprint
+      sourceFingerprint: design.artifact.sourceFingerprint,
+      summary: String(design.text || '').slice(0, 12000)
     },
     tests: {
       status: 'passed',
@@ -165,7 +167,7 @@ async function initProjectReleaseDatabase() {
 
   await pool.query(`
     CREATE OR REPLACE FUNCTION prevent_project_release_artifact_mutation()
-    RETURNS trigger AS $
+    RETURNS trigger AS $release$
     BEGIN
       IF NEW.project_id IS DISTINCT FROM OLD.project_id OR
          NEW.release_version IS DISTINCT FROM OLD.release_version OR
@@ -181,7 +183,7 @@ async function initProjectReleaseDatabase() {
       END IF;
       RETURN NEW;
     END;
-    $ LANGUAGE plpgsql
+    $release$ LANGUAGE plpgsql
   `);
 
   await pool.query(`
