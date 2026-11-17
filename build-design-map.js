@@ -100,13 +100,13 @@ function validateDesignMap({ map, designArtifact, files }) {
     }
 
     if (source.designType === 'acceptanceTest') {
-      if (!Array.isArray(mapping.testCases) || !mapping.testCases.length ||
-          mapping.testCases.length > 10) {
+      if (!Array.isArray(mapping.testCases) || mapping.testCases.length !== 1) {
         throw new Error('اختبار القبول يجب أن يرتبط بحالات اختبار منفذة فعلياً: ' + key);
       }
       for (const testCase of mapping.testCases) {
         const marker = '[BOSS_ACCEPTANCE:' + source.designId + ']';
         if (!testCase || typeof testCase !== 'object' ||
+            Object.keys(testCase).some(field => !['filePath', 'testName'].includes(field)) ||
             typeof testCase.filePath !== 'string' ||
             typeof testCase.testName !== 'string' ||
             !actualFiles.has(testCase.filePath) ||
