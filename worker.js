@@ -4,14 +4,24 @@ require('dotenv').config();
 
 const path = require('node:path');
 const { Pool } = require('pg');
-const { decryptToken } = require('./db');
 const { createQueueWorker } = require('./queue-worker');
 const { createTelegramUpdateHandler } = require('./telegram-update-handler');
 
-async function main() {
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-  if (!process.env.BOTS_ENCRYPTION_KEY) throw new Error('BOTS_ENCRYPTION_KEY is required for Telegram update processing');
+function validateWorkerEnvironment(env = process.env) {
+  if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+  if (!/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL)) {
+    throw new Error('DATABASE_URL must use the PostgreSQL protocol');
+  }
+  if (!/^[0-9a-fA-F]{64}$/.test(env.BOTS_ENCRYPTION_KEY || '')) {
+    throw new Error('BOTS_ENCRYPTION_KEY must be a 32-byte hex key');
+  }
+  return true;
+}
 
+async function main() {
+  validateWorkerEnvironment();
+
+  const { decryptToken } = require('./db');
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false },
@@ -43,7 +53,7 @@ async function main() {
   const shutdown = async signal => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`Queue worker stopping: ${signal}`);
+    console.log('Queue worker stopping: ' + signal);
     await worker.stop();
     await pool.end();
   };
@@ -57,7 +67,7 @@ async function main() {
     process.exitCode = 1;
   }));
 
-  console.log(`Queue worker started: ${worker.workerId}`);
+  console.log('Queue worker started: ' + worker.workerId);
   await worker.start();
 }
 
@@ -68,4 +78,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main };
+module.exports = { main, validateWorkerEnvironment };
