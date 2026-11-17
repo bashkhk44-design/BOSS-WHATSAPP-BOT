@@ -29,6 +29,10 @@ const { designProject } = require('./ai-designer');
 const { runProjectPipeline } = require('./project-pipeline');
 const { getGeminiModel } = require('./ai-router');
 const { getReleaseCandidate, decideRelease, authorizeDeployment } = require('./project-release');
+const {
+  reviewDeploymentReadiness,
+  formatDeploymentReadinessReview
+} = require('./deployment-readiness-telegram');
 
 const CUSTOMER_BOT_WORKER_MODE = process.env.CUSTOMER_BOT_WORKER_MODE === 'external';
 
@@ -806,9 +810,44 @@ bot.callbackQuery(/^project:deploy-auth:authorize:(\d+)$/, async (ctx) => {
       '🔐 تصريح النشر رقم #' + authorization.id + ' أصبح معتمداً.\n' +
       'الإصدار: #' + authorization.release_id + '\n' +
       'بصمة التصريح SHA-256: ' + authorization.authorization_sha256 + '\n\n' +
-      'تنبيه: هذا التصريح لا ينفّذ النشر تلقائياً. لم يتم الاتصال بـ Render أو تغيير الإنتاج.'
+      'تنبيه: هذا التصريح لا ينفّذ النشر تلقائياً. لم يتم الاتصال بـ Render أو تغيير الإنتاج.',
+      {
+        reply_markup: new InlineKeyboard().text(
+          '📋 مراجعة متطلبات الجاهزية',
+          'project:deploy:readiness:' + authorization.release_id
+        )
+      }
     );
   } catch (error) {
+    await ctx.answerCallbackQuery({ text: String(error.message || error).slice(0, 180) });
+  }
+});
+
+bot.callbackQuery(/^project:deploy:readiness:(\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  try {
+    const release = await getReleaseCandidate(ctx.match[1]);
+    if (!release) throw new Error('الإصدار غير موجود.');
+
+    const authorizationResult = await pool.query(
+      `SELECT id, release_id, authorized_by, status, authorization_sha256, created_at
+       FROM project_deployment_authorizations
+       WHERE release_id = $1`,
+      [ctx.match[1]]
+    );
+    const authorization = authorizationResult.rows[0] || null;
+    const review = reviewDeploymentReadiness({ release, authorization });
+    const message = formatDeploymentReadinessReview({ release, review });
+
+    await ctx.answerCallbackQuery({ text: 'اكتملت مراجعة المتطلبات.' });
+    await ctx.reply(message, {
+      reply_markup: new InlineKeyboard().text(
+        '🔄 تحديث المراجعة',
+        'project:deploy:readiness:' + release.id
+      )
+    });
+  } catch (error) {
+    console.error('DEPLOYMENT READINESS TELEGRAM REVIEW ERROR:', error.message);
     await ctx.answerCallbackQuery({ text: String(error.message || error).slice(0, 180) });
   }
 });
