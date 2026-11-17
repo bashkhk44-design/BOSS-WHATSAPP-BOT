@@ -156,12 +156,34 @@ async function enqueueTelegramUpdate(pool, { botId, update }) {
     throw new TypeError('Telegram update_id is required');
   }
   const result = await pool.query(`
-    INSERT INTO bot_inbound_updates (bot_id, update_id, payload)
-    VALUES ($1, $2, $3::jsonb)
-    ON CONFLICT (bot_id, update_id) DO NOTHING
-    RETURNING id
+    WITH inserted AS (
+      INSERT INTO bot_inbound_updates (bot_id, update_id, payload)
+      VALUES ($1, $2, $3::jsonb)
+      ON CONFLICT (bot_id, update_id) DO NOTHING
+      RETURNING id
+    ),
+    queued AS (
+      INSERT INTO platform_jobs (job_type, bot_id, idempotency_key, payload)
+      SELECT
+        'telegram.update',
+        $1,
+        'telegram.update:' || $1::text || ':' || $2::text,
+        jsonb_build_object('botId', $1, 'updateId', $2)
+      FROM inserted
+      ON CONFLICT (job_type, idempotency_key) DO NOTHING
+      RETURNING id
+    )
+    SELECT inserted.id, queued.id AS job_id
+    FROM inserted
+    LEFT JOIN queued ON TRUE
   `, [botId, update.update_id, jsonValue(update, 'update')]);
-  return { accepted: true, duplicate: result.rowCount === 0, id: result.rows[0]?.id || null };
+
+  return {
+    accepted: true,
+    duplicate: result.rowCount === 0,
+    id: result.rows[0]?.id || null,
+    jobId: result.rows[0]?.job_id || null
+  };
 }
 
 module.exports = {
