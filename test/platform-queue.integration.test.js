@@ -23,7 +23,7 @@ const integrationTest = test('PostgreSQL queue integration: idempotency, claims,
     ssl: databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1')
       ? false
       : { rejectUnauthorized: false },
-    max: 3
+    max: 20
   });
   const suffix = randomUUID();
   const keys = [`ci-success:${suffix}`, `ci-fail:${suffix}`, `ci-lease:${suffix}`];
@@ -105,6 +105,38 @@ const integrationTest = test('PostgreSQL queue integration: idempotency, claims,
     const repeated = await enqueueTelegramUpdate(pool, { botId, update });
     assert.equal(accepted.duplicate, false);
     assert.equal(repeated.duplicate, true);
+
+    // Synthetic queue-only concurrency check; this does not contact Telegram.
+    for (const workerCount of [5, 10, 25, 50, 100]) {
+      const phase = `ci-load:${suffix}:${workerCount}`;
+      const totalJobs = workerCount * 3;
+      for (let index = 0; index < totalJobs; index += 1) {
+        await enqueuePlatformJob(pool, {
+          jobType: 'ci.queue.load',
+          botId,
+          idempotencyKey: `${phase}:${index}`,
+          payload: { phase, index }
+        });
+      }
+
+      const claimedIds = new Set();
+      await Promise.all(Array.from({ length: workerCount }, async (_, workerIndex) => {
+        const workerId = `${phase}:worker:${workerIndex}`;
+        while (true) {
+          const job = await claimPlatformJob(pool, workerId);
+          if (!job) break;
+          const jobId = String(job.id);
+          assert.equal(claimedIds.has(jobId), false, `job ${jobId} claimed more than once`);
+          claimedIds.add(jobId);
+          await completePlatformJob(pool, {
+            jobId: job.id,
+            workerId,
+            result: { phase, workerIndex }
+          });
+        }
+      }));
+      assert.equal(claimedIds.size, totalJobs, `all jobs should be completed at ${workerCount} workers`);
+    }
   } finally {
     if (botId) {
       await pool.query('DELETE FROM platform_jobs WHERE bot_id = $1', [botId]);
