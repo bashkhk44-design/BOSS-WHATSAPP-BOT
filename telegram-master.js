@@ -1,3 +1,4 @@
+function createMasterRuntime() {
 require('dotenv').config();
 
 const { Bot, Keyboard, InlineKeyboard } = require('grammy');
@@ -47,7 +48,7 @@ const adminId = process.env.TELEGRAM_ADMIN_ID;
 
 if (!token || !adminId) {
   console.error('إعدادات Telegram ناقصة');
-  process.exit(1);
+  throw new Error('إعدادات Telegram ناقصة');
 }
 
 const bot = new Bot(token, { client: { timeoutSeconds: 45 } });
@@ -1567,14 +1568,26 @@ async function shutdown(signal, exitCode = 0) {
   process.exit(exitCode);
 }
 
-process.once('SIGTERM', () => shutdown('SIGTERM'));
-process.once('SIGINT', () => shutdown('SIGINT'));
+async function startRuntime() {
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
 
-start().catch(async (err) => {
-  console.error(
-    'فشل تشغيل قاعدة البيانات أو البوت:',
-    err.message
-  );
+  return start().catch(async (err) => {
+    console.error(
+      'فشل تشغيل قاعدة البيانات أو البوت:',
+      err.message
+    );
 
-  await shutdown('STARTUP_ERROR', 1);
-});
+    await shutdown('STARTUP_ERROR', 1);
+  });
+}
+
+return { bot, start: startRuntime, shutdown };
+}
+
+module.exports = { createMasterRuntime };
+
+if (require.main === module) {
+  const runtime = createMasterRuntime();
+  void runtime.start();
+}
