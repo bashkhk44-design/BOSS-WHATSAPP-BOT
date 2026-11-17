@@ -202,7 +202,8 @@ function prepareOfflineDependencyArtifact({
   } finally {
     try {
       if (fs.existsSync(stagedDir)) {
-        fs.chmodSync(path.join(stagedDir, 'packages'), 0o755);
+        const packageDirectory = path.join(stagedDir, 'packages');
+        if (fs.existsSync(packageDirectory)) fs.chmodSync(packageDirectory, 0o755);
         fs.chmodSync(stagedDir, 0o755);
         fs.rmSync(stagedDir, { recursive: true, force: true });
       }
