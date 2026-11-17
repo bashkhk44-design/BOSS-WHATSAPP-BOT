@@ -1,0 +1,80 @@
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const DEFAULT_TIMEOUT_MS = 60000;
+const MAX_TIMEOUT_MS = 120000;
+
+function validateSandboxImage(image) {
+  if (typeof image !== 'string' || !/^[A-Za-z0-9._/:+-]+@sha256:[a-f0-9]{64}$/.test(image)) {
+    throw new Error('BOSS_SANDBOX_IMAGE must be an immutable image reference pinned by sha256 digest.');
+  }
+  return image;
+}
+
+function hasProjectTests(files) {
+  return files.some(file =>
+    /(?:^|\/)(?:test|tests)\/.*\.(?:test|spec)\.[cm]?js$/.test(file.path) ||
+    /(?:^|\/)[^/]+\.(?:test|spec)\.[cm]?js$/.test(file.path)
+  );
+}
+
+function buildSandboxArgs({ projectDir, image, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+  if (typeof projectDir !== 'string' || !path.isAbsolute(projectDir) ||
+      !fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
+    throw new Error('Sandbox project directory must be an existing absolute directory.');
+  }
+  if (projectDir.includes(',') || projectDir.includes(':')) {
+    throw new Error('Sandbox project directory contains unsupported mount characters.');
+  }
+  const pinnedImage = validateSandboxImage(image);
+  const timeout = Math.max(1000, Math.min(MAX_TIMEOUT_MS, Number(timeoutMs) || DEFAULT_TIMEOUT_MS));
+  return {
+    timeout,
+    args: [
+      'run', '--rm', '--pull=never',
+      '--network=none', '--read-only',
+      '--memory=256m', '--cpus=0.5', '--pids-limit=64',
+      '--user=65532:65532', '--cap-drop=ALL',
+      '--security-opt=no-new-privileges',
+      '--tmpfs', '/tmp:rw,noexec,nosuid,size=32m',
+      '--mount', 'type=bind,src=' + projectDir + ',dst=/workspace,readonly',
+      '--workdir', '/workspace',
+      pinnedImage, 'node', '--test'
+    ]
+  };
+}
+
+function runSandboxTests({
+  projectDir, files, image = process.env.BOSS_SANDBOX_IMAGE,
+  timeoutMs = DEFAULT_TIMEOUT_MS, spawn = spawnSync
+}) {
+  if (!hasProjectTests(files || [])) {
+    return { status: 'skipped', passed: null, reason: 'No project test files were supplied.' };
+  }
+  const built = buildSandboxArgs({ projectDir, image, timeoutMs });
+  const result = spawn('docker', built.args, {
+    encoding: 'utf8',
+    timeout: built.timeout,
+    windowsHide: true,
+    env: {
+      PATH: process.env.PATH || '',
+      HOME: process.env.HOME || '',
+      DOCKER_CONFIG: process.env.DOCKER_CONFIG || ''
+    },
+    maxBuffer: 1024 * 1024
+  });
+  const output = String(result.stdout || '') + String(result.stderr || '');
+  if (result.error || result.status !== 0) {
+    return {
+      status: 'failed', passed: false,
+      details: output.slice(-6000) || String(result.error?.message || 'Sandbox test container failed.')
+    };
+  }
+  return {
+    status: 'passed', passed: true,
+    details: output.slice(-6000) || 'Node test suite completed in isolated container.'
+  };
+}
+
+module.exports = { validateSandboxImage, hasProjectTests, buildSandboxArgs, runSandboxTests };
