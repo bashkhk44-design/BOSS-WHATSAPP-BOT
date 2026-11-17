@@ -262,7 +262,8 @@ async function testProjectBundle({ bundle, dependencyArtifactDir, designArtifact
           };
         } catch (error) {
           sandbox = {
-            status: 'failed', passed: false,
+            status: 'failed', executionStatus: 'not_confirmed',
+            repairable: false, passed: false,
             details: 'Verified dependency runtime preparation failed: ' + error.message
           };
         }
