@@ -26,8 +26,9 @@ Evidence must describe the check result; callers must never pass secret values o
 - `readyForManualExecutionReview=true` means only that the supplied evidence satisfies this contract.
 - `executionAllowed` is always `false`.
 - `deployed` is always `false`.
-- `readinessSha256` fingerprints the release, authorization, exact target, execution approval, checks, and blockers.
-- Missing, duplicated, mismatched, or failed evidence produces blockers.
+- `readinessSha256` fingerprints the release status and artifact digest, test summary and acceptance-test identities, authorization identity and digest, exact target, execution-approval identity and digest, checks, and blockers.
+- Test counters must be finite non-negative safe integers; the total must be positive and all tests must pass with no skipped, todo, failed, or cancelled tests.
+- Missing, duplicated, mismatched, malformed, or failed evidence produces blockers.
 
 ## Explicit non-goals
 
