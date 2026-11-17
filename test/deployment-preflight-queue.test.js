@@ -112,7 +112,9 @@ test('formatted preflight status always says execution and deployment are denied
   const message = formatDeploymentPreflightJob({
     id: '99', status: 'completed', attempts: 1, max_attempts: 3,
     result: {
+      isolatedPreflightAttempted: true,
       isolatedPreflightExecuted: true,
+      dockerHealthProbePassed: true,
       runtimeVersion: 'v22.4.0',
       healthStatus: 200,
       checks: [{ name: 'health_check', passed: true, evidence: 'HTTP 200' }],
@@ -121,7 +123,7 @@ test('formatted preflight status always says execution and deployment are denied
       readyForManualExecutionReview: false
     }
   }, { id: '7', release_version: 2 });
-  assert.match(message, /فحص Docker نُفذ: نعم/);
+  assert.match(message, /تشغيل الحاوية مؤكد: نعم/);
   assert.match(message, /السماح بالتنفيذ: ❌ لا/);
   assert.match(message, /تم النشر: ❌ لا/);
 });
