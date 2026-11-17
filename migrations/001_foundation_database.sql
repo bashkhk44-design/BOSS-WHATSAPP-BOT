@@ -162,6 +162,50 @@ CREATE INDEX IF NOT EXISTS platform_audit_client_created_idx
 CREATE INDEX IF NOT EXISTS platform_audit_bot_created_idx
   ON platform_audit_logs(bot_id, created_at DESC);
 
+-- A project-scoped record must always identify its owning client.
+DO $
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'telegram_bots_project_requires_client'
+      AND conrelid = 'telegram_bots'::regclass
+  ) THEN
+    ALTER TABLE telegram_bots
+      ADD CONSTRAINT telegram_bots_project_requires_client
+      CHECK (project_id IS NULL OR client_id IS NOT NULL);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'platform_jobs_project_requires_client'
+      AND conrelid = 'platform_jobs'::regclass
+  ) THEN
+    ALTER TABLE platform_jobs
+      ADD CONSTRAINT platform_jobs_project_requires_client
+      CHECK (project_id IS NULL OR client_id IS NOT NULL);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'ai_usage_project_requires_client'
+      AND conrelid = 'ai_usage'::regclass
+  ) THEN
+    ALTER TABLE ai_usage
+      ADD CONSTRAINT ai_usage_project_requires_client
+      CHECK (project_id IS NULL OR client_id IS NOT NULL);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'platform_audit_project_requires_client'
+      AND conrelid = 'platform_audit_logs'::regclass
+  ) THEN
+    ALTER TABLE platform_audit_logs
+      ADD CONSTRAINT platform_audit_project_requires_client
+      CHECK (project_id IS NULL OR client_id IS NOT NULL);
+  END IF;
+END $;
+
 INSERT INTO schema_migrations(version, description)
 VALUES ('001_foundation_database', 'Additive multi-bot ownership, runtime, queue, AI usage and audit tables')
 ON CONFLICT (version) DO NOTHING;
