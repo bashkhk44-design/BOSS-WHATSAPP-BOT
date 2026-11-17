@@ -13,6 +13,7 @@ test('PostgreSQL release handoff enforces customer then manager approval and imm
 
   try {
     pool = require('../db').pool;
+    pool.options.ssl = false;
     await pool.query('ALTER TABLE clients ADD COLUMN IF NOT EXISTS first_name TEXT');
     await pool.query('ALTER TABLE client_projects ADD COLUMN IF NOT EXISTS name TEXT');
     await pool.query("ALTER TABLE client_projects ADD COLUMN IF NOT EXISTS business_type TEXT");
