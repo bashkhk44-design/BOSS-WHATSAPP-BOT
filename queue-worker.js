@@ -13,7 +13,7 @@ function createQueueWorker({
   queueApi = queue
 }) {
   if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required');
-  if (!handlers || typeof handlers !== 'object') throw new TypeError('A job handler map is required');
+  if (!handlers || typeof handlers !== 'object' || Object.keys(handlers).length < 1) throw new TypeError('A non-empty job handler map is required');
   if (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 100) throw new RangeError('pollIntervalMs must be at least 100ms');
   if (!Number.isInteger(leaseSeconds) || leaseSeconds < 10) throw new RangeError('leaseSeconds must be at least 10 seconds');
 
@@ -21,7 +21,7 @@ function createQueueWorker({
   let loopPromise = null;
 
   async function processOne() {
-    const expired = await queueApi.recoverExpiredPlatformJobs(pool, leaseSeconds);
+    const expired = await queueApi.recoverExpiredPlatformJobs(pool, leaseSeconds, Object.keys(handlers));
     if (expired.length) logger.warn(`Recovered expired jobs: ${expired.length}`);
 
     const job = await queueApi.claimPlatformJob(pool, workerId, Object.keys(handlers));
