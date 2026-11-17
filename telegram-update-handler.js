@@ -31,23 +31,23 @@ function createTelegramUpdateHandler({
     }
 
     const claimed = await pool.query(`
-      UPDATE bot_inbound_updates AS update
+      UPDATE bot_inbound_updates AS inbound
       SET state = 'processing',
           attempts = attempts + 1,
           locked_at = NOW(),
           last_error = NULL
       FROM telegram_bots AS bot
-      WHERE update.bot_id = $1
-        AND update.update_id = $2
-        AND bot.id = update.bot_id
+      WHERE inbound.bot_id = $1
+        AND inbound.update_id = $2
+        AND bot.id = inbound.bot_id
         AND (
-          update.state IN ('queued', 'failed')
+          inbound.state IN ('queued', 'failed')
           OR (
-            update.state = 'processing'
-            AND update.locked_at < NOW() - make_interval(secs => $3::int)
+            inbound.state = 'processing'
+            AND inbound.locked_at < NOW() - make_interval(secs => $3::int)
           )
         )
-      RETURNING update.payload, bot.id, bot.name,
+      RETURNING inbound.payload, bot.id, bot.name,
                 bot.token_ciphertext, bot.token_iv, bot.token_auth_tag
     `, [botId, updateId, leaseSeconds]);
 
