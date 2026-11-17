@@ -7,6 +7,6 @@ CREATE INDEX IF NOT EXISTS bot_runtime_status_lease_idx
 
 CREATE INDEX IF NOT EXISTS telegram_bots_active_runtime_idx
   ON telegram_bots(id)
-  WHERE active = TRUE AND token_ciphertext IS NOT NULL;
+  WHERE active = TRUE;
 
 COMMIT;
