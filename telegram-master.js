@@ -172,7 +172,7 @@ async function showBots(ctx, requestedPage = 0) {
     lines.push(
       '#' + b.id + ' ' + b.name +
       (b.username ? ' (@' + b.username + ')' : '') +
-      '\\n' + (statusLabels[runtimeStatus] || runtimeStatus) +
+      '\n' + (statusLabels[runtimeStatus] || runtimeStatus) +
       ' | ' + (b.active ? 'مفعّل' : 'معطّل')
     );
     if (b.active) {
@@ -188,7 +188,7 @@ async function showBots(ctx, requestedPage = 0) {
     if (page < pageCount - 1) keyboard.text('التالي ➡️', 'bots:page:' + (page + 1));
   }
 
-  const message = lines.join('\\n');
+  const message = lines.join('\n');
   if (ctx.callbackQuery) {
     return ctx.editMessageText(message, { reply_markup: keyboard });
   }
