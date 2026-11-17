@@ -15,6 +15,10 @@ test('database foundation migration is additive and transactional', () => {
   assert.match(sql, /ADD COLUMN IF NOT EXISTS project_id BIGINT/);
   assert.match(sql, /ON DELETE RESTRICT/);
   assert.match(sql, /UNIQUE \(bot_id, update_id\)/);
+  assert.match(sql, /telegram_bots_project_requires_client/);
+  assert.match(sql, /platform_jobs_project_requires_client/);
+  assert.match(sql, /ai_usage_project_requires_client/);
+  assert.match(sql, /platform_audit_project_requires_client/);
   assert.doesNotMatch(sql, /\bDROP\s+(TABLE|COLUMN|SCHEMA)\b/i);
   assert.doesNotMatch(sql, /\bTRUNCATE\b/i);
   assert.doesNotMatch(sql, /\bDELETE\s+FROM\b/i);
