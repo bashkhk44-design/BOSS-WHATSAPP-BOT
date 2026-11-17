@@ -1076,6 +1076,13 @@ async function start() {
 
   } finally {
     startupInProgress = false;
+
+    // Close the narrow race where the lock is lost as startup is completing.
+    if (runtimeRecoveryRequested && !shuttingDown && !runtimeRecoveryPromise) {
+      void recoverRuntimeAfterLockLoss(
+        new Error('Runtime lock loss detected while startup was completing')
+      );
+    }
   }
 }
 
