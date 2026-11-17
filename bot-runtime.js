@@ -8,7 +8,8 @@ function createBotRuntime({
   createCustomerBot,
   logger = console,
   maxBots = DEFAULT_MAX_BOTS,
-  heartbeatIntervalMs = 30000
+  heartbeatIntervalMs = 30000,
+  workerId = String(process.pid)
 }) {
   if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required');
   if (typeof decryptToken !== 'function') throw new TypeError('decryptToken(record) is required');
@@ -43,7 +44,7 @@ function createBotRuntime({
       `, [
         state.id,
         state.status,
-        String(process.pid),
+        String(workerId),
         state.lastErrorCode || null,
         state.lastErrorMessage || null
       ]);
