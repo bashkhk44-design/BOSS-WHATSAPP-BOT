@@ -189,7 +189,30 @@ async function initProjectReleaseDatabase() {
       release_id BIGINT NOT NULL UNIQUE REFERENCES project_release_candidates(id) ON DELETE CASCADE,
       authorized_by TEXT NOT NULL,
       status TEXT NOT NULL CHECK (status IN ('authorized')),
-      authorization_sha256 TEXT NOT NULL CHECK (authorization_sha256 ~ '^[a-f0-9]{64}
+      authorization_sha256 TEXT NOT NULL CHECK (authorization_sha256 ~ '^[a-f0-9]{64}$'),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await getPool().query(`
+    CREATE OR REPLACE FUNCTION prevent_project_deployment_authorization_mutation()
+    RETURNS trigger AS $deployment_auth$
+    BEGIN
+      RAISE EXCEPTION 'deployment authorizations are immutable';
+    END;
+    $deployment_auth$ LANGUAGE plpgsql
+  `);
+
+  await getPool().query(`
+    DROP TRIGGER IF EXISTS project_deployment_authorization_immutable
+    ON project_deployment_authorizations
+  `);
+  await getPool().query(`
+    CREATE TRIGGER project_deployment_authorization_immutable
+    BEFORE UPDATE OR DELETE ON project_deployment_authorizations
+    FOR EACH ROW EXECUTE FUNCTION prevent_project_deployment_authorization_mutation()
+  `);
+
   await getPool().query(`
     CREATE INDEX IF NOT EXISTS project_release_project_idx
     ON project_release_candidates(project_id, release_version DESC)
