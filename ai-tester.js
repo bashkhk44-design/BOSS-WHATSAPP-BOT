@@ -257,6 +257,7 @@ async function testProjectBundle({ bundle }) {
     }
 
     let sandbox = { status: 'disabled', passed: null };
+    if (process.env.BOSS_SANDBOX_ENABLED === 'YES') fs.chmodSync(tempDir, 0o755);
     if (process.env.BOSS_SANDBOX_ENABLED === 'YES') {
       sandbox = runSandboxTests({ projectDir: tempDir, files: validated.files, image: process.env.BOSS_SANDBOX_IMAGE });
       if (sandbox.status === 'failed') add('sandbox-runtime-tests', false, sandbox.details);
