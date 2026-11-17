@@ -42,8 +42,6 @@ test('runner invokes isolated docker container without passing secrets', () => {
       projectDir: dir, files: [{ path: 'test/app.test.js' }], image: IMAGE,
       spawn: (command, args, options) => {
         invocation = { command, args, options };
-        assert.equal(fs.statSync(path.join(projectDir, 'node_modules')).isDirectory(), true);
-        assert.deepEqual(fs.readdirSync(path.join(projectDir, 'node_modules')), []);
         return { status: 0, stdout: 'tests passed', stderr: '' };
       }
     });
@@ -134,6 +132,8 @@ test('runner passes the verified runtime mount without exposing environment secr
       files: [{ path: 'test/app.test.js' }], image: IMAGE,
       spawn: (command, args, options) => {
         invocation = { command, args, options };
+        assert.equal(fs.statSync(path.join(projectDir, 'node_modules')).isDirectory(), true);
+        assert.deepEqual(fs.readdirSync(path.join(projectDir, 'node_modules')), []);
         return { status: 0, stdout: 'tests passed', stderr: '' };
       }
     });
