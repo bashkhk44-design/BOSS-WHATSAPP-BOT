@@ -3,8 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
-const { initProjectDatabase } = require('../project-db');
-const { buildReleaseReport, createReleaseCandidate, decideRelease } = require('../project-release');
+const { buildReleaseReport, createReleaseCandidate, decideRelease, initProjectReleaseDatabase } = require('../project-release');
 
 test('PostgreSQL release handoff enforces customer then manager approval and immutable artifact', async () => {
   let clientId;
@@ -13,7 +12,43 @@ test('PostgreSQL release handoff enforces customer then manager approval and imm
   const managerTelegramId = '10001';
 
   try {
-    await initProjectDatabase();
+    await pool.query('ALTER TABLE client_projects ADD COLUMN IF NOT EXISTS name TEXT');
+    await pool.query("ALTER TABLE client_projects ADD COLUMN IF NOT EXISTS business_type TEXT");
+    await pool.query("ALTER TABLE client_projects ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'spec_approved'");
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS project_specs (
+        id BIGSERIAL PRIMARY KEY,
+        project_id BIGINT NOT NULL REFERENCES client_projects(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL,
+        spec JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status TEXT NOT NULL DEFAULT 'draft',
+        approved_at TIMESTAMPTZ,
+        UNIQUE (project_id, version)
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS project_ai_jobs (
+        id BIGSERIAL PRIMARY KEY,
+        project_id BIGINT NOT NULL REFERENCES client_projects(id) ON DELETE CASCADE,
+        spec_version INTEGER NOT NULL,
+        job_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        requested_by_admin TEXT NOT NULL,
+        analysis JSONB
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS project_build_approvals (
+        id BIGSERIAL PRIMARY KEY,
+        project_id BIGINT NOT NULL REFERENCES client_projects(id) ON DELETE CASCADE,
+        spec_version INTEGER NOT NULL,
+        design_job_id BIGINT NOT NULL REFERENCES project_ai_jobs(id),
+        construction_points JSONB NOT NULL DEFAULT '{}'::jsonb,
+        construction_points_approved BOOLEAN NOT NULL DEFAULT FALSE,
+        design_approved BOOLEAN NOT NULL DEFAULT FALSE
+      )
+    `);
+    await initProjectReleaseDatabase();
 
     const client = await pool.query(
       'INSERT INTO clients (telegram_user_id, first_name) VALUES ($1, $2) RETURNING id',
