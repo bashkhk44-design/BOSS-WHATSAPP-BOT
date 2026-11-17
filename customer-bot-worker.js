@@ -206,7 +206,8 @@ function createCustomerBotWorker({
         last_heartbeat_at = NOW(),
         started_at = CASE WHEN EXCLUDED.status = 'running' AND bot_worker_status.status <> 'running'
           THEN NOW() ELSE bot_worker_status.started_at END,
-        stopped_at = CASE WHEN EXCLUDED.status = 'stopped' THEN NOW() ELSE NULL END
+        stopped_at = CASE WHEN EXCLUDED.status = 'stopped' THEN NOW() ELSE NULL END,
+        updated_at = NOW()
     `, [workerId, status, capacity]);
   }
 
