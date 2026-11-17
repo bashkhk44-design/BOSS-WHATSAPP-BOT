@@ -41,7 +41,6 @@ function validatePackageManifest(packageData) {
         : nameParts.length === 2 && nameParts[0].startsWith('@') &&
           /^[a-z0-9._-]+$/i.test(nameParts[0].slice(1)) && /^[a-z0-9._-]+$/i.test(nameParts[1]);
       if (!validName) errors.push('Invalid npm dependency name: ' + name);
-      }
       if (typeof spec !== 'string' || !spec.trim() || sourceSpec.test(spec.trim())) {
         errors.push('Only npm registry dependency specifications are allowed: ' + name);
       }
