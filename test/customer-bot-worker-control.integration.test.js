@@ -94,3 +94,93 @@ test('worker reclaims a manager command abandoned by a crashed worker', { skip: 
     await pool.end();
   }
 });
+
+
+test('worker marks a queued automatic remediation attempt succeeded after restart', { skip: !enabled }, async () => {
+  const pool = new Pool({ connectionString: databaseUrl, ssl: false, max: 3 });
+  let botId;
+  try {
+    const bot = await pool.query(`
+      INSERT INTO telegram_bots (name, username, active, token_ciphertext)
+      VALUES ('auto remediation success fixture', 'auto_remediation_success_bot', TRUE, 'test-ciphertext')
+      RETURNING id
+    `);
+    botId = bot.rows[0].id;
+    const attempt = await pool.query(`
+      INSERT INTO bot_auto_remediation_attempts (bot_id, status, reason)
+      VALUES ($1, 'queued', 'stale_heartbeat') RETURNING id
+    `, [botId]);
+    await pool.query(`
+      INSERT INTO bot_runtime_commands
+        (bot_id, action, status, requested_by, auto_remediation_attempt_id)
+      VALUES ($1, 'restart', 'queued', 'auto-remediation', $2)
+    `, [botId, attempt.rows[0].id]);
+
+    const runtime = {
+      getRuntimeSnapshot: () => [],
+      async startBotById(id) { assert.equal(String(id), String(botId)); },
+      async stopBotById() {},
+      async stopBotRuntime() {}
+    };
+    const worker = createCustomerBotWorker({
+      pool, runtime, workerId: 'auto-remediation-success-worker',
+      capacity: 2, leaseSeconds: 90, pollIntervalMs: 500,
+      logger: { log() {}, error() {} }
+    });
+    assert.equal(await worker.runOnce(), true);
+    const result = await pool.query(
+      'SELECT status, finished_at FROM bot_auto_remediation_attempts WHERE id = $1',
+      [attempt.rows[0].id]
+    );
+    assert.equal(result.rows[0].status, 'succeeded');
+    assert.ok(result.rows[0].finished_at);
+  } finally {
+    if (botId) await pool.query('DELETE FROM telegram_bots WHERE id = $1', [botId]);
+    await pool.end();
+  }
+});
+
+test('worker marks an automatic remediation attempt failed when restart fails', { skip: !enabled }, async () => {
+  const pool = new Pool({ connectionString: databaseUrl, ssl: false, max: 3 });
+  let botId;
+  try {
+    const bot = await pool.query(`
+      INSERT INTO telegram_bots (name, username, active, token_ciphertext)
+      VALUES ('auto remediation failure fixture', 'auto_remediation_failure_bot', TRUE, 'test-ciphertext')
+      RETURNING id
+    `);
+    botId = bot.rows[0].id;
+    const attempt = await pool.query(`
+      INSERT INTO bot_auto_remediation_attempts (bot_id, status, reason)
+      VALUES ($1, 'queued', 'stale_heartbeat') RETURNING id
+    `, [botId]);
+    await pool.query(`
+      INSERT INTO bot_runtime_commands
+        (bot_id, action, status, requested_by, auto_remediation_attempt_id)
+      VALUES ($1, 'restart', 'queued', 'auto-remediation', $2)
+    `, [botId, attempt.rows[0].id]);
+
+    const runtime = {
+      getRuntimeSnapshot: () => [],
+      async startBotById() { throw new Error('fixture restart failure'); },
+      async stopBotById() {},
+      async stopBotRuntime() {}
+    };
+    const worker = createCustomerBotWorker({
+      pool, runtime, workerId: 'auto-remediation-failure-worker',
+      capacity: 2, leaseSeconds: 90, pollIntervalMs: 500,
+      logger: { log() {}, error() {} }
+    });
+    assert.equal(await worker.runOnce(), true);
+    const result = await pool.query(
+      'SELECT status, error_message, finished_at FROM bot_auto_remediation_attempts WHERE id = $1',
+      [attempt.rows[0].id]
+    );
+    assert.equal(result.rows[0].status, 'failed');
+    assert.match(result.rows[0].error_message, /fixture restart failure/);
+    assert.ok(result.rows[0].finished_at);
+  } finally {
+    if (botId) await pool.query('DELETE FROM telegram_bots WHERE id = $1', [botId]);
+    await pool.end();
+  }
+});
