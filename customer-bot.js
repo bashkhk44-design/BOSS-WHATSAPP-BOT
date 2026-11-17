@@ -2,11 +2,7 @@
 
 const { Bot } = require('grammy');
 
-// This is the single source of truth for customer-bot commands.
-// Both long-polling and durable-queue runtimes must use this factory.
-function createCustomerBot(record, token) {
-  const clientBot = new Bot(token, { client: { timeoutSeconds: 45 } });
-
+function registerCustomerBotHandlers(clientBot, record) {
   clientBot.command('start', async (ctx) => {
     await ctx.reply(
       'أهلاً بك في ' + record.name + ' 👋\n\n' +
@@ -32,4 +28,10 @@ function createCustomerBot(record, token) {
   return clientBot;
 }
 
-module.exports = { createCustomerBot };
+// Single source of truth for both polling and durable-queue transports.
+function createCustomerBot(record, token) {
+  const clientBot = new Bot(token, { client: { timeoutSeconds: 45 } });
+  return registerCustomerBotHandlers(clientBot, record);
+}
+
+module.exports = { createCustomerBot, registerCustomerBotHandlers };
