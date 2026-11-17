@@ -79,9 +79,9 @@ async function approveProjectMilestone({
     throw new Error('نوع الاعتماد غير صالح.');
   }
 
-  if (!/^\\d+$/.test(String(projectId)) ||
-      !/^\\d+$/.test(String(designJobId)) ||
-      !/^\\d+$/.test(String(adminTelegramId))) {
+  if (!/^\d+$/.test(String(projectId)) ||
+      !/^\d+$/.test(String(designJobId)) ||
+      !/^\d+$/.test(String(adminTelegramId))) {
     throw new Error('بيانات الاعتماد غير صحيحة.');
   }
 
