@@ -19,7 +19,24 @@ function hasProjectTests(files) {
   );
 }
 
-function buildSandboxArgs({ projectDir, image, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+function validateRuntimeNodeModules(runtimeNodeModulesDir) {
+  if (runtimeNodeModulesDir === undefined || runtimeNodeModulesDir === null) return null;
+  if (typeof runtimeNodeModulesDir !== 'string' || !path.isAbsolute(runtimeNodeModulesDir) ||
+      !fs.existsSync(runtimeNodeModulesDir)) {
+    throw new Error('Runtime node_modules must be an existing absolute directory.');
+  }
+  const stat = fs.lstatSync(runtimeNodeModulesDir);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error('Runtime node_modules must be a real directory, not a symlink.');
+  }
+  const resolved = fs.realpathSync(runtimeNodeModulesDir);
+  if (resolved.includes(',') || resolved.includes(':')) {
+    throw new Error('Runtime node_modules path contains unsupported mount characters.');
+  }
+  return resolved;
+}
+
+function buildSandboxArgs({ projectDir, image, timeoutMs = DEFAULT_TIMEOUT_MS, runtimeNodeModulesDir }) {
   if (typeof projectDir !== 'string' || !path.isAbsolute(projectDir) ||
       !fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
     throw new Error('Sandbox project directory must be an existing absolute directory.');
@@ -28,6 +45,7 @@ function buildSandboxArgs({ projectDir, image, timeoutMs = DEFAULT_TIMEOUT_MS })
     throw new Error('Sandbox project directory contains unsupported mount characters.');
   }
   const pinnedImage = validateSandboxImage(image);
+  const runtimeModules = validateRuntimeNodeModules(runtimeNodeModulesDir);
   const timeout = Math.max(1000, Math.min(MAX_TIMEOUT_MS, Number(timeoutMs) || DEFAULT_TIMEOUT_MS));
   return {
     timeout,
@@ -39,6 +57,7 @@ function buildSandboxArgs({ projectDir, image, timeoutMs = DEFAULT_TIMEOUT_MS })
       '--security-opt=no-new-privileges',
       '--tmpfs', '/tmp:rw,noexec,nosuid,size=32m',
       '--mount', 'type=bind,src=' + projectDir + ',dst=/workspace,readonly',
+      ...(runtimeModules ? ['--mount', 'type=bind,src=' + runtimeModules + ',dst=/workspace/node_modules,readonly'] : []),
       '--workdir', '/workspace',
       pinnedImage, 'node', '--test'
     ]
@@ -47,12 +66,12 @@ function buildSandboxArgs({ projectDir, image, timeoutMs = DEFAULT_TIMEOUT_MS })
 
 function runSandboxTests({
   projectDir, files, image = process.env.BOSS_SANDBOX_IMAGE,
-  timeoutMs = DEFAULT_TIMEOUT_MS, spawn = spawnSync
+  timeoutMs = DEFAULT_TIMEOUT_MS, runtimeNodeModulesDir, spawn = spawnSync
 }) {
   if (!hasProjectTests(files || [])) {
     return { status: 'skipped', passed: null, reason: 'No project test files were supplied.' };
   }
-  const built = buildSandboxArgs({ projectDir, image, timeoutMs });
+  const built = buildSandboxArgs({ projectDir, image, timeoutMs, runtimeNodeModulesDir });
   const result = spawn('docker', built.args, {
     encoding: 'utf8',
     timeout: built.timeout,
@@ -77,4 +96,4 @@ function runSandboxTests({
   };
 }
 
-module.exports = { validateSandboxImage, hasProjectTests, buildSandboxArgs, runSandboxTests };
+module.exports = { validateSandboxImage, validateRuntimeNodeModules, hasProjectTests, buildSandboxArgs, runSandboxTests };
