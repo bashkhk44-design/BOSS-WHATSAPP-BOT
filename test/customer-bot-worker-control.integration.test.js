@@ -184,3 +184,57 @@ test('worker marks an automatic remediation attempt failed when restart fails', 
     await pool.end();
   }
 });
+
+
+test('worker recovers an abandoned automatic remediation after a worker crash', { skip: !enabled }, async () => {
+  const pool = new Pool({ connectionString: databaseUrl, ssl: false, max: 3 });
+  let botId;
+  try {
+    const bot = await pool.query(`
+      INSERT INTO telegram_bots (name, username, active, token_ciphertext)
+      VALUES ('auto remediation crash recovery fixture', 'auto_remediation_crash_fixture_bot', TRUE, 'test-ciphertext')
+      RETURNING id
+    `);
+    botId = bot.rows[0].id;
+    const attempt = await pool.query(`
+      INSERT INTO bot_auto_remediation_attempts
+        (bot_id, status, reason, started_at)
+      VALUES ($1, 'processing', 'stale_heartbeat', NOW() - INTERVAL '3 minutes')
+      RETURNING id
+    `, [botId]);
+    await pool.query(`
+      INSERT INTO bot_runtime_commands
+        (bot_id, action, status, requested_by, claimed_by, claimed_at, attempts, auto_remediation_attempt_id)
+      VALUES ($1, 'restart', 'processing', 'auto-remediation', 'crashed-worker',
+        NOW() - INTERVAL '3 minutes', 1, $2)
+    `, [botId, attempt.rows[0].id]);
+
+    const runtime = {
+      getRuntimeSnapshot: () => [],
+      async startBotById(id) { assert.equal(String(id), String(botId)); },
+      async stopBotById() {},
+      async stopBotRuntime() {}
+    };
+    const worker = createCustomerBotWorker({
+      pool, runtime, workerId: 'auto-remediation-recovery-worker',
+      capacity: 2, leaseSeconds: 30, pollIntervalMs: 500,
+      logger: { log() {}, error() {} }
+    });
+    assert.equal(await worker.runOnce(), true);
+
+    const result = await pool.query(`
+      SELECT a.status AS attempt_status, c.status AS command_status,
+             c.claimed_by, c.attempts
+      FROM bot_auto_remediation_attempts a
+      JOIN bot_runtime_commands c ON c.auto_remediation_attempt_id = a.id
+      WHERE a.id = $1
+    `, [attempt.rows[0].id]);
+    assert.equal(result.rows[0].attempt_status, 'succeeded');
+    assert.equal(result.rows[0].command_status, 'completed');
+    assert.equal(result.rows[0].claimed_by, 'auto-remediation-recovery-worker');
+    assert.equal(Number(result.rows[0].attempts), 2);
+  } finally {
+    if (botId) await pool.query('DELETE FROM telegram_bots WHERE id = $1', [botId]);
+    await pool.end();
+  }
+});
