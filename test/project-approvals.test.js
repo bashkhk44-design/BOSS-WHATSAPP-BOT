@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildConstructionPoints } = require('../project-approvals');
+const { buildConstructionPoints } = require('../project-construction-points');
 
 test('construction points are derived only from the approved specification', () => {
   const result = buildConstructionPoints({
