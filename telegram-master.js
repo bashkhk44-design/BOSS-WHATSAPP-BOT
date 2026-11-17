@@ -1011,12 +1011,23 @@ async function start() {
   setRuntimeLockFailureHandler(recoverTelegramRuntime);
 
   try {
-    await initDatabase();
+    let databaseReady = false;
+
+    while (!databaseReady && !shuttingDown) {
+      try {
+        await initDatabase();
+        databaseReady = true;
+      } catch (databaseError) {
+        console.error('DATABASE INITIALIZATION FAILED; retrying in 10 seconds:', databaseError.message);
+        await recoveryDelay(10000);
+      }
+    }
+
+    if (shuttingDown) return;
 
     let locked = false;
-    const lockDeadline = Date.now() + 600000;
 
-    while (!locked && Date.now() < lockDeadline && !shuttingDown) {
+    while (!locked && !shuttingDown) {
       runtimeRecoveryRequested = false;
 
       try {
@@ -1062,16 +1073,21 @@ async function start() {
       } catch (startupError) {
         await stopTelegramServicesForRecovery();
 
-        if (runtimeRecoveryRequested || !(await isTelegramRuntimeLockHeld())) {
-          console.error('إعادة محاولة التشغيل بعد فقدان القفل:', startupError.message);
-          continue;
+        const lockStillHeld = await isTelegramRuntimeLockHeld().catch(() => false);
+        console.error(
+          'TELEGRAM SERVICE STARTUP FAILED; retrying in 5 seconds:',
+          startupError.message
+        );
+
+        if (runtimeRecoveryRequested || !lockStillHeld) {
+          runtimeRecoveryRequested = false;
         }
 
-        throw startupError;
+        await recoveryDelay(5000);
       }
     }
 
-    throw new Error('انتهت مهلة انتظار قفل تشغيل بوتات تلغرام بعد 10 دقائق');
+    if (shuttingDown) return;
 
   } finally {
     startupInProgress = false;
