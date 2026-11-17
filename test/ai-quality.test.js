@@ -29,7 +29,7 @@ function validBundle() {
       },
       {
         path: 'index.js',
-        content: "'use strict';\\nconsole.log('sample');\\n"
+        content: "console.log('sample');"
       }
     ]
   };
