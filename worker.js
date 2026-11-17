@@ -15,6 +15,9 @@ function validateWorkerEnvironment(env = process.env) {
   if (!/^[0-9a-fA-F]{64}$/.test(env.BOTS_ENCRYPTION_KEY || '')) {
     throw new Error('BOTS_ENCRYPTION_KEY must be a 32-byte hex key');
   }
+  if (env.DATABASE_SSL !== undefined && !['require', 'disable'].includes(env.DATABASE_SSL)) {
+    throw new Error('DATABASE_SSL must be either require or disable');
+  }
   const integerSettings = [
     ['WORKER_DB_POOL_MAX', 1, 20],
     ['QUEUE_POLL_INTERVAL_MS', 100, 60000],
