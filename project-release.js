@@ -189,6 +189,12 @@ async function initProjectReleaseDatabase() {
   `);
 
   await getPool().query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS project_release_one_open_per_project_idx
+    ON project_release_candidates(project_id)
+    WHERE status IN ('awaiting_customer', 'awaiting_manager')
+  `);
+
+  await getPool().query(`
     CREATE OR REPLACE FUNCTION prevent_project_release_artifact_mutation()
     RETURNS trigger AS $release$
     BEGIN
@@ -251,6 +257,28 @@ async function createReleaseCandidate({ project, designJobId, adminTelegramId, r
         !current.rows[0].design_approved ||
         Number(current.rows[0].version) !== Number(project.spec_version)) {
       throw new Error('تعذر إنشاء الإصدار: المواصفات أو التصميم أو اعتمادات المدير لم تعد مطابقة.');
+    }
+
+    const pending = await client.query(`
+      SELECT id, project_id, release_version, spec_version,
+             artifact_sha256, artifact_bytes, status, created_at
+      FROM project_release_candidates
+      WHERE project_id = $1
+        AND status IN ('awaiting_customer', 'awaiting_manager')
+      ORDER BY release_version DESC
+      LIMIT 1
+      FOR UPDATE
+    `, [project.project_id]);
+
+    if (pending.rowCount) {
+      if (pending.rows[0].artifact_sha256 !== snapshot.artifactSha256) {
+        throw new Error('يوجد إصدار سابق بانتظار موافقة العميل أو المدير. يجب إغلاقه قبل إنشاء إصدار جديد.');
+      }
+      await client.query('COMMIT');
+      return {
+        ...pending.rows[0],
+        customerTelegramId: String(current.rows[0].telegram_user_id)
+      };
     }
 
     const versionResult = await client.query(`
