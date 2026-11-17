@@ -1,0 +1,217 @@
+'use strict';
+
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+
+function fail(message) {
+  throw new Error(message);
+}
+
+function isInside(parent, candidate) {
+  return candidate === parent || candidate.startsWith(parent + path.sep);
+}
+
+function safePackageRelativePath(value) {
+  if (typeof value !== 'string' || !value || value.includes('\0') ||
+      value.startsWith('/') || value.includes('\\') || path.posix.isAbsolute(value)) {
+    return false;
+  }
+  const normalized = value.replace(/^\.\//, '');
+  const parts = normalized.split('/');
+  return normalized.length > 0 && parts.every(part =>
+    part && part !== '.' && part !== '..' && !part.includes(':')
+  );
+}
+
+function packageBinEntries(packageJson) {
+  if (packageJson.bin === undefined) return [];
+  if (typeof packageJson.bin === 'string') {
+    const packageName = typeof packageJson.name === 'string' ? packageJson.name : '';
+    const command = packageName.split('/').pop();
+    return [[command, packageJson.bin]];
+  }
+  if (!packageJson.bin || typeof packageJson.bin !== 'object' || Array.isArray(packageJson.bin)) {
+    fail('Package bin metadata must be a string or command map.');
+  }
+  return Object.entries(packageJson.bin);
+}
+
+function nearestNodeModulesDir(packageDir, nodeModulesRoot) {
+  let current = path.dirname(packageDir);
+  while (isInside(nodeModulesRoot, current)) {
+    if (path.basename(current) === 'node_modules') return current;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  fail('Could not resolve the package node_modules directory.');
+}
+
+function createBinWrapper({ binDir, command, target }) {
+  if (typeof command !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(command) ||
+      command === '.' || command === '..') {
+    fail('Package contains an unsafe executable name.');
+  }
+  const wrapper = path.join(binDir, command);
+  const relativeTarget = path.relative(binDir, target).split(path.sep).join('/');
+  if (!relativeTarget || relativeTarget.startsWith('/') || relativeTarget.split('/').some(part => part === '..' && !relativeTarget.startsWith('../'))) {
+    fail('Package executable target could not be represented safely.');
+  }
+  const source = [
+    '#!/usr/bin/env node',
+    "'use strict';",
+    "const path = require('node:path');",
+    'const target = path.resolve(__dirname, ' + JSON.stringify(relativeTarget) + ');',
+    'process.argv[1] = target;',
+    'require(target);',
+    ''
+  ].join('\n');
+  fs.mkdirSync(binDir, { recursive: true, mode: 0o755 });
+  const fd = fs.openSync(wrapper, 'wx', 0o755);
+  try {
+    fs.writeFileSync(fd, source, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.chmodSync(wrapper, 0o755);
+}
+
+function createPackageBinWrappers({ nodeModulesDir, lockData }) {
+  const entries = Object.entries(lockData.packages || {}).filter(([key]) => key !== '');
+  const created = [];
+  const seen = new Set();
+
+  for (const [lockPath] of entries) {
+    if (typeof lockPath !== 'string' || !lockPath.startsWith('node_modules/') ||
+        !safePackageRelativePath(lockPath)) {
+      fail('Unsafe package-lock path while preparing executable wrappers.');
+    }
+    const packageRelative = lockPath.slice('node_modules/'.length);
+    const packageDir = path.resolve(nodeModulesDir, packageRelative);
+    if (!isInside(nodeModulesDir, packageDir) || packageDir === nodeModulesDir) {
+      fail('Package directory escaped node_modules.');
+    }
+    const packageStat = fs.lstatSync(packageDir);
+    if (packageStat.isSymbolicLink() || !packageStat.isDirectory()) {
+      fail('Package directory is missing or is not a real directory: ' + lockPath);
+    }
+    const packageJsonPath = path.join(packageDir, 'package.json');
+    const packageJsonStat = fs.lstatSync(packageJsonPath);
+    if (packageJsonStat.isSymbolicLink() || !packageJsonStat.isFile()) {
+      fail('Package metadata is missing or unsafe: ' + lockPath);
+    }
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    const binEntries = packageBinEntries(packageJson);
+    if (!binEntries.length) continue;
+
+    const binDir = path.join(nearestNodeModulesDir(packageDir, nodeModulesDir), '.bin');
+    for (const [command, relativeTargetValue] of binEntries) {
+      if (!safePackageRelativePath(relativeTargetValue)) {
+        fail('Package executable target path is unsafe: ' + lockPath);
+      }
+      const relativeTarget = relativeTargetValue.replace(/^\.\//, '');
+      const target = path.resolve(packageDir, relativeTarget);
+      if (!isInside(packageDir, target) || target === packageDir) {
+        fail('Package executable target escaped its package directory.');
+      }
+      const targetStat = fs.lstatSync(target);
+      if (targetStat.isSymbolicLink() || !targetStat.isFile() || targetStat.nlink !== 1) {
+        fail('Package executable target must be a regular non-linked file: ' + lockPath);
+      }
+      const identity = binDir + '\0' + command;
+      if (seen.has(identity)) fail('Multiple packages declare the same executable: ' + command);
+      seen.add(identity);
+      createBinWrapper({ binDir, command, target });
+      created.push(path.relative(nodeModulesDir, path.join(binDir, command)).split(path.sep).join('/'));
+    }
+  }
+  return created.sort();
+}
+
+function computeDirectoryTreeDigest(rootDir) {
+  if (typeof rootDir !== 'string' || !path.isAbsolute(rootDir)) {
+    fail('Runtime dependency directory must be an absolute path.');
+  }
+  const rootStat = fs.lstatSync(rootDir);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    fail('Runtime dependency directory must be a real directory.');
+  }
+  const root = fs.realpathSync(rootDir);
+  const records = [];
+
+  function visit(directory, relativeDirectory) {
+    const names = fs.readdirSync(directory).sort((a, b) => a.localeCompare(b, 'en'));
+    for (const name of names) {
+      if (name.includes('/') || name.includes('\\') || name.includes('\0')) {
+        fail('Runtime dependency tree contains an invalid filename.');
+      }
+      const absolute = path.join(directory, name);
+      const relative = relativeDirectory ? relativeDirectory + '/' + name : name;
+      const stat = fs.lstatSync(absolute);
+      if (stat.isSymbolicLink()) fail('Runtime dependency tree contains a symbolic link: ' + relative);
+      if (stat.isDirectory()) {
+        records.push([relative, 'directory', stat.mode & 0o777, 0, '']);
+        visit(absolute, relative);
+      } else if (stat.isFile()) {
+        if (stat.nlink !== 1) fail('Runtime dependency tree contains a hard-linked file: ' + relative);
+        const digest = crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex');
+        records.push([relative, 'file', stat.mode & 0o777, stat.size, digest]);
+      } else {
+        fail('Runtime dependency tree contains an unsupported filesystem entry: ' + relative);
+      }
+    }
+  }
+
+  visit(root, '');
+  records.sort((a, b) => a[0].localeCompare(b[0], 'en'));
+  const hash = crypto.createHash('sha256');
+  for (const record of records) {
+    hash.update(JSON.stringify(record));
+    hash.update('\n');
+  }
+  return {
+    sha256: hash.digest('hex'),
+    fileCount: records.filter(record => record[1] === 'file').length,
+    directoryCount: records.filter(record => record[1] === 'directory').length
+  };
+}
+
+function prepareRuntimeDependencyTree({ outputDir, lockfilePath }) {
+  for (const [name, value] of Object.entries({ outputDir, lockfilePath })) {
+    if (typeof value !== 'string' || !path.isAbsolute(value)) fail(name + ' must be an absolute path.');
+  }
+  const outputStat = fs.lstatSync(outputDir);
+  const lockStat = fs.lstatSync(lockfilePath);
+  if (outputStat.isSymbolicLink() || !outputStat.isDirectory() ||
+      lockStat.isSymbolicLink() || !lockStat.isFile()) {
+    fail('Runtime output and package-lock must be real directory/file paths.');
+  }
+  const output = fs.realpathSync(outputDir);
+  const nodeModulesDir = path.join(output, 'node_modules');
+  const nodeModulesStat = fs.lstatSync(nodeModulesDir);
+  if (nodeModulesStat.isSymbolicLink() || !nodeModulesStat.isDirectory()) {
+    fail('Verified runtime node_modules directory is missing or unsafe.');
+  }
+  const lockData = JSON.parse(fs.readFileSync(lockfilePath, 'utf8'));
+  if (!lockData.packages || typeof lockData.packages !== 'object' || Array.isArray(lockData.packages)) {
+    fail('package-lock.json packages map is invalid.');
+  }
+  const binWrappers = createPackageBinWrappers({ nodeModulesDir, lockData });
+  const tree = computeDirectoryTreeDigest(nodeModulesDir);
+  return {
+    nodeModulesDir,
+    treeSha256: tree.sha256,
+    fileCount: tree.fileCount,
+    directoryCount: tree.directoryCount,
+    binWrappers
+  };
+}
+
+module.exports = {
+  safePackageRelativePath,
+  packageBinEntries,
+  createPackageBinWrappers,
+  computeDirectoryTreeDigest,
+  prepareRuntimeDependencyTree
+};
