@@ -28,7 +28,7 @@ const { analyzeProject } = require('./gemini-analyst');
 const { designProject } = require('./ai-designer');
 const { runProjectPipeline } = require('./project-pipeline');
 const { getGeminiModel } = require('./ai-router');
-const { getReleaseCandidate, decideRelease } = require('./project-release');
+const { getReleaseCandidate, decideRelease, authorizeDeployment } = require('./project-release');
 
 const CUSTOMER_BOT_WORKER_MODE = process.env.CUSTOMER_BOT_WORKER_MODE === 'external';
 
@@ -771,7 +771,11 @@ bot.callbackQuery(/^project:release:manager:(approved|rejected):(\d+)$/, async (
     await ctx.reply(
       (decision.status === 'approved' ? '✅ اكتمل اعتماد الإصدار ' : '❌ تم رفض الإصدار ') +
       'R' + decision.release_version + ' للمشروع #' + decision.project_id +
-      '.\nحالة النشر: لم يتم النشر، ويتطلب النشر موافقة وإجراءً منفصلين.'
+      '.\nحالة النشر: لم يتم النشر، ويتطلب النشر تصريحاً منفصلاً.' +
+      (decision.status === 'approved' ? '\nيمكنك الآن إصدار تصريح نشر مستقل بعد مراجعة الإصدار.' : ''),
+      decision.status === 'approved'
+        ? { reply_markup: new InlineKeyboard().text('🔐 إصدار تصريح نشر منفصل', 'project:deploy-auth:authorize:' + decision.id) }
+        : {}
     );
     try {
       await ctx.api.sendMessage(
@@ -784,6 +788,26 @@ bot.callbackQuery(/^project:release:manager:(approved|rejected):(\d+)$/, async (
     } catch (notifyError) {
       console.error('RELEASE CUSTOMER FINAL NOTIFICATION ERROR:', notifyError.message);
     }
+  } catch (error) {
+    await ctx.answerCallbackQuery({ text: String(error.message || error).slice(0, 180) });
+  }
+});
+
+
+bot.callbackQuery(/^project:deploy-auth:authorize:(\\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
+  try {
+    const authorization = await authorizeDeployment({
+      releaseId: ctx.match[1],
+      telegramUserId: ctx.from.id
+    });
+    await ctx.answerCallbackQuery({ text: 'تم إصدار تصريح النشر المستقل.' });
+    await ctx.reply(
+      '🔐 تصريح النشر رقم #' + authorization.id + ' أصبح معتمداً.\\n' +
+      'الإصدار: #' + authorization.release_id + '\\n' +
+      'بصمة التصريح SHA-256: ' + authorization.authorization_sha256 + '\\n\\n' +
+      'تنبيه: هذا التصريح لا ينفّذ النشر تلقائياً. لم يتم الاتصال بـ Render أو تغيير الإنتاج.'
+    );
   } catch (error) {
     await ctx.answerCallbackQuery({ text: String(error.message || error).slice(0, 180) });
   }
