@@ -36,7 +36,7 @@ function createTelegramWebhookServer({
 
   const server = http.createServer(async (req, res) => {
     const pathname = (req.url || '').split('?')[0];
-    const match = pathname.match(/^\\/telegram\\/webhook\\/(\\d+)$/);
+    const match = pathname.match(/^\/telegram\/webhook\/(\d+)$/);
 
     if (!match) return sendJson(res, 404, { ok: false, error: 'not_found' });
     if (req.method !== 'POST') {
@@ -57,7 +57,7 @@ function createTelegramWebhookServer({
     const declaredLength = req.headers['content-length'];
     if (declaredLength !== undefined) {
       const lengthText = String(declaredLength);
-      if (!/^\\d+$/.test(lengthText) || !Number.isSafeInteger(Number(lengthText))) {
+      if (!/^\d+$/.test(lengthText) || !Number.isSafeInteger(Number(lengthText))) {
         return sendJson(res, 400, { ok: false, error: 'invalid_content_length' });
       }
       if (Number(lengthText) > maxBodyBytes) {
