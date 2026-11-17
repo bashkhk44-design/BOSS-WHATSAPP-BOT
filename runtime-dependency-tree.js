@@ -191,6 +191,7 @@ function normalizeRuntimeTreePermissions(rootDir, executableWrappers) {
   }
 
   visit(rootDir, '');
+  fs.chmodSync(rootDir, 0o755);
 }
 
 function computeDirectoryTreeDigest(rootDir) {
