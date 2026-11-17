@@ -36,7 +36,6 @@ function validateDependencyPreflight({ packageData, lockData }) {
         errors.push('Invalid or linked lockfile package: ' + path);
         continue;
       }
-      if (entry.dev === true) continue;
       if (entry.optional === true && !entry.resolved) continue;
       if (typeof entry.resolved !== 'string') {
         errors.push('Missing resolved registry URL: ' + path);
