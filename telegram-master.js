@@ -22,6 +22,7 @@ const {
   getProjectApprovalState,
   approveProjectMilestone
 } = require('./project-db');
+const { buildConstructionPoints } = require('./project-construction-points');
 const { startIntakeBot, stopIntakeBot } = require('./intake-bot');
 const { analyzeProject } = require('./gemini-analyst');
 const { designProject } = require('./ai-designer');
@@ -70,8 +71,33 @@ async function sendProjectApprovalPanel(ctx, projectId, designJob) {
     designJobId: designJob.id
   });
 
+  const specResult = await pool.query(`
+    SELECT s.spec
+    FROM project_specs s
+    JOIN client_projects p ON p.id = s.project_id
+    JOIN project_ai_jobs j
+      ON j.project_id = p.id
+     AND j.spec_version = s.version
+     AND j.id = $3
+     AND j.job_type = 'design'
+     AND j.status = 'completed'
+    WHERE p.id = $1
+      AND s.version = $2
+      AND s.status = 'approved'
+      AND p.status = 'spec_approved'
+    LIMIT 1
+  `, [projectId, designJob.spec_version, designJob.id]);
+
+  const points = buildConstructionPoints(specResult.rows[0]?.spec || {});
+  const pointsText = points.sections.length
+    ? points.sections.map(section =>
+        '• ' + section.label + ': ' + section.value
+      ).join('\n').slice(0, 2400)
+    : 'لا توجد تفاصيل نصية محفوظة في المواصفات؛ راجع وثيقة التصميم قبل الاعتماد.';
+
   await ctx.reply(
     '📋 اعتماد المشروع قبل التنفيذ\n\n' +
+    '🧩 نقاط البناء المستخرجة من مواصفات العميل:\n' + pointsText + '\n\n' +
     '1. نقاط البناء: ' + (approvals?.construction_points_approved ? '✅ معتمدة' : '⏳ بانتظار اعتمادك') + '\n' +
     '2. وثيقة التصميم: ' + (approvals?.design_approved ? '✅ معتمدة' : '⏳ بانتظار اعتمادك') + '\n\n' +
     'لن يبدأ التنفيذ الكامل إلا بعد اعتماد النقطتين.',
