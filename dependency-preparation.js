@@ -27,7 +27,7 @@ function validatePackageManifest(packageData) {
       }
     }
   }
-  const sourceSpec = /^(?:git\\+|git:|https?:|file:|link:|workspace:|github:|gitlab:|bitbucket:|ssh:)/i;
+  const forbiddenPrefixes = ['git+', 'git:', 'https:', 'http:', 'file:', 'link:', 'workspace:', 'github:', 'gitlab:', 'bitbucket:', 'ssh:'];
   for (const group of DEPENDENCY_GROUPS) {
     const entries = packageData[group] || {};
     if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
