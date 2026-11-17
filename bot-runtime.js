@@ -9,7 +9,8 @@ function createBotRuntime({
   logger = console,
   maxBots = DEFAULT_MAX_BOTS,
   heartbeatIntervalMs = 30000,
-  workerId = String(process.pid)
+  workerId = String(process.pid),
+  onStatusPersistError = null
 }) {
   if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required');
   if (typeof decryptToken !== 'function') throw new TypeError('decryptToken(record) is required');
@@ -52,6 +53,11 @@ function createBotRuntime({
       if (!warnedStatusTable) {
         warnedStatusTable = true;
         logger.error('BOT RUNTIME STATUS PERSISTENCE UNAVAILABLE:', error.message);
+      }
+      if (typeof onStatusPersistError === 'function') {
+        try { onStatusPersistError(error); } catch (callbackError) {
+          logger.error('BOT RUNTIME STATUS FAILURE HANDLER ERROR:', callbackError.message);
+        }
       }
     }
   }
