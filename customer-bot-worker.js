@@ -78,7 +78,10 @@ function createCustomerBotWorker({
       const result = await client.query(`
         SELECT c.id, c.bot_id, c.action, c.target_worker_id
         FROM bot_runtime_commands c
-        WHERE c.status = 'queued'
+        WHERE (
+            c.status = 'queued'
+            OR (c.status = 'processing' AND c.claimed_at < NOW() - ($2::int * INTERVAL '1 second'))
+          )
           AND (
             c.target_worker_id IS NULL
             OR c.target_worker_id = $1
@@ -100,9 +103,9 @@ function createCustomerBotWorker({
       const command = result.rows[0];
       await client.query(`
         UPDATE bot_runtime_commands
-        SET status = 'processing', attempts = attempts + 1
+        SET status = 'processing', claimed_by = $2, claimed_at = NOW(), attempts = attempts + 1
         WHERE id = $1
-      `, [command.id]);
+      `, [command.id, workerId]);
       await client.query('COMMIT');
       return command;
     } catch (error) {
