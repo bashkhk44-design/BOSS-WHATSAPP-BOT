@@ -71,10 +71,12 @@ test('secret scanner detects embedded Telegram credentials', () => {
   assert.equal(findings[0].type, 'TELEGRAM_BOT_TOKEN');
 });
 
-test('project bundle static checks pass only with dependency preflight', async () => {
+test('static checks pass but release readiness fails closed without approved design and sandbox execution', async () => {
   const result = await testProjectBundle({ bundle: validBundle() });
-  assert.equal(result.passed, true, JSON.stringify(result.checks));
+  assert.equal(result.passed, false, JSON.stringify(result.checks));
   assert.equal(result.checks.find(check => check.name === 'dependency-preflight').passed, true);
+  assert.equal(result.checks.find(check => check.name === 'design-to-file-map').passed, false);
+  assert.equal(result.checks.find(check => check.name === 'sandbox-runtime-tests').passed, false);
 });
 
 test('project bundle without a lockfile fails closed', async () => {
