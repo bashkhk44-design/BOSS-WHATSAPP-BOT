@@ -163,28 +163,45 @@ async function failPlatformJob(pool, { jobId, workerId, error, retryDelaySeconds
   return saved.rows[0];
 }
 
-async function recoverExpiredPlatformJobs(pool, leaseSeconds = 120) {
+async function recoverExpiredPlatformJobs(pool, leaseSeconds = 120, jobTypes) {
   if (!Number.isInteger(leaseSeconds) || leaseSeconds < 10) {
     throw new RangeError('leaseSeconds must be an integer of at least 10');
   }
-  const result = await pool.query(`
-    UPDATE platform_jobs
-    SET status = CASE WHEN attempts >= max_attempts THEN 'dead_letter' ELSE 'retrying' END,
-        available_at = CASE
-          WHEN attempts >= max_attempts THEN available_at
-          ELSE NOW()
-        END,
-        locked_by = NULL,
-        locked_at = NULL,
-        last_error = LEFT(COALESCE(last_error, 'Worker lease expired'), 4000),
-        updated_at = NOW()
-    WHERE status = 'processing'
-      AND locked_at < NOW() - make_interval(secs => $1::int)
-    RETURNING id, status
-  `, [leaseSeconds]);
+  const allowedTypes = normalizeJobTypes(jobTypes);
+  const result = allowedTypes
+    ? await pool.query(`
+        UPDATE platform_jobs
+        SET status = CASE WHEN attempts >= max_attempts THEN 'dead_letter' ELSE 'retrying' END,
+            available_at = CASE
+              WHEN attempts >= max_attempts THEN available_at
+              ELSE NOW()
+            END,
+            locked_by = NULL,
+            locked_at = NULL,
+            last_error = LEFT(COALESCE(last_error, 'Worker lease expired'), 4000),
+            updated_at = NOW()
+        WHERE status = 'processing'
+          AND locked_at < NOW() - make_interval(secs => $1::int)
+          AND job_type = ANY($2::text[])
+        RETURNING id, status
+      `, [leaseSeconds, allowedTypes])
+    : await pool.query(`
+        UPDATE platform_jobs
+        SET status = CASE WHEN attempts >= max_attempts THEN 'dead_letter' ELSE 'retrying' END,
+            available_at = CASE
+              WHEN attempts >= max_attempts THEN available_at
+              ELSE NOW()
+            END,
+            locked_by = NULL,
+            locked_at = NULL,
+            last_error = LEFT(COALESCE(last_error, 'Worker lease expired'), 4000),
+            updated_at = NOW()
+        WHERE status = 'processing'
+          AND locked_at < NOW() - make_interval(secs => $1::int)
+        RETURNING id, status
+      `, [leaseSeconds]);
   return result.rows;
 }
-
 async function enqueueTelegramUpdate(pool, { botId, update }) {
   if (!Number.isSafeInteger(Number(botId)) || Number(botId) < 1) {
     throw new TypeError('A valid botId is required');
