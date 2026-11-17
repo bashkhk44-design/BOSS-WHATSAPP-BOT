@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { validateWebhookEnvironment } = require('../webhook');
+const { validateWebhookEnvironment, getWebhookSslConfig } = require('../webhook');
 
 const validEnvironment = {
   DATABASE_URL: 'postgresql://test_user:test_password@localhost:5432/boss_test',
@@ -44,4 +44,32 @@ test('webhook startup accepts uppercase hexadecimal encryption keys', () => {
     validateWebhookEnvironment({ ...validEnvironment, BOTS_ENCRYPTION_KEY: 'B'.repeat(64) }),
     true
   );
+});
+
+test('webhook startup accepts supported database SSL modes', () => {
+  for (const mode of ['require', 'disable']) {
+    assert.equal(
+      validateWebhookEnvironment({ ...validEnvironment, DATABASE_SSL: mode }),
+      true
+    );
+  }
+  assert.equal(validateWebhookEnvironment(validEnvironment), true);
+});
+
+test('webhook startup rejects unknown database SSL modes', () => {
+  for (const mode of ['disabled', 'false', 'verify-full', '']) {
+    assert.throws(
+      () => validateWebhookEnvironment({ ...validEnvironment, DATABASE_SSL: mode }),
+      /DATABASE_SSL must be either require or disable/
+    );
+  }
+});
+
+test('webhook PostgreSQL connections verify TLS certificates by default and when required', () => {
+  assert.equal(getWebhookSslConfig({}), true);
+  assert.equal(getWebhookSslConfig({ DATABASE_SSL: 'require' }), true);
+});
+
+test('webhook PostgreSQL TLS can only be disabled through explicit configuration', () => {
+  assert.equal(getWebhookSslConfig({ DATABASE_SSL: 'disable' }), false);
 });
