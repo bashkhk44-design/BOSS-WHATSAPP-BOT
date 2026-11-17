@@ -30,4 +30,6 @@ server.on('error', (err) => {
   process.exitCode = 1;
 });
 
-require('./telegram-master');
+const { createMasterRuntime } = require('./telegram-master');
+const telegramRuntime = createMasterRuntime();
+void telegramRuntime.start();
