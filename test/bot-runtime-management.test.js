@@ -104,3 +104,29 @@ test('returns not_loaded for bots absent from this runtime', () => {
   });
   assert.equal(runtime.getBotRuntimeStatus(99), 'not_loaded');
 });
+
+test('default capacity accepts 100 bots and rejects the 101st', async () => {
+  const records = Array.from({ length: 101 }, (_, index) => ({
+    id: index + 1,
+    name: 'Bot ' + (index + 1),
+    username: 'bot_' + (index + 1),
+    active: true,
+    token_ciphertext: 'x'
+  }));
+  const pool = fixturePool(records);
+  const bots = fixtureBotFactory();
+  const runtime = createBotRuntime({
+    pool,
+    decryptToken: () => 'token',
+    createCustomerBot: record => bots.create(record),
+    logger: { log() {}, error() {} },
+    heartbeatIntervalMs: 100000
+  });
+
+  const result = await runtime.startBotRuntime();
+  assert.deepEqual(result, { found: 101, started: 100, capacity: 100 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(bots.started.length, 100);
+  await assert.rejects(runtime.startBotById(101), /Maximum active customer bots reached/);
+  await runtime.stopBotRuntime();
+});
