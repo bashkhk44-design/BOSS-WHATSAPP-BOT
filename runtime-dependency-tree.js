@@ -55,7 +55,8 @@ function createBinWrapper({ binDir, command, target }) {
   }
   const wrapper = path.join(binDir, command);
   const relativeTarget = path.relative(binDir, target).split(path.sep).join('/');
-  if (!relativeTarget || relativeTarget.startsWith('/') || relativeTarget.split('/').some(part => part === '..' && !relativeTarget.startsWith('../'))) {
+  if (!relativeTarget || path.isAbsolute(relativeTarget) ||
+      path.resolve(binDir, relativeTarget) !== target) {
     fail('Package executable target could not be represented safely.');
   }
   const source = [
@@ -141,7 +142,7 @@ function computeDirectoryTreeDigest(rootDir) {
   const records = [];
 
   function visit(directory, relativeDirectory) {
-    const names = fs.readdirSync(directory).sort((a, b) => a.localeCompare(b, 'en'));
+    const names = fs.readdirSync(directory).sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
     for (const name of names) {
       if (name.includes('/') || name.includes('\\') || name.includes('\0')) {
         fail('Runtime dependency tree contains an invalid filename.');
@@ -164,7 +165,7 @@ function computeDirectoryTreeDigest(rootDir) {
   }
 
   visit(root, '');
-  records.sort((a, b) => a[0].localeCompare(b[0], 'en'));
+  records.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
   const hash = crypto.createHash('sha256');
   for (const record of records) {
     hash.update(JSON.stringify(record));
