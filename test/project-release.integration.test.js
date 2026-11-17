@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { pool } = require('../db');
+let pool;
 const { buildReleaseReport, createReleaseCandidate, decideRelease, initProjectReleaseDatabase } = require('../project-release');
 
 test('PostgreSQL release handoff enforces customer then manager approval and immutable artifact', { skip: !process.env.DATABASE_URL }, async () => {
@@ -12,6 +12,7 @@ test('PostgreSQL release handoff enforces customer then manager approval and imm
   const managerTelegramId = '10001';
 
   try {
+    pool = require('../db').pool;
     await pool.query('ALTER TABLE clients ADD COLUMN IF NOT EXISTS first_name TEXT');
     await pool.query('ALTER TABLE client_projects ADD COLUMN IF NOT EXISTS name TEXT');
     await pool.query("ALTER TABLE client_projects ADD COLUMN IF NOT EXISTS business_type TEXT");
