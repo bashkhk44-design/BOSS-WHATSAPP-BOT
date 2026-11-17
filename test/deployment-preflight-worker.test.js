@@ -136,7 +136,9 @@ test('dedicated handler verifies release, authorization, actor and env-name dige
   assert.equal(input.executionApproval, null);
   assert.deepEqual(input.configuredEnvNames, ['PAYMENT_API_KEY']);
   assert.equal(input.rollbackRelease.id, '50');
+  assert.equal(result.isolatedPreflightAttempted, true);
   assert.equal(result.isolatedPreflightExecuted, true);
+  assert.equal(result.dockerHealthProbePassed, true);
   assert.equal(result.healthStatus, 200);
   assert.equal(result.readyForManualExecutionReview, false);
   assert.equal(result.executionAllowed, false);
@@ -196,6 +198,7 @@ test('handler blocks stale environment-name configuration without running Docker
   const result = await handler(data.job);
   assert.equal(called, false);
   assert.equal(result.status, 'blocked');
+  assert.equal(result.isolatedPreflightAttempted, false);
   assert.equal(result.isolatedPreflightExecuted, false);
   assert.equal(result.executionAllowed, false);
   assert.equal(result.deployed, false);
