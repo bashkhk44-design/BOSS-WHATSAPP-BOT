@@ -22,11 +22,14 @@ function fixture(t, packages = [{ name: 'demo', version: '1.0.0', bin: { 'demo-c
     const packageDir = path.join(nodeModulesDir, pkg.name);
     fs.mkdirSync(path.join(packageDir, 'bin'), { recursive: true, mode: 0o755 });
     fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
-      name: pkg.name, version: pkg.version, bin: pkg.bin
+      name: pkg.name, version: pkg.version, type: pkg.type, bin: pkg.bin
     }));
     fs.writeFileSync(path.join(packageDir, 'index.js'), 'module.exports = { value: "dependency-ok" };\n');
     if (pkg.bin) {
-      fs.writeFileSync(path.join(packageDir, 'bin', 'cli.js'),
+      const binTarget = pkg.binTarget || 'bin/cli.js';
+      const targetPath = path.join(packageDir, binTarget);
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath,
         "process.stdout.write('bin-ok:' + process.argv.slice(2).join(','));\n");
     }
     lockPackages['node_modules/' + pkg.name] = { version: pkg.version };
@@ -48,6 +51,24 @@ test('creates executable wrappers and runs package bins without symlinks', t => 
   assert.equal(execFileSync(wrapper, ['one', 'two'], { encoding: 'utf8' }), 'bin-ok:one,two');
   assert.match(result.treeSha256, /^[a-f0-9]{64}$/);
   assert.equal(computeDirectoryTreeDigest(item.nodeModulesDir).sha256, result.treeSha256);
+});
+
+test('supports ESM package executable entry points', t => {
+  const item = fixture(t, [{
+    name: 'demo', version: '1.0.0', type: 'module',
+    bin: { 'demo-cli': './bin/cli.mjs' }, binTarget: 'bin/cli.mjs'
+  }]);
+  prepareRuntimeDependencyTree(item);
+  const wrapper = path.join(item.nodeModulesDir, '.bin', 'demo-cli');
+  assert.equal(execFileSync(wrapper, ['esm'], { encoding: 'utf8' }), 'bin-ok:esm');
+});
+
+test('rejects non-JavaScript executable targets', t => {
+  const item = fixture(t, [{
+    name: 'demo', version: '1.0.0',
+    bin: { 'demo-cli': './bin/cli.sh' }, binTarget: 'bin/cli.sh'
+  }]);
+  assert.throws(() => prepareRuntimeDependencyTree(item), /Only JavaScript package executable targets/);
 });
 
 test('produces the same tree digest for identical dependency contents', t => {
