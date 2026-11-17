@@ -136,6 +136,8 @@ test('dedicated handler verifies release, authorization, actor and env-name dige
   assert.equal(input.executionApproval, null);
   assert.deepEqual(input.configuredEnvNames, ['PAYMENT_API_KEY']);
   assert.equal(input.rollbackRelease.id, '50');
+  const rollbackQuery = pool.calls.find(call => call.sql.includes('release_version < $3'));
+  assert.deepEqual(rollbackQuery.params, ['8', '51', 2]);
   assert.equal(result.isolatedPreflightAttempted, true);
   assert.equal(result.isolatedPreflightExecuted, true);
   assert.equal(result.dockerHealthProbePassed, true);
