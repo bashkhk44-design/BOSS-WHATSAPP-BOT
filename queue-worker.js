@@ -24,7 +24,7 @@ function createQueueWorker({
     const expired = await queueApi.recoverExpiredPlatformJobs(pool, leaseSeconds);
     if (expired.length) logger.warn(`Recovered expired jobs: ${expired.length}`);
 
-    const job = await queueApi.claimPlatformJob(pool, workerId);
+    const job = await queueApi.claimPlatformJob(pool, workerId, Object.keys(handlers));
     if (!job) return false;
 
     const handler = handlers[job.job_type];
