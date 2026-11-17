@@ -38,3 +38,15 @@ The test file must use Node's \`node:test\` API and register a test with the exa
 The runner retains the existing pinned-image Docker sandbox, no network, read-only mounts, bounded resources, non-root UID, dropped capabilities, and no application secrets in the container environment. Dependency packages must come from the verified offline artifact path.
 
 A passing test demonstrates that the generated test case executed and passed. It does not prove that its assertions are semantically complete, that every business edge case was covered, or that the project is production-ready. Human review and explicit release approval remain necessary.
+
+
+## Execution state and safe repair
+
+The sandbox reports execution state separately from the test outcome:
+
+- \`executionStatus: completed\` means a structurally valid TAP summary was received.
+- \`executionStatus: not_confirmed\` means the sandbox did not produce a valid completed test report; this includes startup, image, dependency preparation, timeout, and malformed-report failures.
+- \`repairable: true\` is set only for a completed run whose test cases, skip/todo/cancelled state, or approved acceptance coverage failed.
+- A completed run that exits abnormally without a repairable test failure is not sent to AI FIXER.
+
+AI FIXER is invoked only when both \`executionStatus === "completed"\` and \`repairable === true\`. If a later repair attempt cannot be tested because sandbox execution is no longer confirmed, the repair loop stops immediately and the pipeline does not mark the project ready or proceed to deployment preparation.
