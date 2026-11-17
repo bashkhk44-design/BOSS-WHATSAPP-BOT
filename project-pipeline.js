@@ -17,6 +17,7 @@ const { buildProject } = require('./ai-builder');
 const { testProjectBundle } = require('./ai-tester');
 const { fixProject, canAttemptFix } = require('./ai-fixer');
 const { prepareDeployment } = require('./ai-deployer');
+const { buildReleaseReport, createReleaseCandidate } = require('./project-release');
 
 async function runStage({
   projectId,
@@ -275,6 +276,21 @@ async function runProjectPipeline({
       { forceRetry: true }
     );
 
+    const releaseReport = buildReleaseReport({
+      project,
+      spec: project.spec,
+      design,
+      testResult: finalTest,
+      deployment
+    });
+    const releaseCandidate = await createReleaseCandidate({
+      project,
+      designJobId: designJob.id,
+      adminTelegramId,
+      report: releaseReport,
+      bundle: finalBundle
+    });
+
     return {
       completed: true,
       projectId,
@@ -284,9 +300,11 @@ async function runProjectPipeline({
       test: finalTest,
       fixResult,
       deployment,
+      releaseCandidate,
+      releaseReport,
       deployed: false,
       summary:
-        'اكتمل البناء والاختبار. المشروع بانتظار موافقة المدير وربط الاستضافة.'
+        'اكتمل البناء والاختبار، وتم إنشاء إصدار ثابت بانتظار موافقة العميل ثم المدير. لم يتم النشر.'
     };
   } finally {
     await releaseProjectPipelineLock(lock, projectId);

@@ -1,6 +1,7 @@
 const { pool, encryptSecret, decryptSecret } = require('./db');
 const projectAiJobs = require('./project-ai-jobs');
 const projectApprovals = require('./project-approvals');
+const projectRelease = require('./project-release');
 
 async function initProjectDatabase() {
   await pool.query(`
@@ -107,6 +108,7 @@ async function initProjectDatabase() {
 
   await projectAiJobs.initProjectAiJobsDatabase();
   await projectApprovals.initProjectApprovalsDatabase();
+  await projectRelease.initProjectReleaseDatabase();
 
   console.log('BOSS project database tables ready');
 }
@@ -708,5 +710,6 @@ module.exports = {
   deleteIntakeSession,
   approveProjectSpec,
   ...projectAiJobs,
-  ...projectApprovals
+  ...projectApprovals,
+  ...projectRelease
 };

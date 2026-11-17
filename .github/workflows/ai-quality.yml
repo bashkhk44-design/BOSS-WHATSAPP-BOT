@@ -101,6 +101,8 @@ jobs:
         run: node --test test/customer-bot-worker-control.integration.test.js
       - name: Exercise durable automatic remediation
         run: node --test test/auto-remediation.integration.test.js
+      - name: Exercise release approval and immutable artifact workflow
+        run: node --test test/project-release.integration.test.js
       - name: Verify schema, constraints, and preserved rows
         run: |
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
