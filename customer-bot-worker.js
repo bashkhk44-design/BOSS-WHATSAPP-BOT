@@ -5,7 +5,7 @@ const { randomUUID } = require('node:crypto');
 const DEFAULT_CAPACITY = 25;
 const DEFAULT_LEASE_SECONDS = 90;
 
-async function claimNextBot(pool, workerId, leaseSeconds = DEFAULT_LEASE_SECONDS) {
+async function claimNextBot(pool, workerId, leaseSeconds = DEFAULT_LEASE_SECONDS, requestedBotId = null) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -15,6 +15,7 @@ async function claimNextBot(pool, workerId, leaseSeconds = DEFAULT_LEASE_SECONDS
       LEFT JOIN bot_runtime_status s ON s.bot_id = b.id
       WHERE b.active = TRUE
         AND b.token_ciphertext IS NOT NULL
+        AND ($2::bigint IS NULL OR b.id = $2::bigint)
         AND (
           s.bot_id IS NULL
           OR s.status IN ('unknown', 'stopped', 'error')
@@ -24,7 +25,7 @@ async function claimNextBot(pool, workerId, leaseSeconds = DEFAULT_LEASE_SECONDS
       ORDER BY b.id ASC
       FOR UPDATE OF b SKIP LOCKED
       LIMIT 1
-    `, [leaseSeconds]);
+    `, [leaseSeconds, requestedBotId]);
     if (!candidate.rowCount) {
       await client.query('COMMIT');
       return null;
@@ -70,7 +71,103 @@ function createCustomerBotWorker({
   let stopping = false;
   let loopPromise = null;
 
+  async function claimNextCommand() {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(`
+        SELECT c.id, c.bot_id, c.action, c.target_worker_id
+        FROM bot_runtime_commands c
+        WHERE c.status = 'queued'
+          AND (
+            c.target_worker_id IS NULL
+            OR c.target_worker_id = $1
+            OR NOT EXISTS (
+              SELECT 1 FROM bot_runtime_status owner_status
+              WHERE owner_status.bot_id = c.bot_id
+                AND owner_status.worker_id = c.target_worker_id
+                AND owner_status.last_heartbeat_at >= NOW() - ($2::int * INTERVAL '1 second')
+            )
+          )
+        ORDER BY c.id ASC
+        FOR UPDATE OF c SKIP LOCKED
+        LIMIT 1
+      `, [workerId, leaseSeconds]);
+      if (!result.rowCount) {
+        await client.query('COMMIT');
+        return null;
+      }
+      const command = result.rows[0];
+      await client.query(`
+        UPDATE bot_runtime_commands
+        SET status = 'processing', attempts = attempts + 1
+        WHERE id = $1
+      `, [command.id]);
+      await client.query('COMMIT');
+      return command;
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function processNextCommand() {
+    const command = await claimNextCommand();
+    if (!command) return false;
+    const botId = String(command.bot_id);
+    try {
+      if (command.action === 'stop' || command.action === 'restart') {
+        await runtime.stopBotById(botId);
+        await pool.query(`
+          UPDATE bot_runtime_status
+          SET status = 'stopped', worker_id = NULL,
+              last_heartbeat_at = NOW(), updated_at = NOW()
+          WHERE bot_id = $1
+            AND (worker_id = $2 OR worker_id = $3 OR last_heartbeat_at < NOW() - ($4::int * INTERVAL '1 second') OR worker_id IS NULL)
+        `, [botId, workerId, command.target_worker_id, leaseSeconds]);
+      }
+      if (command.action === 'start' || command.action === 'restart') {
+        const claimedBotId = await claimNextBot(pool, workerId, leaseSeconds, botId);
+        if (claimedBotId) {
+          await runtime.startBotById(claimedBotId);
+        } else {
+          const owner = await pool.query(
+            'SELECT worker_id, last_heartbeat_at FROM bot_runtime_status WHERE bot_id = $1',
+            [botId]
+          );
+          const status = owner.rows[0];
+          const ownedHere = status?.worker_id === workerId;
+          const ownerFresh = status?.last_heartbeat_at &&
+            Date.now() - new Date(status.last_heartbeat_at).getTime() < leaseSeconds * 1000;
+          if (ownedHere && ownerFresh) {
+            await runtime.startBotById(botId);
+          } else {
+            throw new Error('تعذر حجز البوت بأمان؛ قد يكون عاملاً آخر يملكه حالياً.');
+          }
+        }
+      }
+      await pool.query(`
+        UPDATE bot_runtime_commands
+        SET status = 'completed', processed_at = NOW(), error_message = NULL
+        WHERE id = $1
+      `, [command.id]);
+      logger.log('Processed manager command ' + command.action + ' for bot ' + botId);
+    } catch (error) {
+      await pool.query(`
+        UPDATE bot_runtime_commands
+        SET status = 'failed', processed_at = NOW(),
+            error_message = $2
+        WHERE id = $1
+      `, [command.id, String(error.message || error).slice(0, 1000)]);
+      logger.error('Manager command failed for bot ' + botId + ': ' + error.message);
+    }
+    return true;
+  }
+
   async function runOnce() {
+    if (await processNextCommand()) return true;
     const snapshot = runtime.getRuntimeSnapshot();
     const owned = snapshot.filter(item => item.status !== 'stopped' && item.status !== 'error' && item.status !== 'conflict' && item.status !== 'unauthorized').length;
     if (owned >= capacity) return false;
