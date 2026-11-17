@@ -33,13 +33,12 @@ async function main() {
   const server = createTelegramWebhookServer({
     pool,
     resolveSecret: async botId => {
-      const result = await pool.query(\`
-        SELECT id, token_ciphertext, token_iv, token_auth_tag
-        FROM telegram_bots
-        WHERE id = $1 AND active = TRUE
-          AND token_ciphertext IS NOT NULL
-        LIMIT 1
-      \`, [botId]);
+      const result = await pool.query(
+        'SELECT id, token_ciphertext, token_iv, token_auth_tag ' +
+        'FROM telegram_bots WHERE id = $1 AND active = TRUE ' +
+        'AND token_ciphertext IS NOT NULL LIMIT 1',
+        [botId]
+      );
       if (!result.rowCount) return null;
       const token = decryptToken(result.rows[0]);
       return deriveTelegramWebhookSecret(botId, token, encryptionKey);
@@ -51,13 +50,13 @@ async function main() {
     server.once('error', reject);
     server.listen(port, '0.0.0.0', resolve);
   });
-  console.log(\`BOSS Telegram webhook ingress listening on port \${port}\`);
+  console.log('BOSS Telegram webhook ingress listening on port ' + port);
 
   let closing = false;
   const shutdown = async signal => {
     if (closing) return;
     closing = true;
-    console.log(\`Webhook ingress stopping: \${signal}\`);
+    console.log('Webhook ingress stopping: ' + signal);
     await new Promise(resolve => server.close(resolve));
     await pool.end();
   };
