@@ -57,24 +57,24 @@ function ensureRuntimeMountPoint(projectDir) {
 }
 
 function parseTapSummary(output) {
-  const tests = Number(output.match(/^# tests (\\d+)$/m)?.[1] || 0);
-  const passed = Number(output.match(/^# pass (\\d+)$/m)?.[1] || 0);
-  const failed = Number(output.match(/^# fail (\\d+)$/m)?.[1] || 0);
+  const tests = Number(output.match(/^# tests (\d+)$/m)?.[1] || 0);
+  const passed = Number(output.match(/^# pass (\d+)$/m)?.[1] || 0);
+  const failed = Number(output.match(/^# fail (\d+)$/m)?.[1] || 0);
   return { tests, passed, failed, valid: tests > 0 && passed + failed === tests && failed === 0 };
 }
 
 function verifyAcceptanceTestCases(output, cases) {
   if (!Array.isArray(cases)) throw new Error('Acceptance test case list must be an array.');
-  const lines = String(output || '').split(/\\r?\\n/);
+  const lines = String(output || '').split(/\r?\n/);
   const results = [];
   for (const item of cases) {
     if (!item || typeof item.marker !== 'string' || !item.marker.startsWith('[BOSS_ACCEPTANCE:')) {
       throw new Error('Invalid approved acceptance test marker.');
     }
     const matching = lines.filter(line =>
-      /^\\s*(?:ok|not ok)\\s+\\d+\\s+-\\s/.test(line) && line.includes(item.marker)
+      /^\s*(?:ok|not ok)\s+\d+\s+-\s/.test(line) && line.includes(item.marker)
     );
-    const passed = matching.length === 1 && /^\\s*ok\\s/.test(matching[0]);
+    const passed = matching.length === 1 && /^\s*ok\s/.test(matching[0]);
     results.push({ acceptanceTestId: item.acceptanceTestId, passed });
   }
   return {
@@ -145,7 +145,7 @@ function runSandboxTests({
     return {
       status: 'failed', passed: false,
       details: 'Sandbox did not report a non-empty, fully passing TAP test suite. ' +
-        JSON.stringify(summary) + '\\n' + output.slice(-5000)
+        JSON.stringify(summary) + '\n' + output.slice(-5000)
     };
   }
 
@@ -154,7 +154,7 @@ function runSandboxTests({
     return {
       status: 'failed', passed: false,
       details: 'One or more approved acceptance tests were not observed as passing: ' +
-        JSON.stringify(acceptance.results) + '\\n' + output.slice(-5000),
+        JSON.stringify(acceptance.results) + '\n' + output.slice(-5000),
       testSummary: summary,
       acceptanceTests: acceptance.results
     };
