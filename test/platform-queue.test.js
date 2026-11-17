@@ -220,3 +220,41 @@ test('queue worker does not complete or fail a job after losing its lease', asyn
   assert.equal(failed, false);
   assert.ok(warnings.some(message => /lease lost/.test(message)));
 });
+
+
+test('queue worker keeps running and retries after a transient queue/database error', async () => {
+  let recoveryCalls = 0;
+  let claims = 0;
+  const logged = [];
+  const queueApi = {
+    async recoverExpiredPlatformJobs() {
+      recoveryCalls += 1;
+      if (recoveryCalls === 1) throw new Error('temporary database disconnect');
+      return [];
+    },
+    async claimPlatformJob() {
+      claims += 1;
+      return null;
+    }
+  };
+  const worker = createQueueWorker({
+    pool: { query() {} },
+    workerId: 'reconnect-worker',
+    handlers: { 'test.reconnect': async () => ({}) },
+    queueApi,
+    pollIntervalMs: 100,
+    logger: { log() {}, warn() {}, error(message) { logged.push(message); } }
+  });
+
+  const running = worker.start();
+  const deadline = Date.now() + 5000;
+  while (claims < 1 && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  await worker.stop();
+  await running;
+
+  assert.equal(recoveryCalls >= 2, true);
+  assert.equal(claims >= 1, true);
+  assert.ok(logged.some(message => /temporary database disconnect/.test(message)));
+});
