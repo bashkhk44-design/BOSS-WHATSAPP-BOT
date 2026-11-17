@@ -91,6 +91,7 @@ function createDeploymentPreflightHandler({
     if (sha256(stableJson(configuredEnvNames)) !== payload.envNamesSha256) {
       return {
         status: 'blocked',
+        isolatedPreflightAttempted: false,
         isolatedPreflightExecuted: false,
         releaseId: String(release.id),
         artifactSha256: release.artifact_sha256,
@@ -127,7 +128,9 @@ function createDeploymentPreflightHandler({
 
     return {
       status: 'completed',
-      isolatedPreflightExecuted: true,
+      isolatedPreflightAttempted: true,
+      isolatedPreflightExecuted: Boolean(result.runtimeVersion),
+      dockerHealthProbePassed: result.checks.some(check => check.name === 'health_check' && check.passed === true),
       releaseId: String(release.id),
       artifactSha256: release.artifact_sha256,
       checks: result.checks,
