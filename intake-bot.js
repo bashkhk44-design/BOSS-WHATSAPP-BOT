@@ -1,25 +1,29 @@
-const { Bot, InlineKeyboard } = require('grammy');
-const { pool } = require('./db');
+'use strict';
 
-const {
-  createClientProjectWithSession,
-  setProjectBusinessType,
-  updateProjectName,
-  updateClientProjectStatus,
-  addConversationMessage,
-  getIntakeSession,
-  getProjectConversation,
-  saveIntakeSession,
-  deleteIntakeSession,
-  approveProjectSpec
-} = require('./project-db');
+function createIntakeRuntime() {
+  const { Bot, InlineKeyboard } = require('grammy');
+  const { pool } = require('./db');
 
-const { processIntakeTurn, advanceFallbackIntake } = require('./ai-intake');
+  const {
+    createClientProjectWithSession,
+    setProjectBusinessType,
+    updateProjectName,
+    updateClientProjectStatus,
+    addConversationMessage,
+    getIntakeSession,
+    getProjectConversation,
+    saveIntakeSession,
+    deleteIntakeSession,
+    approveProjectSpec
+  } = require('./project-db');
 
-let intakeBot = null;
-let pollingPromise = null;
-let intakeReadyPromise = null;
-let intakeStopping = false;
+  const { processIntakeTurn, advanceFallbackIntake } = require('./ai-intake');
+
+  let intakeBot = null;
+  let pollingPromise = null;
+  let intakeReadyPromise = null;
+  let intakeStopping = false;
+
 
 const TYPES = [
   ['restaurant', '🍽️ مطعم'],
@@ -900,7 +904,28 @@ async function stopIntakeBot() {
   }
 }
 
+
+  return { startIntakeBot, stopIntakeBot };
+}
+
+let defaultRuntime = null;
+
+function getDefaultRuntime() {
+  if (!defaultRuntime) defaultRuntime = createIntakeRuntime();
+  return defaultRuntime;
+}
+
+async function startIntakeBot(...args) {
+  return getDefaultRuntime().startIntakeBot(...args);
+}
+
+async function stopIntakeBot(...args) {
+  if (!defaultRuntime) return;
+  return defaultRuntime.stopIntakeBot(...args);
+}
+
 module.exports = {
+  createIntakeRuntime,
   startIntakeBot,
   stopIntakeBot
 };
