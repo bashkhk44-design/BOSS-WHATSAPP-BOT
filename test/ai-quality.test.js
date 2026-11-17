@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const { validateBundle } = require('../ai-builder');
 const { validateManifest, scanForEmbeddedSecrets, testProjectBundle } = require('../ai-tester');
 const { providers, getGeminiModel } = require('../ai-router');
+const { advanceFallbackIntake } = require('../ai-intake');
 
 function validBundle() {
   return {
@@ -122,4 +123,23 @@ test('alternative AI providers require explicit opt-in', () => {
       else process.env[name] = previous[name];
     }
   }
+});
+
+
+test('AI intake fallback collects requirements one question at a time without AI', () => {
+  let state = advanceFallbackIntake({ aiFallback: true, fallbackField: 'description' });
+  assert.equal(state.data.fallbackField, 'description');
+  assert.match(state.assistantMessage, /اشرح فكرة المشروع/);
+  state = advanceFallbackIntake(state.data, 'متجر على تيليغرام');
+  assert.equal(state.data.description, 'متجر على تيليغرام');
+  assert.equal(state.data.fallbackField, 'features');
+  state = advanceFallbackIntake(state.data, 'عرض المنتجات واستقبال الطلبات');
+  state = advanceFallbackIntake(state.data, 'زر عرض المنتجات وزر طلب شراء');
+  state = advanceFallbackIntake(state.data, 'لا يوجد');
+  state = advanceFallbackIntake(state.data, 'العربية');
+  state = advanceFallbackIntake(state.data, 'لا يوجد');
+  assert.equal(state.readyForReview, true);
+  assert.equal(state.data.aiFallback, false);
+  assert.equal(state.data.description, 'متجر على تيليغرام');
+  assert.equal(state.data.features, 'عرض المنتجات واستقبال الطلبات');
 });
