@@ -82,11 +82,23 @@ test('Telegram readiness review fails closed for a changed artifact or mismatche
     authorization
   });
   assert.equal(review.artifactDigestValid, false);
-  assert.equal(review.authorizationDigestValid, false);
+  // The authorization still binds the originally recorded digest; the artifact bytes no longer match it.
+  assert.equal(review.authorizationDigestValid, true);
   assert.ok(review.readiness.blockers.includes('release_not_approved_or_invalid'));
-  assert.ok(review.readiness.blockers.includes('deployment_authorization_missing_or_mismatched'));
   assert.equal(review.executionAllowed, false);
   assert.equal(review.deployed, false);
+
+  const mismatchedAuthorization = {
+    ...authorization,
+    authorization_sha256: 'b'.repeat(64)
+  };
+  const authorizationReview = reviewDeploymentReadiness({
+    release,
+    authorization: mismatchedAuthorization
+  });
+  assert.equal(authorizationReview.artifactDigestValid, true);
+  assert.equal(authorizationReview.authorizationDigestValid, false);
+  assert.ok(authorizationReview.readiness.blockers.includes('deployment_authorization_missing_or_mismatched'));
 });
 
 test('Telegram readiness review message is explicit that isolated preflight and deployment did not run', () => {
