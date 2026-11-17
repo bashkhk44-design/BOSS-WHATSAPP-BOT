@@ -2,18 +2,33 @@
 
 const { pool } = require('./db');
 
-const CONSTRUCTION_POINTS = {
-  payment: {
-    method: 'شام كاش يدوي',
-    customerProof: 'صورة إشعار الدفع أو رقم العملية',
-    review: 'إرسال الإثبات إلى المشرفين للتحقق والموافقة قبل اعتماد الدفع'
-  },
-  orderDetails: {
-    required: ['رقم الهاتف', 'العنوان', 'موقع GPS'],
-    editable: true,
-    timing: 'يجب جمعها والتحقق منها قبل تأكيد الطلب'
-  }
-};
+const SPEC_POINT_FIELDS = [
+  ['description', 'هدف المشروع'],
+  ['features', 'الميزات المطلوبة'],
+  ['buttons', 'الأزرار ورحلة العميل'],
+  ['payments', 'الدفع'],
+  ['languagesDesign', 'اللغة والتصميم'],
+  ['extra', 'تفاصيل إضافية']
+];
+
+function buildConstructionPoints(spec = {}) {
+  const source = spec && typeof spec === 'object' && !Array.isArray(spec)
+    ? spec
+    : {};
+
+  const sections = SPEC_POINT_FIELDS
+    .filter(([key]) => typeof source[key] === 'string' && source[key].trim())
+    .map(([key, label]) => ({
+      key,
+      label,
+      value: source[key].trim().slice(0, 3000)
+    }));
+
+  return {
+    source: 'approved_project_specification',
+    sections
+  };
+}
 
 async function initProjectApprovalsDatabase() {
   await pool.query(`
@@ -64,98 +79,129 @@ async function approveProjectMilestone({
     throw new Error('نوع الاعتماد غير صالح.');
   }
 
-  if (!/^\d+$/.test(String(projectId)) ||
-      !/^\d+$/.test(String(designJobId)) ||
-      !/^\d+$/.test(String(adminTelegramId))) {
+  if (!/^\\d+$/.test(String(projectId)) ||
+      !/^\\d+$/.test(String(designJobId)) ||
+      !/^\\d+$/.test(String(adminTelegramId))) {
     throw new Error('بيانات الاعتماد غير صحيحة.');
   }
 
-  const result = await pool.query(`
-    INSERT INTO project_build_approvals (
-      project_id,
-      spec_version,
-      design_job_id,
-      construction_points,
-      construction_points_approved,
-      design_approved,
-      points_approved_by,
-      design_approved_by,
-      points_approved_at,
-      design_approved_at
-    )
-    SELECT
-      p.id,
-      s.version,
-      j.id,
-      $3::jsonb,
-      $4 = 'construction_points',
-      $4 = 'design',
-      CASE WHEN $4 = 'construction_points' THEN $5 ELSE NULL END,
-      CASE WHEN $4 = 'design' THEN $5 ELSE NULL END,
-      CASE WHEN $4 = 'construction_points' THEN NOW() ELSE NULL END,
-      CASE WHEN $4 = 'design' THEN NOW() ELSE NULL END
-    FROM client_projects p
-    JOIN LATERAL (
-      SELECT version
-      FROM project_specs
-      WHERE project_id = p.id AND status = 'approved'
-      ORDER BY version DESC
-      LIMIT 1
-    ) s ON TRUE
-    JOIN project_ai_jobs j
-      ON j.project_id = p.id
-     AND j.spec_version = s.version
-     AND j.job_type = 'design'
-     AND j.status = 'completed'
-     AND j.id = $2
-    WHERE p.id = $1
-      AND p.status = 'spec_approved'
-    ON CONFLICT (project_id, spec_version, design_job_id)
-    DO UPDATE SET
-      construction_points = EXCLUDED.construction_points,
-      construction_points_approved =
-        project_build_approvals.construction_points_approved
-        OR EXCLUDED.construction_points_approved,
-      design_approved =
-        project_build_approvals.design_approved
-        OR EXCLUDED.design_approved,
-      points_approved_by = CASE
-        WHEN EXCLUDED.construction_points_approved
-        THEN EXCLUDED.points_approved_by
-        ELSE project_build_approvals.points_approved_by
-      END,
-      design_approved_by = CASE
-        WHEN EXCLUDED.design_approved
-        THEN EXCLUDED.design_approved_by
-        ELSE project_build_approvals.design_approved_by
-      END,
-      points_approved_at = COALESCE(
-        project_build_approvals.points_approved_at,
-        EXCLUDED.points_approved_at
-      ),
-      design_approved_at = COALESCE(
-        project_build_approvals.design_approved_at,
-        EXCLUDED.design_approved_at
-      ),
-      updated_at = NOW()
-    RETURNING *
-  `, [
-    projectId,
-    designJobId,
-    JSON.stringify(CONSTRUCTION_POINTS),
-    approvalType,
-    String(adminTelegramId)
-  ]);
+  const client = await pool.connect();
 
-  if (!result.rowCount) {
-    throw new Error('التصميم غير مكتمل أو لم يعد مرتبطاً بآخر مواصفات معتمدة. أعد فتح AI DESIGNER.');
+  try {
+    await client.query('BEGIN');
+
+    const current = await client.query(`
+      SELECT s.version, s.spec
+      FROM client_projects p
+      JOIN LATERAL (
+        SELECT version, spec
+        FROM project_specs
+        WHERE project_id = p.id AND status = 'approved'
+        ORDER BY version DESC
+        LIMIT 1
+      ) s ON TRUE
+      JOIN project_ai_jobs j
+        ON j.project_id = p.id
+       AND j.spec_version = s.version
+       AND j.job_type = 'design'
+       AND j.status = 'completed'
+       AND j.id = $2
+      WHERE p.id = $1
+        AND p.status = 'spec_approved'
+      FOR UPDATE OF p
+    `, [projectId, designJobId]);
+
+    if (!current.rowCount) {
+      throw new Error('التصميم غير مكتمل أو لم يعد مرتبطاً بآخر مواصفات معتمدة. أعد فتح AI DESIGNER.');
+    }
+
+    const constructionPoints = buildConstructionPoints(current.rows[0].spec);
+
+    const result = await client.query(`
+      INSERT INTO project_build_approvals (
+        project_id, spec_version, design_job_id, construction_points,
+        construction_points_approved, design_approved,
+        points_approved_by, design_approved_by,
+        points_approved_at, design_approved_at
+      )
+      SELECT
+        p.id, s.version, j.id, $3::jsonb,
+        $4 = 'construction_points',
+        $4 = 'design',
+        CASE WHEN $4 = 'construction_points' THEN $5 ELSE NULL END,
+        CASE WHEN $4 = 'design' THEN $5 ELSE NULL END,
+        CASE WHEN $4 = 'construction_points' THEN NOW() ELSE NULL END,
+        CASE WHEN $4 = 'design' THEN NOW() ELSE NULL END
+      FROM client_projects p
+      JOIN LATERAL (
+        SELECT version
+        FROM project_specs
+        WHERE project_id = p.id AND status = 'approved'
+        ORDER BY version DESC
+        LIMIT 1
+      ) s ON TRUE
+      JOIN project_ai_jobs j
+        ON j.project_id = p.id
+       AND j.spec_version = s.version
+       AND j.job_type = 'design'
+       AND j.status = 'completed'
+       AND j.id = $2
+      WHERE p.id = $1
+        AND p.status = 'spec_approved'
+      ON CONFLICT (project_id, spec_version, design_job_id)
+      DO UPDATE SET
+        construction_points = EXCLUDED.construction_points,
+        construction_points_approved =
+          project_build_approvals.construction_points_approved
+          OR EXCLUDED.construction_points_approved,
+        design_approved =
+          project_build_approvals.design_approved
+          OR EXCLUDED.design_approved,
+        points_approved_by = CASE
+          WHEN EXCLUDED.construction_points_approved
+          THEN EXCLUDED.points_approved_by
+          ELSE project_build_approvals.points_approved_by
+        END,
+        design_approved_by = CASE
+          WHEN EXCLUDED.design_approved
+          THEN EXCLUDED.design_approved_by
+          ELSE project_build_approvals.design_approved_by
+        END,
+        points_approved_at = COALESCE(
+          project_build_approvals.points_approved_at,
+          EXCLUDED.points_approved_at
+        ),
+        design_approved_at = COALESCE(
+          project_build_approvals.design_approved_at,
+          EXCLUDED.design_approved_at
+        ),
+        updated_at = NOW()
+      RETURNING *
+    `, [
+      projectId,
+      designJobId,
+      JSON.stringify(constructionPoints),
+      approvalType,
+      String(adminTelegramId)
+    ]);
+
+    if (!result.rowCount) {
+      throw new Error('التصميم غير مكتمل أو لم يعد مرتبطاً بآخر مواصفات معتمدة. أعد فتح AI DESIGNER.');
+    }
+
+    await client.query('COMMIT');
+    return result.rows[0];
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
   }
-
-  return result.rows[0];
 }
 
 module.exports = {
   initProjectApprovalsDatabase,
   getProjectApprovalState,
-  approveProjectMilestone
+  approveProjectMilestone,
+  buildConstructionPoints
 };
