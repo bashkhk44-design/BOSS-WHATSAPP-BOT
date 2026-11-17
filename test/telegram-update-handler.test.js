@@ -9,7 +9,7 @@ test('Telegram update handler claims, dispatches, and marks an update processed'
   const pool = {
     async query(sql, params) {
       calls.push({ sql, params });
-      if (sql.includes('UPDATE bot_inbound_updates AS update')) {
+      if (sql.includes('UPDATE bot_inbound_updates AS inbound')) {
         return {
           rowCount: 1,
           rows: [{
@@ -49,7 +49,7 @@ test('Telegram update handler leaves failed updates retryable', async () => {
   const pool = {
     async query(sql) {
       calls.push(sql);
-      if (sql.includes('UPDATE bot_inbound_updates AS update')) {
+      if (sql.includes('UPDATE bot_inbound_updates AS inbound')) {
         return { rowCount: 1, rows: [{ payload: { update_id: 78 }, id: 6, name: 'Fail bot' }] };
       }
       if (sql.includes("SET state = 'failed'")) return { rowCount: 1, rows: [] };
