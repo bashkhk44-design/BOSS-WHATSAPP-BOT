@@ -109,10 +109,11 @@ function createDeploymentPreflightHandler({
       FROM project_release_candidates
       WHERE project_id = $1
         AND id <> $2
+        AND release_version < $3
         AND status = 'approved'
       ORDER BY release_version DESC, id DESC
       LIMIT 1
-    `, [release.project_id, release.id]);
+    `, [release.project_id, release.id, release.release_version]);
     const rollbackRelease = rollbackResult.rows[0] || null;
 
     const result = await preflight({
