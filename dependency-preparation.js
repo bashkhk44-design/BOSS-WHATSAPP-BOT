@@ -97,6 +97,9 @@ function prepareDependencyLock({
     env.BOSS_NPM_EGRESS_POLICY
   );
   const packagePath = path.join(projectDir, 'package.json');
+  if (path.resolve(outputFile) === path.resolve(packagePath)) {
+    throw new Error('outputFile must not overwrite the input package.json.');
+  }
   const packageData = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
   const manifestCheck = validatePackageManifest(packageData);
   if (!manifestCheck.passed) {
