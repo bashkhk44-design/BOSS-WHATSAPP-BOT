@@ -54,10 +54,19 @@ function normalizeIntakeResult(raw, currentData = {}) {
         .slice(0, 12)
     : [];
 
+  const description = fields.description || currentData.description;
+  const features = fields.features || currentData.features;
+  const hasCoreRequirements =
+    typeof description === 'string' && description.trim().length > 0 &&
+    typeof features === 'string' && features.trim().length > 0;
+
   return {
     data: { ...currentData, ...fields },
     assistantMessage,
-    readyForReview: raw.ready_for_review === true && missingItems.length === 0,
+    readyForReview:
+      raw.ready_for_review === true &&
+      missingItems.length === 0 &&
+      hasCoreRequirements,
     missingItems
   };
 }
@@ -67,13 +76,21 @@ async function processIntakeTurn({ project, currentData = {}, userMessage = '', 
     throw new Error('بيانات المشروع ونوع النشاط مطلوبان لبدء المحلل الذكي.');
   }
 
-  const safeHistory = (Array.isArray(history) ? history : [])
-    .filter(item => item && ['client', 'assistant'].includes(item.role))
-    .slice(-12)
-    .map(item => ({
-      role: item.role,
-      content: String(item.content || '').slice(0, 1600)
-    }));
+  const historyItems = (Array.isArray(history) ? history : [])
+    .filter(item => item && ['client', 'assistant'].includes(item.role));
+  const latestMessage = String(userMessage || '').trim();
+  const lastHistoryItem = historyItems[historyItems.length - 1];
+  if (
+    latestMessage &&
+    lastHistoryItem?.role === 'client' &&
+    String(lastHistoryItem.content || '').trim() === latestMessage
+  ) {
+    historyItems.pop();
+  }
+  const safeHistory = historyItems.slice(-12).map(item => ({
+    role: item.role,
+    content: String(item.content || '').slice(0, 1600)
+  }));
 
   const known = {};
   for (const key of ['projectName', 'businessType', ...FIELDS]) {
