@@ -9,11 +9,14 @@ const { createTelegramUpdateHandler } = require('./telegram-update-handler');
 
 function validateWorkerEnvironment(env = process.env) {
   if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-  if (!/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL)) {
+  if (!/^postgres(?:ql)?:\\/\\//i.test(env.DATABASE_URL)) {
     throw new Error('DATABASE_URL must use the PostgreSQL protocol');
   }
   if (!/^[0-9a-fA-F]{64}$/.test(env.BOTS_ENCRYPTION_KEY || '')) {
     throw new Error('BOTS_ENCRYPTION_KEY must be a 32-byte hex key');
+  }
+  if (env.DATABASE_SSL !== undefined && !['require', 'disable'].includes(env.DATABASE_SSL)) {
+    throw new Error('DATABASE_SSL must be either require or disable');
   }
   const integerSettings = [
     ['WORKER_DB_POOL_MAX', 1, 20],
@@ -23,7 +26,7 @@ function validateWorkerEnvironment(env = process.env) {
   for (const [name, minimum, maximum] of integerSettings) {
     const raw = env[name];
     if (raw === undefined) continue;
-    if (!/^\d+$/.test(String(raw))) {
+    if (!/^\\d+$/.test(String(raw))) {
       throw new Error(name + ' must be an integer between ' + minimum + ' and ' + maximum);
     }
     const value = Number(raw);
