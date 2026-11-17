@@ -7,6 +7,10 @@ const { Pool } = require('pg');
 const { createQueueWorker } = require('./queue-worker');
 const { createTelegramUpdateHandler } = require('./telegram-update-handler');
 
+function getWorkerSslConfig(env = process.env) {
+  return env.DATABASE_SSL === 'disable' ? false : true;
+}
+
 function validateWorkerEnvironment(env = process.env) {
   if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
   if (!/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL)) {
@@ -43,7 +47,7 @@ async function main() {
   const { decryptToken } = require('./db');
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false },
+    ssl: getWorkerSslConfig(),
     max: Number(process.env.WORKER_DB_POOL_MAX || 2),
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000
@@ -97,4 +101,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, validateWorkerEnvironment };
+module.exports = { main, validateWorkerEnvironment, getWorkerSslConfig };
