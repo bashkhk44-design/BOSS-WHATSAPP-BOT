@@ -135,7 +135,7 @@ function evaluateDeploymentReadiness({
       name: String(item?.name || ''),
       passed: item?.passed === true,
       evidence: String(item?.evidence || '').slice(0, 1000)
-    })).sort((a, b) => a.name.localeCompare(b.name)),
+    })).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
     blockers: uniqueBlockers
   };
 
