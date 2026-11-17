@@ -1,5 +1,5 @@
-const { Bot } = require('grammy');
 const { pool, decryptToken } = require('./db');
+const { createCustomerBot } = require('./customer-bot');
 
 const runningBots = new Map();
 let runtimeStopping = false;
@@ -16,34 +16,6 @@ function waitForRetry(ms, state) {
     state.retryTimer = setTimeout(finish, ms);
     state.wakeRetry = finish;
   });
-}
-
-function createCustomerBot(record, token, state) {
-  const clientBot = new Bot(token, { client: { timeoutSeconds: 45 } });
-
-  clientBot.command('start', async (ctx) => {
-    await ctx.reply(
-      `أهلاً بك في ${record.name} 👋\n\n` +
-      'هذا بوت النشاط، وسيتم إعداد خدماته قريباً.'
-    );
-  });
-
-  clientBot.command('help', async (ctx) => {
-    await ctx.reply(
-      `مساعدة ${record.name}\n\n` +
-      'سيتم تفعيل خدمات هذا البوت بعد إعداد مواصفاته.'
-    );
-  });
-
-  clientBot.catch((err) => {
-    console.error(
-      `CUSTOMER BOT ${record.id} UPDATE ERROR:`,
-      err.error_code || '',
-      err.message || ''
-    );
-  });
-
-  return clientBot;
 }
 
 async function runCustomerBot(record, state) {
@@ -65,7 +37,7 @@ async function runCustomerBot(record, state) {
     let clientBot = null;
 
     try {
-      clientBot = createCustomerBot(record, token, state);
+      clientBot = createCustomerBot(record, token);
       state.bot = clientBot;
       state.status = 'starting';
 
