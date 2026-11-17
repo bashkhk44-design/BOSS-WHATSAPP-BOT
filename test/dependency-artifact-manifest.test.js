@@ -70,7 +70,7 @@ test('enforces per-package, total-byte, and package-count limits', () => {
   }), /size is invalid/);
   assert.throws(() => buildVerifiedDependencyManifest({
     ...f, limits: { maxTotalBytes: 2 }
-  }), /total dependency artifact size/);
+  }), /total dependency artifact size/i);
   assert.throws(() => buildVerifiedDependencyManifest({
     ...f, limits: { maxPackages: 0 }
   }), /Invalid artifact limit/);
