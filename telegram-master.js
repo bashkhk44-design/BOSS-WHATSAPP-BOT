@@ -681,7 +681,13 @@ bot.callbackQuery(/^project:pipeline:(\d+)$/, async (ctx) => {
         '\nالإصدار: R' + release.release_version +
         '\nالمواصفات المعتمدة: v' + release.spec_version +
         '\nبصمة الإصدار: ' + release.artifact_sha256 +
-        '\n\nيرجى مراجعة نتيجة الاختبارات وتقرير الإصدار. موافقتك لا تعني النشر؛ إنها اعتماد للتسليم فقط.',
+        '\n\nملخص الاختبارات: ' + result.releaseReport.tests.summary.passed + '/' + result.releaseReport.tests.summary.tests + ' ناجحة' +
+        '\nاختبارات القبول: ' + result.releaseReport.tests.acceptanceTests.length +
+        '\nفحوصات ما قبل النشر غير المستوفاة: ' + result.releaseReport.risks.length +
+        (result.releaseReport.risks.length
+          ? '\n' + result.releaseReport.risks.map(item => '• ' + item.check + ': ' + item.details).join('\n').slice(0, 1800)
+          : '') +
+        '\n\nبموافقتك تؤكد قبولك لإصدار المواصفات والتصميم ونتيجة الاختبارات الموضحة أعلاه. موافقتك لا تعني النشر؛ إنها اعتماد للتسليم فقط.',
         { reply_markup: new InlineKeyboard()
           .text('✅ أوافق على الإصدار', 'project:release:customer:approved:' + release.id)
           .row()
