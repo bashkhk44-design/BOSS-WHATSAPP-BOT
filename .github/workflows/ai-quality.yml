@@ -183,3 +183,7 @@ jobs:
         env:
           BOSS_SANDBOX_ENABLED: YES
         run: node --test test/project-sandbox.integration.test.js
+      - name: Exercise isolated deployment preflight
+        env:
+          BOSS_SANDBOX_ENABLED: YES
+        run: node --test test/deployment-preflight.integration.test.js
