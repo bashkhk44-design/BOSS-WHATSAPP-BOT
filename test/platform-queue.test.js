@@ -258,3 +258,35 @@ test('queue worker keeps running and retries after a transient queue/database er
   assert.equal(claims >= 1, true);
   assert.ok(logged.some(message => /temporary database disconnect/.test(message)));
 });
+
+
+test('queue worker stop interrupts retry backoff immediately', async () => {
+  let recoveryCalls = 0;
+  const logged = [];
+  const worker = createQueueWorker({
+    pool: { query() {} },
+    workerId: 'interruptible-stop-worker',
+    handlers: { 'test.stop': async () => ({}) },
+    queueApi: {
+      async recoverExpiredPlatformJobs() {
+        recoveryCalls += 1;
+        throw new Error('database unavailable');
+      },
+      async claimPlatformJob() { return null; }
+    },
+    pollIntervalMs: 1000,
+    logger: { log() {}, warn() {}, error(message) { logged.push(message); } }
+  });
+
+  const running = worker.start();
+  const deadline = Date.now() + 2000;
+  while (!logged.length && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.ok(logged.length > 0, 'worker should enter retry backoff');
+  const stopStartedAt = Date.now();
+  await worker.stop();
+  await running;
+  assert.ok(Date.now() - stopStartedAt < 500, 'stop should wake retry sleep without waiting for its backoff');
+  assert.equal(recoveryCalls, 1);
+});
