@@ -21,6 +21,14 @@ const lockPool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
+pool.on('error', (err) => {
+  console.error('POSTGRES IDLE CLIENT ERROR:', err.message);
+});
+
+lockPool.on('error', (err) => {
+  console.error('POSTGRES LOCK POOL ERROR:', err.message);
+});
+
 function getEncryptionKey() {
   const value = process.env.BOTS_ENCRYPTION_KEY || '';
 
