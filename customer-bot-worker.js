@@ -144,14 +144,20 @@ async function main() {
     connectionTimeoutMillis: 10000
   });
   const workerId = process.env.CUSTOMER_BOT_WORKER_ID || randomUUID();
+  let worker = null;
   const runtime = createBotRuntime({
     pool,
     decryptToken,
     createCustomerBot,
     workerId,
-    maxBots: Number(process.env.CUSTOMER_BOT_WORKER_CAPACITY || DEFAULT_CAPACITY)
+    maxBots: Number(process.env.CUSTOMER_BOT_WORKER_CAPACITY || DEFAULT_CAPACITY),
+    onStatusPersistError: error => {
+      console.error('WORKER LEASE HEARTBEAT LOST; stopping owned bots:', error.message);
+      if (worker) void worker.stop();
+      else void runtime.stopBotRuntime();
+    }
   });
-  const worker = createCustomerBotWorker({
+  worker = createCustomerBotWorker({
     pool,
     runtime,
     workerId,
