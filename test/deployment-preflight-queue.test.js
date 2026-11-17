@@ -43,7 +43,7 @@ test('enqueue binds a durable preflight job to approved release, actor, owner an
           rowCount: 1,
           rows: [{
             id: '99', status: 'queued', attempts: 0, max_attempts: 3,
-            payload: JSON.parse(params[4])
+            payload: JSON.parse(params[5])
           }]
         };
       }
@@ -60,8 +60,8 @@ test('enqueue binds a durable preflight job to approved release, actor, owner an
   assert.equal(insertCall.params[0], 'deployment.preflight');
   assert.equal(insertCall.params[1], '2');
   assert.equal(insertCall.params[2], '3');
-  assert.equal(insertCall.params[5], 10);
-  assert.equal(insertCall.params[6], 3);
+  assert.equal(insertCall.params[6], 10);
+  assert.equal(insertCall.params[7], 3);
   assert.equal(result.job.payload.releaseId, '7');
   assert.equal(result.job.payload.artifactSha256, release.artifact_sha256);
   assert.equal(result.job.payload.requestedBy, '10001');
