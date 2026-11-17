@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { enqueuePlatformJob, enqueueTelegramUpdate } = require('../platform-queue');
+const { enqueuePlatformJob, enqueueTelegramUpdate, claimPlatformJob, normalizeJobTypes, recoverExpiredPlatformJobs } = require('../platform-queue');
 const { createQueueWorker } = require('../queue-worker');
 
 test('job enqueue uses a stable idempotency key and returns existing job on conflict', async () => {
@@ -35,6 +35,39 @@ test('job enqueue rejects invalid attempts and unserializable payloads', async (
   await assert.rejects(enqueuePlatformJob(pool, { jobType: 'build', payload: circular }), /JSON serializable/);
 });
 
+
+test('queue claims can be restricted to a validated set of registered job types', async () => {
+  let call;
+  const pool = {
+    async query(sql, params) {
+      call = { sql, params };
+      return { rowCount: 0, rows: [] };
+    }
+  };
+  assert.equal(await claimPlatformJob(pool, 'worker-preflight', ['deployment.preflight']), null);
+  assert.match(call.sql, /job_type = ANY\(\$2::text\[\]\)/);
+  assert.deepEqual(call.params, ['worker-preflight', ['deployment.preflight']]);
+  assert.deepEqual(normalizeJobTypes(['deployment.preflight', 'deployment.preflight']), ['deployment.preflight']);
+  assert.throws(() => normalizeJobTypes([]), /1 to 50/);
+  assert.throws(() => normalizeJobTypes(['invalid type']), /invalid job type/);
+});
+
+test('expired lease recovery is restricted to the worker registered job types', async () => {
+  let call;
+  const pool = {
+    async query(sql, params) {
+      call = { sql, params };
+      return { rowCount: 0, rows: [] };
+    }
+  };
+  assert.deepEqual(
+    await recoverExpiredPlatformJobs(pool, 90, ['deployment.preflight']),
+    []
+  );
+  assert.match(call.sql, /job_type = ANY\(\$2::text\[\]\)/);
+  assert.deepEqual(call.params, [90, ['deployment.preflight']]);
+});
+
 test('Telegram update ingestion acknowledges duplicate updates without inserting twice', async () => {
   let inserted = true;
   const pool = {
@@ -59,10 +92,11 @@ test('Telegram update ingestion acknowledges duplicate updates without inserting
 test('queue worker dispatches claimed jobs and records completion', async () => {
   const events = [];
   let claimed = false;
+  let recoveredTypes;
   const queueApi = {
-    async recoverExpiredPlatformJobs() { return []; },
-    async claimPlatformJob(_pool, workerId) {
-      events.push(['claim', workerId]);
+    async recoverExpiredPlatformJobs(_pool, _leaseSeconds, jobTypes) { recoveredTypes = jobTypes; return []; },
+    async claimPlatformJob(_pool, workerId, jobTypes) {
+      events.push(['claim', workerId, jobTypes]);
       if (claimed) return null;
       claimed = true;
       return { id: 3, job_type: 'test.echo', attempts: 1, payload: { ok: true } };
@@ -80,6 +114,8 @@ test('queue worker dispatches claimed jobs and records completion', async () => 
 
   assert.equal(await worker.processOne(), true);
   assert.equal(await worker.processOne(), false);
+  assert.deepEqual(recoveredTypes, ['test.echo']);
+  assert.deepEqual(events[0], ['claim', 'test-worker', ['test.echo']]);
   assert.deepEqual(events[1], ['complete', 3, { echoed: true }]);
 });
 

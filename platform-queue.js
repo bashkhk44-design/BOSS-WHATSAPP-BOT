@@ -62,32 +62,69 @@ async function enqueuePlatformJob(pool, {
   return { created: false, job: existing.rows[0] };
 }
 
-async function claimPlatformJob(pool, workerId) {
-  if (!workerId || typeof workerId !== 'string') throw new TypeError('workerId is required');
-  const result = await pool.query(`
-    WITH candidate AS (
-      SELECT id
-      FROM platform_jobs
-      WHERE status IN ('queued', 'retrying')
-        AND available_at <= NOW()
-        AND attempts < max_attempts
-      ORDER BY priority DESC, available_at ASC, id ASC
-      FOR UPDATE SKIP LOCKED
-      LIMIT 1
-    )
-    UPDATE platform_jobs AS job
-    SET status = 'processing',
-        attempts = job.attempts + 1,
-        locked_by = $1,
-        locked_at = NOW(),
-        updated_at = NOW()
-    FROM candidate
-    WHERE job.id = candidate.id
-    RETURNING job.*
-  `, [workerId]);
-  return result.rows[0] || null;
+function normalizeJobTypes(jobTypes) {
+  if (jobTypes === undefined || jobTypes === null) return null;
+  if (!Array.isArray(jobTypes) || jobTypes.length < 1 || jobTypes.length > 50) {
+    throw new TypeError('jobTypes must be an array containing 1 to 50 registered job types');
+  }
+  const normalized = [...new Set(jobTypes)];
+  for (const jobType of normalized) {
+    if (typeof jobType !== 'string' || !/^[a-z][a-z0-9_.:-]{1,99}$/i.test(jobType)) {
+      throw new TypeError('jobTypes contains an invalid job type');
+    }
+  }
+  return normalized;
 }
 
+async function claimPlatformJob(pool, workerId, jobTypes) {
+  if (!workerId || typeof workerId !== 'string') throw new TypeError('workerId is required');
+  const allowedTypes = normalizeJobTypes(jobTypes);
+  const result = allowedTypes
+    ? await pool.query(`
+        WITH candidate AS (
+          SELECT id
+          FROM platform_jobs
+          WHERE status IN ('queued', 'retrying')
+            AND available_at <= NOW()
+            AND attempts < max_attempts
+            AND job_type = ANY($2::text[])
+          ORDER BY priority DESC, available_at ASC, id ASC
+          FOR UPDATE SKIP LOCKED
+          LIMIT 1
+        )
+        UPDATE platform_jobs AS job
+        SET status = 'processing',
+            attempts = job.attempts + 1,
+            locked_by = $1,
+            locked_at = NOW(),
+            updated_at = NOW()
+        FROM candidate
+        WHERE job.id = candidate.id
+        RETURNING job.*
+      `, [workerId, allowedTypes])
+    : await pool.query(`
+        WITH candidate AS (
+          SELECT id
+          FROM platform_jobs
+          WHERE status IN ('queued', 'retrying')
+            AND available_at <= NOW()
+            AND attempts < max_attempts
+          ORDER BY priority DESC, available_at ASC, id ASC
+          FOR UPDATE SKIP LOCKED
+          LIMIT 1
+        )
+        UPDATE platform_jobs AS job
+        SET status = 'processing',
+            attempts = job.attempts + 1,
+            locked_by = $1,
+            locked_at = NOW(),
+            updated_at = NOW()
+        FROM candidate
+        WHERE job.id = candidate.id
+        RETURNING job.*
+      `, [workerId]);
+  return result.rows[0] || null;
+}
 async function completePlatformJob(pool, { jobId, workerId, result = {} }) {
   const saved = await pool.query(`
     UPDATE platform_jobs
@@ -126,28 +163,45 @@ async function failPlatformJob(pool, { jobId, workerId, error, retryDelaySeconds
   return saved.rows[0];
 }
 
-async function recoverExpiredPlatformJobs(pool, leaseSeconds = 120) {
+async function recoverExpiredPlatformJobs(pool, leaseSeconds = 120, jobTypes) {
   if (!Number.isInteger(leaseSeconds) || leaseSeconds < 10) {
     throw new RangeError('leaseSeconds must be an integer of at least 10');
   }
-  const result = await pool.query(`
-    UPDATE platform_jobs
-    SET status = CASE WHEN attempts >= max_attempts THEN 'dead_letter' ELSE 'retrying' END,
-        available_at = CASE
-          WHEN attempts >= max_attempts THEN available_at
-          ELSE NOW()
-        END,
-        locked_by = NULL,
-        locked_at = NULL,
-        last_error = LEFT(COALESCE(last_error, 'Worker lease expired'), 4000),
-        updated_at = NOW()
-    WHERE status = 'processing'
-      AND locked_at < NOW() - make_interval(secs => $1::int)
-    RETURNING id, status
-  `, [leaseSeconds]);
+  const allowedTypes = normalizeJobTypes(jobTypes);
+  const result = allowedTypes
+    ? await pool.query(`
+        UPDATE platform_jobs
+        SET status = CASE WHEN attempts >= max_attempts THEN 'dead_letter' ELSE 'retrying' END,
+            available_at = CASE
+              WHEN attempts >= max_attempts THEN available_at
+              ELSE NOW()
+            END,
+            locked_by = NULL,
+            locked_at = NULL,
+            last_error = LEFT(COALESCE(last_error, 'Worker lease expired'), 4000),
+            updated_at = NOW()
+        WHERE status = 'processing'
+          AND locked_at < NOW() - make_interval(secs => $1::int)
+          AND job_type = ANY($2::text[])
+        RETURNING id, status
+      `, [leaseSeconds, allowedTypes])
+    : await pool.query(`
+        UPDATE platform_jobs
+        SET status = CASE WHEN attempts >= max_attempts THEN 'dead_letter' ELSE 'retrying' END,
+            available_at = CASE
+              WHEN attempts >= max_attempts THEN available_at
+              ELSE NOW()
+            END,
+            locked_by = NULL,
+            locked_at = NULL,
+            last_error = LEFT(COALESCE(last_error, 'Worker lease expired'), 4000),
+            updated_at = NOW()
+        WHERE status = 'processing'
+          AND locked_at < NOW() - make_interval(secs => $1::int)
+        RETURNING id, status
+      `, [leaseSeconds]);
   return result.rows;
 }
-
 async function enqueueTelegramUpdate(pool, { botId, update }) {
   if (!Number.isSafeInteger(Number(botId)) || Number(botId) < 1) {
     throw new TypeError('A valid botId is required');
@@ -188,6 +242,7 @@ async function enqueueTelegramUpdate(pool, { botId, update }) {
 
 module.exports = {
   enqueuePlatformJob,
+  normalizeJobTypes,
   claimPlatformJob,
   completePlatformJob,
   failPlatformJob,

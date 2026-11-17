@@ -12,7 +12,8 @@
     "start:worker": "node worker.js",
     "start:webhook": "node webhook.js",
     "start:customer-worker": "node customer-bot-worker.js",
-    "start:monitor": "node runtime-monitor.js"
+    "start:monitor": "node runtime-monitor.js",
+    "start:deployment-preflight-worker": "node deployment-preflight-worker.js"
   },
   "keywords": [],
   "type": "commonjs",
