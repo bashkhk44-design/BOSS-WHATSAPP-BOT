@@ -80,7 +80,7 @@ function createCustomerBotWorker({
         FROM bot_runtime_commands c
         WHERE (
             c.status = 'queued'
-            OR (c.status = 'processing' AND c.claimed_at < NOW() - ($2::int * INTERVAL '1 second'))
+            OR (c.status = 'processing' AND (c.claimed_at IS NULL OR c.claimed_at < NOW() - ($2::int * INTERVAL '1 second')))
           )
           AND (
             c.target_worker_id IS NULL
