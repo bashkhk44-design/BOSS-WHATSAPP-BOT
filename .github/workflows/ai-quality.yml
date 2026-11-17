@@ -159,3 +159,25 @@ jobs:
             END IF;
           END $$;
           SQL
+
+  sandbox-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Pull official Node image and resolve immutable digest
+        run: |
+          docker pull node:22-alpine
+          IMAGE="$(docker image inspect --format '{{index .RepoDigests 0}}' node:22-alpine)"
+          case "$IMAGE" in *@sha256:*) ;; *) echo "Could not resolve immutable image digest"; exit 1 ;; esac
+          echo "BOSS_SANDBOX_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Exercise the real isolated Docker sandbox
+        env:
+          BOSS_SANDBOX_ENABLED: YES
+        run: node --test test/project-sandbox.integration.test.js
