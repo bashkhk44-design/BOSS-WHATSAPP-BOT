@@ -23,18 +23,17 @@ function parseIntegrity(value) {
 }
 
 function verifyTarballIntegrity(filePath, integrity, maxBytes = MAX_TARBALL_BYTES) {
-  const stat = fs.statSync(filePath);
-  if (!stat.isFile() || stat.size <= 0 || stat.size > maxBytes) {
+  const stat = fs.lstatSync(filePath);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.size <= 0 || stat.size > maxBytes) {
     throw new Error('Downloaded package archive is empty or exceeds the size limit.');
   }
   const bytes = fs.readFileSync(filePath);
   const candidates = parseIntegrity(integrity);
-  const matched = candidates.some(({ algorithm, digest }) =>
-    crypto.timingSafeEqual(
-      Buffer.from(crypto.createHash(algorithm).update(bytes).digest('base64')),
-      Buffer.from(digest)
-    )
-  );
+  const matched = candidates.some(({ algorithm, digest }) => {
+    const actual = Buffer.from(crypto.createHash(algorithm).update(bytes).digest('base64'));
+    const expected = Buffer.from(digest);
+    return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+  });
   if (!matched) throw new Error('Downloaded package archive failed its SRI integrity check.');
   return {
     size: stat.size,
@@ -89,6 +88,9 @@ function prepareOfflineDependencyArtifact({
     throw new Error('Offline artifact output must be outside the customer project directory.');
   }
   if (fs.existsSync(outputDir)) throw new Error('outputDir already exists; refusing to overwrite an artifact.');
+  if (!fs.existsSync(resolvedOutputParent) || !fs.statSync(resolvedOutputParent).isDirectory()) {
+    throw new Error('The output parent directory must already exist.');
+  }
 
   if (env.BOSS_NPM_EGRESS_POLICY !== 'registry.npmjs.org-only') {
     throw new Error('Dependency artifact preparation requires the registry-only egress policy.');
@@ -116,10 +118,15 @@ function prepareOfflineDependencyArtifact({
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-offline-deps-'));
   const stagedDir = outputDir + '.staging-' + process.pid;
+  if (fs.existsSync(stagedDir)) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    throw new Error('A staging path already exists; refusing to overwrite it.');
+  }
   let totalBytes = 0;
   try {
     fs.mkdirSync(path.join(tempDir, 'downloads'));
     fs.writeFileSync(path.join(tempDir, '.npmrc-empty'), '', { mode: 0o600 });
+    fs.writeFileSync(path.join(tempDir, 'downloads', '.npmrc-empty'), '', { mode: 0o600 });
     const cleanEnv = {
       PATH: env.PATH || '',
       HOME: tempDir,
@@ -159,18 +166,14 @@ function prepareOfflineDependencyArtifact({
       const verified = verifyTarballIntegrity(downloaded, entry.integrity);
       totalBytes += verified.size;
       if (totalBytes > MAX_TOTAL_BYTES) throw new Error('Total dependency archive size exceeds the preparation limit.');
-      artifacts.push({ lockPath, version: entry.version || null, file: String(index).padStart(4, '0') + '.tgz', ...verified });
+      artifacts.push({ lockPath, version: entry.version || null, file: String(index).padStart(4, '0') + '.tgz', downloadedFilename: filename, ...verified });
     }
 
     fs.mkdirSync(stagedDir, { mode: 0o700 });
     const artifactFiles = path.join(stagedDir, 'packages');
     fs.mkdirSync(artifactFiles, { mode: 0o700 });
-    const downloadedFiles = fs.readdirSync(path.join(tempDir, 'downloads'));
-    if (downloadedFiles.length !== artifacts.length) {
-      throw new Error('Downloaded archive count does not match the validated dependency lock.');
-    }
     artifacts.forEach((artifact, index) => {
-      const source = path.join(tempDir, 'downloads', downloadedFiles[index]);
+      const source = path.join(tempDir, 'downloads', artifact.downloadedFilename);
       const destination = path.join(artifactFiles, artifact.file);
       fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
       const copied = verifyTarballIntegrity(destination, entries[index][1].integrity);
@@ -183,7 +186,7 @@ function prepareOfflineDependencyArtifact({
       lockfileSha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(projectDir, 'package-lock.json'))).digest('hex'),
       packageCount: artifacts.length,
       totalBytes,
-      packages: artifacts
+      packages: artifacts.map(({ downloadedFilename, ...artifact }) => artifact)
     };
     fs.writeFileSync(path.join(stagedDir, 'artifact-manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { mode: 0o444, flag: 'wx' });
     fs.chmodSync(artifactFiles, 0o555);
