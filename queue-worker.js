@@ -42,10 +42,12 @@ function createQueueWorker({
     for (const finish of [...sleepWaiters]) finish();
   }
 
-  async function processOne() {
+  async function processOne({ shouldStop = () => false } = {}) {
     const expired = await queueApi.recoverExpiredPlatformJobs(pool, leaseSeconds, Object.keys(handlers));
     if (expired.length) logger.warn(`Recovered expired jobs: ${expired.length}`);
 
+    // Do not claim another job when shutdown was requested during recovery.
+    if (shouldStop()) return false;
     const job = await queueApi.claimPlatformJob(pool, workerId, Object.keys(handlers));
     if (!job) return false;
 
@@ -122,7 +124,7 @@ function createQueueWorker({
     let consecutiveErrors = 0;
     while (!stopping) {
       try {
-        const processed = await processOne();
+        const processed = await processOne({ shouldStop: () => stopping });
         consecutiveErrors = 0;
         if (!processed && !stopping) {
           await waitOrStop(pollIntervalMs);
