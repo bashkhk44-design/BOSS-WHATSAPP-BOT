@@ -13,7 +13,6 @@ const {
 
 const { getProjectSecretNames } = require('./project-db');
 const { analyzeProject } = require('./gemini-analyst');
-const { designProject } = require('./ai-designer');
 const { buildProject } = require('./ai-builder');
 const { testProjectBundle } = require('./ai-tester');
 const { fixProject } = require('./ai-fixer');
@@ -144,16 +143,21 @@ async function runProjectPipeline({
       analyzeProject({ project })
     );
 
-    const design = await stage('design', () =>
-      designProject({ project, analysis })
-    );
+    const design = designJob.analysis;
+    if (!design?.artifact ||
+        Number(design.artifact.specVersion) !== Number(project.spec_version) ||
+        !design.artifact.sourceFingerprint) {
+      throw new Error('التصميم المعتمد لا يحتوي وثيقة منظمة مطابقة لإصدار المواصفات الحالي. أعد التصميم واعتماده قبل البناء.');
+    }
 
     const build = await stage('build', () =>
-      buildProject({ project, analysis, design })
+      buildProject({ project, analysis, design }),
+      { forceRetry: true }
     );
 
     const test = await stage('test', () =>
-      testProjectBundle({ bundle: build })
+      testProjectBundle({ bundle: build, designArtifact: design.artifact }),
+      { forceRetry: true }
     );
 
     let finalBundle = build;
@@ -178,6 +182,7 @@ async function runProjectPipeline({
 
       if (
         previousPostFixResult?.passed === true &&
+        previousPostFixResult?.designFingerprint === design.artifact.sourceFingerprint &&
         previousFixResult?.bundle
       ) {
         if (onProgress) {
@@ -200,6 +205,7 @@ async function runProjectPipeline({
             project,
             analysis,
             design,
+            designArtifact: design.artifact,
             bundle: build,
             maxAttempts: 2
           }),
@@ -214,9 +220,10 @@ async function runProjectPipeline({
         finalTest = await stage(
           'test_after_fix',
           () => testProjectBundle({
-            bundle: finalBundle
+            bundle: finalBundle,
+            designArtifact: design.artifact
           }),
-          { forceRetry: Boolean(retryPostFixTest) }
+          { forceRetry: true }
         );
       }
     }
