@@ -46,17 +46,19 @@ function normalizeIntakeResult(raw, currentData = {}) {
     throw new Error('AI intake response is missing its next message.');
   }
 
+  const missingItems = Array.isArray(raw.missing_items)
+    ? raw.missing_items
+        .filter(item => typeof item === 'string')
+        .map(item => item.trim().slice(0, 240))
+        .filter(Boolean)
+        .slice(0, 12)
+    : [];
+
   return {
     data: { ...currentData, ...fields },
     assistantMessage,
-    readyForReview: raw.ready_for_review === true,
-    missingItems: Array.isArray(raw.missing_items)
-      ? raw.missing_items
-          .filter(item => typeof item === 'string')
-          .map(item => item.trim().slice(0, 240))
-          .filter(Boolean)
-          .slice(0, 12)
-      : []
+    readyForReview: raw.ready_for_review === true && missingItems.length === 0,
+    missingItems
   };
 }
 
