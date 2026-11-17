@@ -75,7 +75,11 @@ jobs:
             name TEXT NOT NULL,
             username TEXT,
             active BOOLEAN NOT NULL DEFAULT TRUE,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            token_ciphertext TEXT,
+            token_iv TEXT,
+            token_auth_tag TEXT,
+            token_fingerprint TEXT
           );
           INSERT INTO clients (telegram_user_id) VALUES (10001);
           INSERT INTO client_projects (client_id) VALUES (1);
