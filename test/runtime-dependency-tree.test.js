@@ -24,10 +24,10 @@ function fixture(t, packages = [{ name: 'demo', version: '1.0.0', bin: { 'demo-c
     fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
       name: pkg.name, version: pkg.version, bin: pkg.bin
     }));
-    fs.writeFileSync(path.join(packageDir, 'index.js'), 'module.exports = { value: "dependency-ok" };\\n');
+    fs.writeFileSync(path.join(packageDir, 'index.js'), 'module.exports = { value: "dependency-ok" };\n');
     if (pkg.bin) {
       fs.writeFileSync(path.join(packageDir, 'bin', 'cli.js'),
-        "process.stdout.write('bin-ok:' + process.argv.slice(2).join(','));\\n");
+        "process.stdout.write('bin-ok:' + process.argv.slice(2).join(','));\n");
     }
     lockPackages['node_modules/' + pkg.name] = { version: pkg.version };
   }
@@ -63,7 +63,7 @@ test('produces the same tree digest for identical dependency contents', t => {
 test('tree digest changes when a dependency file changes', t => {
   const item = fixture(t, [{ name: 'demo', version: '1.0.0' }]);
   const before = computeDirectoryTreeDigest(item.nodeModulesDir).sha256;
-  fs.appendFileSync(path.join(item.nodeModulesDir, 'demo', 'index.js'), '// changed\\n');
+  fs.appendFileSync(path.join(item.nodeModulesDir, 'demo', 'index.js'), '// changed\n');
   const after = computeDirectoryTreeDigest(item.nodeModulesDir).sha256;
   assert.notEqual(before, after);
 });
