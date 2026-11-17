@@ -424,8 +424,8 @@ async function decideRelease({ releaseId, role, telegramUserId, decision }) {
 
 
 async function authorizeDeployment({ releaseId, telegramUserId }) {
-  if (!/^\\d+$/.test(String(releaseId || '')) ||
-      !/^\\d+$/.test(String(telegramUserId || ''))) {
+  if (!/^\d+$/.test(String(releaseId || '')) ||
+      !/^\d+$/.test(String(telegramUserId || ''))) {
     throw new Error('بيانات تصريح النشر غير صالحة.');
   }
 
