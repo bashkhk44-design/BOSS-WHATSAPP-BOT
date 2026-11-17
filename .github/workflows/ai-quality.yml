@@ -97,6 +97,8 @@ jobs:
         run: node --test test/platform-queue.integration.test.js
       - name: Exercise isolated deployment worker on disposable PostgreSQL
         run: node --test test/deployment-preflight-worker.postgres.integration.test.js
+      - name: Exercise deployment worker lease recovery on disposable PostgreSQL
+        run: node --test test/deployment-preflight-worker.recovery.integration.test.js
       - name: Exercise concurrent distributed bot claims
         run: node --test test/customer-bot-worker.integration.test.js
       - name: Exercise distributed manager bot controls
