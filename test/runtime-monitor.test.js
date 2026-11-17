@@ -13,7 +13,8 @@ test('runtime monitor reports healthy bots and stale or failed bots without chan
       if (/FROM bot_worker_status/.test(sql)) {
         return { rows: [
           { worker_id: 'worker-a', status: 'running', capacity: 25, last_heartbeat_at: new Date(now - 5000) },
-          { worker_id: 'worker-b', status: 'stopped', capacity: 25, last_heartbeat_at: new Date(now - 5000) }
+          { worker_id: 'worker-b', status: 'stopped', capacity: 25, last_heartbeat_at: new Date(now - 5000) },
+          { worker_id: 'worker-c', status: 'running', capacity: 25, last_heartbeat_at: new Date(now - 180000) }
         ] };
       }
       assert.match(sql, /LEFT JOIN bot_runtime_status/);
@@ -37,9 +38,10 @@ test('runtime monitor reports healthy bots and stale or failed bots without chan
   assert.deepEqual(report.issues.map(item => item.reason), [
     'stale_heartbeat', 'error', 'missing_heartbeat'
   ]);
-  assert.equal(report.workers.length, 2);
+  assert.equal(report.workers.length, 3);
   assert.equal(report.workers.find(item => item.workerId === 'worker-a').health, 'healthy');
-  assert.equal(report.workers.find(item => item.workerId === 'worker-b').health, 'stale_or_stopped');
+  assert.equal(report.workers.find(item => item.workerId === 'worker-b').health, 'stopped');
+  assert.equal(report.workers.find(item => item.workerId === 'worker-c').health, 'stale_heartbeat');
 });
 
 test('runtime monitor rejects unsafe polling intervals', () => {
