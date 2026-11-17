@@ -4,7 +4,24 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { validateSandboxImage, validateRuntimeNodeModules, ensureRuntimeMountPoint, hasProjectTests, buildSandboxArgs, runSandboxTests } = require('../project-sandbox');
+const {
+  validateSandboxImage, validateRuntimeNodeModules, ensureRuntimeMountPoint,
+  hasProjectTests, parseTapSummary, verifyAcceptanceTestCases,
+  buildSandboxArgs, runSandboxTests
+} = require('../project-sandbox');
+
+const TAP_PASS = [
+  'TAP version 13',
+  '# Subtest: [BOSS_ACCEPTANCE:main] approved scenario',
+  'ok 1 - [BOSS_ACCEPTANCE:main] approved scenario',
+  '1..1',
+  '# tests 1',
+  '# pass 1',
+  '# fail 0',
+  '# cancelled 0',
+  '# skipped 0',
+  '# todo 0'
+].join('\n');
 const IMAGE = 'node:22-alpine@sha256:' + 'a'.repeat(64);
 
 test('sandbox requires immutable image digest', () => {
@@ -42,11 +59,12 @@ test('runner invokes isolated docker container without passing secrets', () => {
       projectDir: dir, files: [{ path: 'test/app.test.js' }], image: IMAGE,
       spawn: (command, args, options) => {
         invocation = { command, args, options };
-        return { status: 0, stdout: 'tests passed', stderr: '' };
+        return { status: 0, stdout: TAP_PASS, stderr: '' };
       }
     });
     assert.equal(invocation.command, 'docker');
     assert.ok(invocation.args.includes('--network=none'));
+    assert.ok(invocation.args.includes('--test-reporter=tap'));
     assert.equal(invocation.options.env.BOTS_ENCRYPTION_KEY, undefined);
     assert.equal(result.status, 'passed');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -134,7 +152,7 @@ test('runner passes the verified runtime mount without exposing environment secr
         invocation = { command, args, options };
         assert.equal(fs.statSync(path.join(projectDir, 'node_modules')).isDirectory(), true);
         assert.deepEqual(fs.readdirSync(path.join(projectDir, 'node_modules')), []);
-        return { status: 0, stdout: 'tests passed', stderr: '' };
+        return { status: 0, stdout: TAP_PASS, stderr: '' };
       }
     });
     assert.equal(invocation.command, 'docker');
@@ -144,5 +162,75 @@ test('runner passes the verified runtime mount without exposing environment secr
   } finally {
     fs.rmSync(projectDir, { recursive: true, force: true });
     fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+
+test('TAP summary requires a non-empty fully passing test suite', () => {
+  assert.deepEqual(parseTapSummary(TAP_PASS), {
+    tests: 1, passed: 1, failed: 0, valid: true
+  });
+  assert.equal(parseTapSummary('# tests 0\n# pass 0\n# fail 0').valid, false);
+  assert.equal(parseTapSummary('# tests 2\n# pass 1\n# fail 1').valid, false);
+});
+
+test('every approved acceptance marker must appear exactly once as a passing TAP test', () => {
+  const required = [{
+    acceptanceTestId: 'main',
+    marker: '[BOSS_ACCEPTANCE:main]',
+    testName: '[BOSS_ACCEPTANCE:main] approved scenario'
+  }];
+  assert.equal(verifyAcceptanceTestCases(TAP_PASS, required).passed, true);
+  assert.equal(verifyAcceptanceTestCases(TAP_PASS, [
+    {
+      acceptanceTestId: 'missing',
+      marker: '[BOSS_ACCEPTANCE:missing]',
+      testName: '[BOSS_ACCEPTANCE:missing] missing scenario'
+    }
+  ]).passed, false);
+
+  const failed = TAP_PASS.replace(
+    'ok 1 - [BOSS_ACCEPTANCE:main]',
+    'not ok 1 - [BOSS_ACCEPTANCE:main]'
+  );
+  assert.equal(verifyAcceptanceTestCases(failed, required).passed, false);
+});
+
+test('sandbox rejects a zero-test or malformed TAP report even when the process exits zero', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-sandbox-'));
+  try {
+    const result = runSandboxTests({
+      projectDir: dir, files: [{ path: 'test/app.test.js' }], image: IMAGE,
+      spawn: () => ({
+        status: 0,
+        stdout: '# tests 0\n# pass 0\n# fail 0',
+        stderr: ''
+      })
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.passed, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('sandbox rejects a passing suite that omitted an approved acceptance test', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-sandbox-'));
+  try {
+    const result = runSandboxTests({
+      projectDir: dir,
+      files: [{ path: 'test/app.test.js' }],
+      image: IMAGE,
+      requiredAcceptanceTests: [{
+        acceptanceTestId: 'missing',
+        marker: '[BOSS_ACCEPTANCE:missing]',
+        testName: '[BOSS_ACCEPTANCE:missing] missing scenario'
+      }],
+      spawn: () => ({ status: 0, stdout: TAP_PASS, stderr: '' })
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.passed, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

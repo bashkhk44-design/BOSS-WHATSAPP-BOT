@@ -65,6 +65,7 @@ function validateDesignMap({ map, designArtifact, files }) {
     item.designType + ':' + item.designId, item
   ]));
   const seen = new Set();
+  const acceptanceTestCases = [];
 
   for (const mapping of map.mappings) {
     if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) {
@@ -81,12 +82,50 @@ function validateDesignMap({ map, designArtifact, files }) {
       throw new Error('عنصر التصميم غير مربوط بأي ملف: ' + key);
     }
 
+    const allowedMappingKeys = new Set([
+      'designType', 'designId', 'requirementRefs', 'filePaths', 'testCases'
+    ]);
+    for (const field of Object.keys(mapping)) {
+      if (!allowedMappingKeys.has(field)) {
+        throw new Error('حقل غير مسموح في رابط التصميم: ' + field);
+      }
+    }
+
     const paths = [...new Set(mapping.filePaths)];
     for (const filePath of paths) {
       if (typeof filePath !== 'string' || !actualFiles.has(filePath) ||
           filePath === 'boss-design-map.json') {
         throw new Error('مسار ملف غير موجود في خريطة البناء: ' + String(filePath));
       }
+    }
+
+    if (source.designType === 'acceptanceTest') {
+      if (!Array.isArray(mapping.testCases) || mapping.testCases.length !== 1) {
+        throw new Error('اختبار القبول يجب أن يرتبط بحالات اختبار منفذة فعلياً: ' + key);
+      }
+      for (const testCase of mapping.testCases) {
+        const marker = '[BOSS_ACCEPTANCE:' + source.designId + ']';
+        if (!testCase || typeof testCase !== 'object' ||
+            Object.keys(testCase).some(field => !['filePath', 'testName'].includes(field)) ||
+            typeof testCase.filePath !== 'string' ||
+            typeof testCase.testName !== 'string' ||
+            !actualFiles.has(testCase.filePath) ||
+            !paths.includes(testCase.filePath) ||
+            !testCase.filePath.split('/').some(part => part === 'test' || part === 'tests') ||
+            !/\.(?:test|spec)\.(?:js|cjs|mjs)$/.test(testCase.filePath) ||
+            !testCase.testName.startsWith(marker) ||
+            testCase.testName.length > 240) {
+          throw new Error('حالة اختبار القبول غير صالحة أو غير مرتبطة بملف اختبار: ' + key);
+        }
+        acceptanceTestCases.push({
+          acceptanceTestId: source.designId,
+          marker,
+          filePath: testCase.filePath,
+          testName: testCase.testName
+        });
+      }
+    } else if (mapping.testCases !== undefined) {
+      throw new Error('حالات التنفيذ مسموحة لاختبارات القبول فقط: ' + key);
     }
 
     if (!Array.isArray(mapping.requirementRefs)) {
@@ -111,6 +150,7 @@ function validateDesignMap({ map, designArtifact, files }) {
     passed: true,
     mappedElements: expected.length,
     mappedFiles: new Set(map.mappings.flatMap(item => item.filePaths)).size,
+    acceptanceTestCases,
     sourceFingerprint: map.sourceFingerprint
   };
 }

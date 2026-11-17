@@ -112,7 +112,13 @@ function makeDesignArtifact() {
 function addDesignMap(bundle, artifact) {
   const mappings = collectDesignElements(artifact).map(item => ({
     ...item,
-    filePaths: ['test/app.test.js']
+    filePaths: ['test/app.test.js'],
+    ...(item.designType === 'acceptanceTest'
+      ? { testCases: [{
+          filePath: 'test/app.test.js',
+          testName: '[BOSS_ACCEPTANCE:' + item.designId + '] approved scenario'
+        }] }
+      : {})
   }));
   bundle.files.push({
     path: 'boss-design-map.json',
@@ -126,14 +132,16 @@ function addDesignMap(bundle, artifact) {
   return bundle;
 }
 
-test('tester requires a complete design map tied to the approved artifact', async () => {
+test('tester validates the complete design map but does not pass while sandbox is disabled', async () => {
   const artifact = makeDesignArtifact();
   const bundle = addDesignMap(makeBundle(), artifact);
   const result = await testProjectBundle({ bundle, designArtifact: artifact });
 
-  assert.equal(result.passed, true);
+  assert.equal(result.passed, false);
   assert.equal(result.designFingerprint, artifact.sourceFingerprint);
   assert.equal(result.checks.find(item => item.name === 'design-to-file-map').passed, true);
+  assert.equal(result.sandbox.status, 'disabled');
+  assert.equal(result.checks.find(item => item.name === 'sandbox-runtime-tests').passed, false);
 });
 
 test('tester rejects a missing design mapping before the project can pass', async () => {
@@ -148,4 +156,19 @@ test('tester rejects a missing design mapping before the project can pass', asyn
 
   assert.equal(result.passed, false);
   assert.equal(result.checks.find(item => item.name === 'design-to-file-map').passed, false);
+});
+
+
+test('tester fails closed when no approved design artifact is supplied', async () => {
+  const previousEnabled = process.env.BOSS_SANDBOX_ENABLED;
+  delete process.env.BOSS_SANDBOX_ENABLED;
+  try {
+    const result = await testProjectBundle({ bundle: addDesignMap(makeBundle(), makeDesignArtifact()) });
+    assert.equal(result.passed, false);
+    assert.equal(result.checks.find(item => item.name === 'design-to-file-map').passed, false);
+    assert.equal(result.sandbox.status, 'disabled');
+  } finally {
+    if (previousEnabled === undefined) delete process.env.BOSS_SANDBOX_ENABLED;
+    else process.env.BOSS_SANDBOX_ENABLED = previousEnabled;
+  }
 });

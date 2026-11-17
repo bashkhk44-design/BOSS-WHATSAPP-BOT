@@ -123,22 +123,27 @@ async function testProjectBundle({ bundle, dependencyArtifactDir, designArtifact
       return { passed: false, checks, summary: 'ملف package.json غير صالح.' };
     }
 
+    let designContract = null;
     if (designArtifact) {
       try {
         const mapFile = validated.files.find(file => file.path === 'boss-design-map.json');
         if (!mapFile) throw new Error('الحزمة لا تحتوي على boss-design-map.json.');
         const map = JSON.parse(mapFile.content);
-        const designContract = validateDesignMap({
+        designContract = validateDesignMap({
           map,
           designArtifact,
           files: validated.files
         });
         add('design-to-file-map', true,
           designContract.mappedElements + ' design elements mapped to ' +
-          designContract.mappedFiles + ' generated files.');
+          designContract.mappedFiles + ' generated files; ' +
+          designContract.acceptanceTestCases.length + ' executable acceptance cases declared.');
       } catch (error) {
         add('design-to-file-map', false, error.message);
       }
+    } else {
+      add('design-to-file-map', false,
+        'وثيقة التصميم المعتمدة مطلوبة للتحقق من اختبارات القبول.');
     }
 
     const lockFile = validated.files.find(file => file.path === 'package-lock.json');
@@ -249,7 +254,9 @@ async function testProjectBundle({ bundle, dependencyArtifactDir, designArtifact
           sandbox = {
             ...runSandboxTests({
               projectDir: tempDir, files: validated.files,
-              image: process.env.BOSS_SANDBOX_IMAGE, runtimeNodeModulesDir
+              image: process.env.BOSS_SANDBOX_IMAGE,
+              runtimeNodeModulesDir,
+              requiredAcceptanceTests: designContract?.acceptanceTestCases || []
             }),
             dependencyTreeSha256: runtimeTree?.treeSha256 || null
           };
@@ -262,17 +269,21 @@ async function testProjectBundle({ bundle, dependencyArtifactDir, designArtifact
       }
       if (sandbox.status === 'failed') add('sandbox-runtime-tests', false, sandbox.details);
       else if (sandbox.status === 'passed') add('sandbox-runtime-tests', true, sandbox.details);
+      else add('sandbox-runtime-tests', false,
+        sandbox.reason || 'لم يتم تنفيذ اختبارات فعلية داخل بيئة معزولة.');
+    }
+    if (!checks.some(check => check.name === 'sandbox-runtime-tests')) {
+      add('sandbox-runtime-tests', false,
+        'التشغيل المعزول غير مفعّل؛ لا يمكن اعتبار المشروع مجتازاً دون تنفيذ الاختبارات.');
     }
 
     const passed = syntaxPassed && jsonPassed && checks.every(check => check.passed) &&
-      sandbox.status !== 'failed';
+      sandbox.status === 'passed';
     return {
       passed, checks, manifest: manifest || null, sandbox,
       designFingerprint: designArtifact?.sourceFingerprint || null,
       summary: passed
-        ? (sandbox.status === 'passed'
-          ? 'نجحت الفحوص الأساسية واختبارات التشغيل المعزولة.'
-          : 'نجحت الفحوص الأساسية فقط؛ الاختبار المعزول غير مفعّل أو لا توجد ملفات اختبار.')
+        ? 'نجحت الفحوص الأساسية واختبارات القبول المعتمدة داخل البيئة المعزولة.'
         : 'فشلت بعض الاختبارات؛ يجب إصلاح الأخطاء وإعادة الاختبار.'
     };
   } finally {
