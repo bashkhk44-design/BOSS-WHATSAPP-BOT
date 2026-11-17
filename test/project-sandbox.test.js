@@ -190,7 +190,8 @@ test('TAP summary requires a non-empty fully passing test suite', () => {
   assert.equal(parseTapSummary(TAP_FAIL).valid, true);
   assert.equal(parseTapSummary(TAP_FAIL).allPassed, false);
   assert.equal(parseTapSummary('# tests 0\n# pass 0\n# fail 0').valid, false);
-  assert.equal(parseTapSummary('# tests 2\n# pass 1\n# fail 1').valid, false);
+  assert.equal(parseTapSummary('# tests 2\n# pass 1\n# fail 1').valid, true);
+  assert.equal(parseTapSummary('# tests 2\n# pass 1\n# fail 1').allPassed, false);
 });
 
 test('every approved acceptance marker must appear exactly once as a passing TAP test', () => {
