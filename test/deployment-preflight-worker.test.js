@@ -181,7 +181,7 @@ test('handler rejects a job bound to another project or artifact', async () => {
     pool,
     preflight() { assert.fail('preflight must not run'); }
   });
-  await assert.rejects(handler(data.job), /does not match the approved release/);
+  await assert.rejects(handler(data.job), /no longer matches the approved release/);
 });
 
 test('handler blocks stale environment-name configuration without running Docker', async () => {
