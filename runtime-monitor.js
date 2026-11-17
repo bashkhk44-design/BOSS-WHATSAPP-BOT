@@ -35,7 +35,6 @@ function createRuntimeMonitor({
     ]);
     const currentTime = now();
     const issues = [];
-    const workers = new Map();
 
     for (const row of result.rows) {
       const heartbeat = row.last_heartbeat_at ? new Date(row.last_heartbeat_at).getTime() : 0;
@@ -47,13 +46,6 @@ function createRuntimeMonitor({
       else if (row.status === 'error' || row.status === 'conflict' || row.status === 'unauthorized') reason = row.status;
       else if (row.status === 'retrying') reason = 'retrying';
       else if (row.status === 'stopped') reason = 'unexpectedly_stopped';
-
-      if (row.worker_id) {
-        const current = workers.get(row.worker_id) || { workerId: row.worker_id, bots: 0, latestBotHeartbeat: 0 };
-        current.bots += 1;
-        current.latestBotHeartbeat = Math.max(current.latestBotHeartbeat, heartbeat);
-        workers.set(row.worker_id, current);
-      }
 
       if (reason) {
         issues.push({
@@ -79,7 +71,7 @@ function createRuntimeMonitor({
           status: worker.status,
           capacity: worker.capacity,
           lastHeartbeatAt: worker.last_heartbeat_at,
-          health: worker.status === 'running' && fresh ? 'healthy' : 'stale_or_stopped'
+          health: worker.status !== 'running' ? 'stopped' : (fresh ? 'healthy' : 'stale_heartbeat')
         };
       }),
       issues
