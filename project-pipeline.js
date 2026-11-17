@@ -301,6 +301,7 @@ async function runProjectPipeline({
       fixResult,
       deployment,
       releaseCandidate,
+      releaseReport,
       deployed: false,
       summary:
         'اكتمل البناء والاختبار، وتم إنشاء إصدار ثابت بانتظار موافقة العميل ثم المدير. لم يتم النشر.'
