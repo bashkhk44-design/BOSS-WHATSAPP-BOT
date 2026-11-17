@@ -56,6 +56,33 @@ function ensureRuntimeMountPoint(projectDir) {
   return mountPoint;
 }
 
+function parseTapSummary(output) {
+  const tests = Number(output.match(/^# tests (\\d+)$/m)?.[1] || 0);
+  const passed = Number(output.match(/^# pass (\\d+)$/m)?.[1] || 0);
+  const failed = Number(output.match(/^# fail (\\d+)$/m)?.[1] || 0);
+  return { tests, passed, failed, valid: tests > 0 && passed + failed === tests && failed === 0 };
+}
+
+function verifyAcceptanceTestCases(output, cases) {
+  if (!Array.isArray(cases)) throw new Error('Acceptance test case list must be an array.');
+  const lines = String(output || '').split(/\\r?\\n/);
+  const results = [];
+  for (const item of cases) {
+    if (!item || typeof item.marker !== 'string' || !item.marker.startsWith('[BOSS_ACCEPTANCE:')) {
+      throw new Error('Invalid approved acceptance test marker.');
+    }
+    const matching = lines.filter(line =>
+      /^\\s*(?:ok|not ok)\\s+\\d+\\s+-\\s/.test(line) && line.includes(item.marker)
+    );
+    const passed = matching.length === 1 && /^\\s*ok\\s/.test(matching[0]);
+    results.push({ acceptanceTestId: item.acceptanceTestId, passed });
+  }
+  return {
+    passed: results.every(item => item.passed),
+    results
+  };
+}
+
 function buildSandboxArgs({ projectDir, image, timeoutMs = DEFAULT_TIMEOUT_MS, runtimeNodeModulesDir }) {
   if (typeof projectDir !== 'string' || !path.isAbsolute(projectDir) ||
       !fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
@@ -79,14 +106,15 @@ function buildSandboxArgs({ projectDir, image, timeoutMs = DEFAULT_TIMEOUT_MS, r
       '--mount', 'type=bind,src=' + projectDir + ',dst=/workspace,readonly',
       ...(runtimeModules ? ['--mount', 'type=bind,src=' + runtimeModules + ',dst=/workspace/node_modules,readonly'] : []),
       '--workdir', '/workspace',
-      pinnedImage, 'node', '--test'
+      pinnedImage, 'node', '--test', '--test-reporter=tap'
     ]
   };
 }
 
 function runSandboxTests({
   projectDir, files, image = process.env.BOSS_SANDBOX_IMAGE,
-  timeoutMs = DEFAULT_TIMEOUT_MS, runtimeNodeModulesDir, spawn = spawnSync
+  timeoutMs = DEFAULT_TIMEOUT_MS, runtimeNodeModulesDir,
+  requiredAcceptanceTests = [], spawn = spawnSync
 }) {
   if (!hasProjectTests(files || [])) {
     return { status: 'skipped', passed: null, reason: 'No project test files were supplied.' };
@@ -111,10 +139,37 @@ function runSandboxTests({
       details: output.slice(-6000) || String(result.error?.message || 'Sandbox test container failed.')
     };
   }
+
+  const summary = parseTapSummary(output);
+  if (!summary.valid) {
+    return {
+      status: 'failed', passed: false,
+      details: 'Sandbox did not report a non-empty, fully passing TAP test suite. ' +
+        JSON.stringify(summary) + '\\n' + output.slice(-5000)
+    };
+  }
+
+  const acceptance = verifyAcceptanceTestCases(output, requiredAcceptanceTests);
+  if (!acceptance.passed) {
+    return {
+      status: 'failed', passed: false,
+      details: 'One or more approved acceptance tests were not observed as passing: ' +
+        JSON.stringify(acceptance.results) + '\\n' + output.slice(-5000),
+      testSummary: summary,
+      acceptanceTests: acceptance.results
+    };
+  }
+
   return {
     status: 'passed', passed: true,
-    details: output.slice(-6000) || 'Node test suite completed in isolated container.'
+    details: output.slice(-6000) || 'Node test suite completed in isolated container.',
+    testSummary: summary,
+    acceptanceTests: acceptance.results
   };
 }
 
-module.exports = { validateSandboxImage, validateRuntimeNodeModules, ensureRuntimeMountPoint, hasProjectTests, buildSandboxArgs, runSandboxTests };
+module.exports = {
+  validateSandboxImage, validateRuntimeNodeModules, ensureRuntimeMountPoint,
+  hasProjectTests, parseTapSummary, verifyAcceptanceTestCases,
+  buildSandboxArgs, runSandboxTests
+};
