@@ -71,7 +71,7 @@ test('release artifact rejects unsafe paths and malformed files', () => {
 });
 
 test('release artifact enforces bounded storage size', () => {
-  const report = buildReleaseReport({ project, design, testResult, deployment: {} });
+  const report = buildReleaseReport({ project, spec: {}, design, testResult, deployment: {} });
   assert.throws(() => createImmutableReleaseArtifact({
     report, bundle: { files: [{ path: 'large.txt', content: 'x'.repeat(4 * 1024 * 1024) }] }
   }), /4 ميغابايت/);
