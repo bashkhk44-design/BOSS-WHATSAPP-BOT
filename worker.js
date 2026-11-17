@@ -10,7 +10,7 @@ const { createTelegramUpdateHandler } = require('./telegram-update-handler');
 
 function validateWorkerEnvironment(env = process.env) {
   if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-  if (!/^postgres(?:ql)?:\\/\\//i.test(env.DATABASE_URL)) {
+  if (!/^postgres(?:ql)?:\/\/+/i.test(env.DATABASE_URL)) {
     throw new Error('DATABASE_URL must use the PostgreSQL protocol');
   }
   if (!/^[0-9a-fA-F]{64}$/.test(env.BOTS_ENCRYPTION_KEY || '')) {
@@ -53,7 +53,7 @@ async function main() {
   const shutdown = async signal => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`Queue worker stopping: ${signal}`);
+    console.log(\`Queue worker stopping: \${signal}\`);
     await worker.stop();
     await pool.end();
   };
@@ -67,7 +67,7 @@ async function main() {
     process.exitCode = 1;
   }));
 
-  console.log(`Queue worker started: ${worker.workerId}`);
+  console.log(\`Queue worker started: \${worker.workerId}\`);
   await worker.start();
 }
 
