@@ -163,7 +163,7 @@ CREATE INDEX IF NOT EXISTS platform_audit_bot_created_idx
   ON platform_audit_logs(bot_id, created_at DESC);
 
 -- A project-scoped record must always identify its owning client.
-DO $
+DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
@@ -204,7 +204,7 @@ BEGIN
       ADD CONSTRAINT platform_audit_project_requires_client
       CHECK (project_id IS NULL OR client_id IS NOT NULL);
   END IF;
-END $;
+END $$;
 
 INSERT INTO schema_migrations(version, description)
 VALUES ('001_foundation_database', 'Additive multi-bot ownership, runtime, queue, AI usage and audit tables')
