@@ -162,6 +162,37 @@ async function initProjectReleaseDatabase() {
     CREATE INDEX IF NOT EXISTS project_release_project_idx
     ON project_release_candidates(project_id, release_version DESC)
   \`);
+
+  await pool.query(\`
+    CREATE OR REPLACE FUNCTION prevent_project_release_artifact_mutation()
+    RETURNS trigger AS $
+    BEGIN
+      IF NEW.project_id IS DISTINCT FROM OLD.project_id OR
+         NEW.release_version IS DISTINCT FROM OLD.release_version OR
+         NEW.spec_version IS DISTINCT FROM OLD.spec_version OR
+         NEW.design_job_id IS DISTINCT FROM OLD.design_job_id OR
+         NEW.artifact IS DISTINCT FROM OLD.artifact OR
+         NEW.artifact_sha256 IS DISTINCT FROM OLD.artifact_sha256 OR
+         NEW.artifact_bytes IS DISTINCT FROM OLD.artifact_bytes OR
+         NEW.created_by IS DISTINCT FROM OLD.created_by OR
+         NEW.customer_telegram_id IS DISTINCT FROM OLD.customer_telegram_id OR
+         NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+        RAISE EXCEPTION 'Release artifact fields are immutable';
+      END IF;
+      RETURN NEW;
+    END;
+    $ LANGUAGE plpgsql
+  \`);
+
+  await pool.query(\`
+    DROP TRIGGER IF EXISTS project_release_artifact_immutable
+    ON project_release_candidates
+  \`);
+  await pool.query(\`
+    CREATE TRIGGER project_release_artifact_immutable
+    BEFORE UPDATE ON project_release_candidates
+    FOR EACH ROW EXECUTE FUNCTION prevent_project_release_artifact_mutation()
+  \`);
 }
 
 async function createReleaseCandidate({ project, designJobId, adminTelegramId, report, bundle }) {
