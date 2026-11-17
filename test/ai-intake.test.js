@@ -71,3 +71,54 @@ test('AI intake requires a customer-facing next message', () => {
     /missing its next message/
   );
 });
+
+
+test('AI intake readiness is blocked until the customer journey is explicit', () => {
+  const result = normalizeIntakeResult({
+    assistant_message: 'اكتمل الطلب.',
+    fields: {
+      description: 'بوت لمتجر ملابس',
+      features: 'عرض المنتجات واستقبال الطلبات'
+    },
+    missing_items: [],
+    ready_for_review: true
+  });
+
+  assert.equal(result.readyForReview, false);
+  assert.match(result.assistantMessage, /يتفاعل العميل/);
+  assert.deepEqual(result.missingItems, [
+    'تحديد رحلة العميل والأزرار أو توضيح أن التفاعل نصي دون قوائم'
+  ]);
+});
+
+test('AI intake accepts an explicit text-only customer journey', () => {
+  const result = normalizeIntakeResult({
+    assistant_message: 'اكتمل جمع المتطلبات ويمكنك مراجعتها.',
+    fields: {
+      description: 'بوت دعم فني',
+      features: 'الإجابة عن الأسئلة الشائعة',
+      buttons: 'غير مطلوب؛ المحادثة نصية بالكامل'
+    },
+    missing_items: [],
+    ready_for_review: true
+  });
+
+  assert.equal(result.readyForReview, true);
+  assert.deepEqual(result.missingItems, []);
+});
+
+test('AI intake preserves model gaps and adds deterministic required gaps', () => {
+  const result = normalizeIntakeResult({
+    assistant_message: 'ما طريقة العمل؟',
+    fields: { description: 'بوت حجوزات' },
+    missing_items: ['تحديد سياسة الإلغاء'],
+    ready_for_review: false
+  });
+
+  assert.equal(result.readyForReview, false);
+  assert.deepEqual(result.missingItems, [
+    'تحديد سياسة الإلغاء',
+    'تحديد الوظائف الأساسية المطلوبة',
+    'تحديد رحلة العميل والأزرار أو توضيح أن التفاعل نصي دون قوائم'
+  ]);
+});
