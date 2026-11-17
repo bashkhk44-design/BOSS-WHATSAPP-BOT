@@ -92,7 +92,9 @@ async function buildProject({ project, analysis, design }) {
 مهمتك تحويل مواصفات المشروع المعتمدة وتقرير المحلل ووثيقة المصمم إلى حزمة ملفات برمجية كاملة.
 
 قواعد إلزامية:
-- لا تخترع ميزات غير موجودة في المواصفات المعتمدة.
+- لا تخترع ميزات غير موجودة في المواصفات المعتمدة أو وثيقة التصميم الموثقة.
+- designArtifact هو المرجع المنظم للتدفقات والحالات والرسائل والأزرار واختبارات القبول.
+- لا تنفذ أي عنصر لا يحمل مرجعاً إلى متطلب معتمد داخل designArtifact.sourceRequirements.
 - لا تضع مفاتيح API أو كلمات مرور أو أسراراً داخل الملفات.
 - استخدم متغيرات البيئة للإعدادات السرية.
 - لا تدّعِ أن المشروع اختُبر أو نُشر.
@@ -137,7 +139,8 @@ async function buildProject({ project, analysis, design }) {
       specification: project.spec
     },
     analystReport: analysis.text,
-    designDocument: design.text
+    designDocument: design.text,
+    designArtifact: design.artifact || null
   });
 
   const response = await generateText({ systemInstruction, input, stage:'build', timeoutMs:180000 });
