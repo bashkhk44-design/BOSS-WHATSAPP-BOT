@@ -32,8 +32,8 @@ test('runtime monitor reports healthy bots and stale or failed bots without chan
     'stale_heartbeat', 'error', 'missing_heartbeat'
   ]);
   assert.equal(report.workers.length, 2);
-  assert.equal(report.workers.find(item => item.workerId === 'worker-a').stale, false);
-  assert.equal(report.workers.find(item => item.workerId === 'worker-b').stale, false);
+  assert.equal(report.workers.find(item => item.workerId === 'worker-a').health, 'not_independently_measured');
+  assert.equal(report.workers.find(item => item.workerId === 'worker-b').heartbeatSource, 'bot_runtime_status');
 });
 
 test('runtime monitor rejects unsafe polling intervals', () => {
