@@ -164,7 +164,7 @@ async function runProjectPipeline({
     let finalTest = test;
     let fixResult = null;
 
-    if (!test.passed) {
+    if (!test.passed && test.sandbox?.status === 'passed') {
       const previousFix = await getLatestCompletedProjectAiJob({
         projectId,
         jobType: 'fix'
