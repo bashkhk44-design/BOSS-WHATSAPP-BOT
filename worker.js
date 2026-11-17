@@ -23,7 +23,7 @@ function validateWorkerEnvironment(env = process.env) {
   for (const [name, minimum, maximum] of integerSettings) {
     const raw = env[name];
     if (raw === undefined) continue;
-    if (!/^\\d+$/.test(String(raw))) {
+    if (!/^\d+$/.test(String(raw))) {
       throw new Error(name + ' must be an integer between ' + minimum + ' and ' + maximum);
     }
     const value = Number(raw);
