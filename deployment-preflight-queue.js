@@ -33,6 +33,9 @@ function validateReleaseAndAuthorization({ release, authorization, requestedBy }
   if (!/^\d+$/.test(String(requestedBy || ''))) {
     throw new Error('A valid Telegram manager ID is required.');
   }
+  if (String(requestedBy) !== String(authorization.authorized_by)) {
+    throw new Error('Only the manager who authorized this release can request its preflight.');
+  }
 }
 
 async function enqueueDeploymentPreflight({
