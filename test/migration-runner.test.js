@@ -34,7 +34,7 @@ test('migration runner applies pending files once and skips recorded versions', 
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   fs.writeFileSync(
     path.join(directory, '001_test_foundation.sql'),
-    'BEGIN; SELECT 1; COMMIT;'
+    '-- migration header comment\\n-- safe fixture\\nBEGIN; SELECT 1; COMMIT;'
   );
 
   const mock = makePool();
