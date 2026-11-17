@@ -1,10 +1,10 @@
 {
   "name": "boss-bot-master",
   "version": "1.0.0",
-  "description": "",
+  "description": "BOSS BOT MASTER - AI-assisted bot project platform",
   "main": "host.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test",
     "start": "node host.js",
     "start:cloud": "node host.js"
   },

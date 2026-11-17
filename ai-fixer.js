@@ -13,19 +13,18 @@ function parseJson(text) {
   return JSON.parse(cleaned);
 }
 
+function originalFilesPreserved(originalBundle, candidateBundle) {
+  const candidatePaths = new Set(candidateBundle.files.map(file => file.path));
+  return originalBundle.files.every(file => candidatePaths.has(file.path));
+}
+
 function assertOriginalFilesPreserved(originalBundle, repairedBundle) {
-  const repairedPaths = new Set(
-    repairedBundle.files.map(file => file.path)
-  );
-
-  const missing = originalBundle.files
-    .map(file => file.path)
-    .filter(filePath => !repairedPaths.has(filePath));
-
-  if (missing.length) {
-    throw new Error(
-      'AI FIXER حاول حذف ملفات أصلية: ' + missing.join(', ')
-    );
+  if (!originalFilesPreserved(originalBundle, repairedBundle)) {
+    const repairedPaths = new Set(repairedBundle.files.map(file => file.path));
+    const missing = originalBundle.files
+      .map(file => file.path)
+      .filter(filePath => !repairedPaths.has(filePath));
+    throw new Error('AI FIXER حاول حذف ملفات أصلية: ' + missing.join(', '));
   }
 }
 
@@ -41,7 +40,6 @@ async function fixProject({
   }
 
   const originalBundle = validateBundle(bundle);
-  const originalSnapshot = JSON.stringify(originalBundle);
   let currentBundle = originalBundle;
 
   const limit = Math.max(1, Math.min(2, Number(maxAttempts) || 2));
@@ -88,7 +86,7 @@ async function fixProject({
         bundle: currentBundle,
         attempts,
         testResult,
-        originalPreserved: JSON.stringify(originalBundle) === originalSnapshot,
+        originalPreserved: originalFilesPreserved(originalBundle, currentBundle),
         summary: 'اجتازت الحزمة الاختبارات.'
       };
     }
@@ -148,7 +146,7 @@ async function fixProject({
     bundle: currentBundle,
     attempts,
     testResult: finalTest,
-    originalPreserved: JSON.stringify(originalBundle) === originalSnapshot,
+    originalPreserved: originalFilesPreserved(originalBundle, currentBundle),
     summary: finalTest.passed
       ? 'تم الإصلاح واجتازت الحزمة الاختبارات.'
       : 'لم تنجح الاختبارات بعد ' + limit + ' محاولة إصلاح.'
