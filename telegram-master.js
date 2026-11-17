@@ -145,7 +145,7 @@ async function showBots(ctx) {
   const bots = await getBots();
   if (!bots.length) return ctx.reply('🤖 لا توجد بوتات مسجلة حالياً.');
 
-  await ctx.reply('🤖 إدارة البوتات\\nاختر إجراءً لكل بوت. الحالة التشغيلية أدناه من عامل التشغيل، وليست من حقل التفعيل فقط.');
+  await ctx.reply('🤖 إدارة البوتات\nاختر إجراءً لكل بوت. الحالة التشغيلية أدناه من عامل التشغيل، وليست من حقل التفعيل فقط.');
   for (const b of bots) {
     const runtimeStatus = getBotRuntimeStatus(b.id);
     const statusLabels = {
@@ -165,10 +165,10 @@ async function showBots(ctx) {
       keyboard.text('▶️ تشغيل', 'bot:start:' + b.id);
     }
     await ctx.reply(
-      '🤖 ' + b.name + '\\n' +
-      'المعرف: ' + b.id + '\\n' +
-      'الحساب: ' + (b.username ? '@' + b.username : 'غير معروف') + '\\n' +
-      'التفعيل: ' + (b.active ? 'مفعّل' : 'معطّل') + '\\n' +
+      '🤖 ' + b.name + '\n' +
+      'المعرف: ' + b.id + '\n' +
+      'الحساب: ' + (b.username ? '@' + b.username : 'غير معروف') + '\n' +
+      'التفعيل: ' + (b.active ? 'مفعّل' : 'معطّل') + '\n' +
       'التشغيل: ' + (statusLabels[runtimeStatus] || runtimeStatus),
       { reply_markup: keyboard }
     );
@@ -180,11 +180,11 @@ async function showStats(ctx) {
   const active = bots.filter(b => b.active).length;
   const running = getRunningBotCount();
   return ctx.reply(
-    '📊 إحصائيات BOSS BOT MASTER\\n\\n' +
-    'إجمالي البوتات: ' + bots.length + '\\n' +
-    'مفعّلة في قاعدة البيانات: ' + active + '\\n' +
-    'تعمل فعلياً في هذه العملية: ' + running + '\\n' +
-    'المتوقفة أو غير المحمّلة: ' + Math.max(0, active - running) + '\\n' +
+    '📊 إحصائيات BOSS BOT MASTER\n\n' +
+    'إجمالي البوتات: ' + bots.length + '\n' +
+    'مفعّلة في قاعدة البيانات: ' + active + '\n' +
+    'تعمل فعلياً في هذه العملية: ' + running + '\n' +
+    'المتوقفة أو غير المحمّلة: ' + Math.max(0, active - running) + '\n' +
     'الحد التشغيلي الحالي: 100 بوت'
   );
 }
@@ -220,7 +220,7 @@ bot.command('stats', async (ctx) => {
   await showStats(ctx);
 });
 
-bot.callbackQuery(/^bot:(start|stop|restart):(\\d+)$/, async (ctx) => {
+bot.callbackQuery(/^bot:(start|stop|restart):(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   const action = ctx.match[1];
   const botId = Number(ctx.match[2]);
