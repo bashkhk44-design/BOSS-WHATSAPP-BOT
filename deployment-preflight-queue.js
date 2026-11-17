@@ -140,6 +140,15 @@ async function getLatestDeploymentPreflightJob({ pool, releaseId, projectId }) {
   return result.rows[0] || null;
 }
 
+const BLOCKER_LABELS = Object.freeze({
+  deployment_target_missing_or_unconfirmed: 'بيانات وجهة النشر غير محددة أو غير مؤكدة.',
+  separate_execution_approval_missing_or_mismatched: 'الموافقة اليدوية المنفصلة على التنفيذ غير موجودة أو لا تطابق الإصدار.',
+  release_test_evidence_incomplete: 'أدلة اختبارات الإصدار غير مكتملة.',
+  deployment_authorization_missing_or_mismatched: 'تصريح النشر المستقل غير صالح أو غير مطابق.',
+  release_not_approved_or_invalid: 'الإصدار غير معتمد أو بياناته غير صالحة.',
+  project_environment_names_changed_after_the_preflight_was_queued: 'تغيرت أسماء متغيرات البيئة بعد طلب الفحص.'
+});
+
 const CHECK_LABELS = Object.freeze({
   artifact_integrity: 'سلامة الحزمة',
   target_configured: 'وجهة النشر',
@@ -193,7 +202,7 @@ function formatDeploymentPreflightJob(job, release) {
     }
     if (Array.isArray(result.blockers) && result.blockers.length) {
       lines.push('', 'ما زال يمنع الجاهزية النهائية:');
-      for (const blocker of result.blockers.slice(0, 8)) lines.push('• ' + blocker);
+      for (const blocker of result.blockers.slice(0, 8)) lines.push('• ' + (BLOCKER_LABELS[blocker] || blocker));
     }
     lines.push(
       '',
