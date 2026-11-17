@@ -13,7 +13,7 @@ test('executes a project test inside the network-disabled Docker sandbox', { ski
       "const test = require('node:test');",
       "const assert = require('node:assert/strict');",
       "test('isolated runtime smoke test', () => assert.equal(2 + 2, 4));"
-    ].join('\\n'));
+    ].join('\n'));
     fs.chmodSync(projectDir, 0o755);
     const result = runSandboxTests({
       projectDir,
