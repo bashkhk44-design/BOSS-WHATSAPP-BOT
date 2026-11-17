@@ -3,6 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { createHealthServer } = require('../health-server');
 
 function getJson(port, pathname) {
@@ -73,4 +76,32 @@ test('readiness becomes unavailable during graceful shutdown without exposing se
   assert.equal(ready.status, 503);
   assert.equal(ready.body.status, 'not_ready');
   assert.equal(JSON.stringify(ready.body).includes('must-not-be-exposed'), false);
+});
+
+test('critical runtime JavaScript files pass Node syntax validation', () => {
+  const root = path.join(__dirname, '..');
+  const files = [
+    'host.js',
+    'health-server.js',
+    'telegram-master.js',
+    'intake-bot.js',
+    'bot-runtime.js',
+    'db.js',
+    'ai-router.js',
+    'ai-intake.js'
+  ];
+
+  for (const file of files) {
+    const absolute = path.join(root, file);
+    assert.equal(fs.existsSync(absolute), true, file + ' must exist');
+    const result = spawnSync(process.execPath, ['--check', absolute], {
+      encoding: 'utf8',
+      timeout: 15000
+    });
+    assert.equal(
+      result.status,
+      0,
+      file + ' syntax error: ' + (result.stderr || result.error?.message || '')
+    );
+  }
 });
