@@ -731,7 +731,7 @@ bot.callbackQuery(/^project:release:customer:(approved|rejected):(\d+)$/, async 
           adminId,
           '📋 موافقة العميل وصلت للإصدار R' + decision.release_version +
           ' للمشروع #' + decision.project_id +
-          '.\\nيمكنك مراجعة الإصدار واعتماده أو رفضه.',
+          '.\nيمكنك مراجعة الإصدار واعتماده أو رفضه.',
           { reply_markup: new InlineKeyboard()
             .text('✅ اعتماد المدير', 'project:release:manager:approved:' + decision.id)
             .row()
@@ -765,7 +765,7 @@ bot.callbackQuery(/^project:release:manager:(approved|rejected):(\d+)$/, async (
     await ctx.reply(
       (decision.status === 'approved' ? '✅ اكتمل اعتماد الإصدار ' : '❌ تم رفض الإصدار ') +
       'R' + decision.release_version + ' للمشروع #' + decision.project_id +
-      '.\\nحالة النشر: لم يتم النشر، ويتطلب النشر موافقة وإجراءً منفصلين.'
+      '.\nحالة النشر: لم يتم النشر، ويتطلب النشر موافقة وإجراءً منفصلين.'
     );
     try {
       await ctx.api.sendMessage(
@@ -773,7 +773,7 @@ bot.callbackQuery(/^project:release:manager:(approved|rejected):(\d+)$/, async (
         (decision.status === 'approved'
           ? '✅ اعتمد المدير إصدارك R' + decision.release_version + '.'
           : '❌ رفض المدير إصدار R' + decision.release_version + '.') +
-        '\\nلم يتم تنفيذ أي نشر تلقائي.'
+        '\nلم يتم تنفيذ أي نشر تلقائي.'
       );
     } catch (notifyError) {
       console.error('RELEASE CUSTOMER FINAL NOTIFICATION ERROR:', notifyError.message);
