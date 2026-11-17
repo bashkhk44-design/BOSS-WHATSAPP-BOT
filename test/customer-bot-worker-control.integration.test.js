@@ -287,7 +287,7 @@ test('worker does not mark automatic recovery successful unless bot becomes heal
     assert.equal(result.rows[0].status, 'failed');
     assert.match(result.rows[0].error_message, /did not reach a healthy running state/);
     assert.ok(result.rows[0].finished_at);
-    assert.equal(stopped, 1);
+    assert.equal(stopped, 2); // stop the old instance, then stop the unhealthy replacement
   } finally {
     if (botId) await pool.query('DELETE FROM telegram_bots WHERE id = $1', [botId]);
     await pool.end();
