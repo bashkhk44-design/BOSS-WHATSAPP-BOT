@@ -727,15 +727,16 @@ bot.callbackQuery(/^project:release:customer:(approved|rejected):(\d+)$/, async 
     );
     if (decision.status === 'awaiting_manager') {
       try {
+        const approvedRelease = await getReleaseCandidate(decision.id);
         await ctx.api.sendMessage(
           adminId,
           '📋 موافقة العميل وصلت للإصدار R' + decision.release_version +
           ' للمشروع #' + decision.project_id +
-          '.\nالمواصفات: ' + JSON.stringify((await getReleaseCandidate(decision.id)).artifact.report.approvals.customerSpec.details).slice(0, 700) +
-          '\nالاختبارات: ' + (await getReleaseCandidate(decision.id)).artifact.report.tests.summary.passed + '/' +
-            (await getReleaseCandidate(decision.id)).artifact.report.tests.summary.tests +
-          '\nالمخاطر: ' + (await getReleaseCandidate(decision.id)).artifact.report.risks.length +
-          '\nبصمة SHA-256: ' + (await getReleaseCandidate(decision.id)).artifact_sha256 +
+          '.\nالمواصفات: ' + JSON.stringify(approvedRelease.artifact.report.approvals.customerSpec.details).slice(0, 700) +
+          '\nالاختبارات: ' + approvedRelease.artifact.report.tests.summary.passed + '/' +
+            approvedRelease.artifact.report.tests.summary.tests +
+          '\nالمخاطر: ' + approvedRelease.artifact.report.risks.length +
+          '\nبصمة SHA-256: ' + approvedRelease.artifact_sha256 +
           '\nيمكنك مراجعة الإصدار واعتماده أو رفضه.',
           { reply_markup: new InlineKeyboard()
             .text('✅ اعتماد المدير', 'project:release:manager:approved:' + decision.id)
