@@ -23,6 +23,9 @@ function validatePlatformWebhookEnvironment(env = process.env) {
       throw new Error(name + ' must be 32-256 URL-safe characters');
     }
   }
+  if (env.MASTER_WEBHOOK_SECRET === env.INTAKE_WEBHOOK_SECRET) {
+    throw new Error('Master and intake webhook secrets must be different');
+  }
   return true;
 }
 
@@ -81,7 +84,10 @@ function createPlatformWebhookServer({
       let size = 0;
       for await (const chunk of req) {
         size += chunk.length;
-        if (size > maxBodyBytes) return sendJson(res, 413, { ok: false, error: 'payload_too_large' });
+        if (size > maxBodyBytes) {
+          req.resume();
+          return sendJson(res, 413, { ok: false, error: 'payload_too_large' });
+        }
         chunks.push(chunk);
       }
 
