@@ -97,9 +97,11 @@ The Worker must not receive production tokens, production database credentials, 
 - PR 78: injectable intake runtime and no-polling `handleUpdate` adapter — merged.
 - PR 79: injectable master runtime and no-polling `handleUpdate` adapter — merged.
 - PR 80: atomic platform inbox + queue-job enqueue, distinct master/intake job types, and worker-lease-fenced dispatch handler with unit and PostgreSQL integration tests — merged.
-- PR 81 (in progress): opt-in Node worker wiring for the two system job types. It requires `PLATFORM_BOT_WEBHOOK_MODE=enabled` plus distinct master/intake tokens and an admin ID; the default remains disabled.
-- None of these changes configures Telegram webhook delivery or changes production tokens.
+- PR 81: opt-in Node worker wiring for the two system job types. It requires `PLATFORM_BOT_WEBHOOK_MODE=enabled` plus distinct master/intake tokens and an admin ID; the default remains disabled — merged.
+- PR 83: separate Node ingress routes and independent master/intake webhook secrets — merged.
+- Current Cloudflare Worker source in `cloudflare/worker.mjs` validates platform webhook requests and enqueues via Hyperdrive using a short-lived `pg.Client`. It has unit/source-boundary tests, but no real Wrangler bundle or live Hyperdrive test yet.
+- None of these changes configures Telegram webhooks or changes production tokens.
 
 ## Next coding slice
 
-Add a platform webhook ingress with separate `master` and `intake` route identities and independent secret resolvers. Prove secret isolation, request validation, durable enqueue, and end-to-end queue dispatch using staging-only tokens. Only after those gates should the Cloudflare Worker adapter and staging bundle test be added. Do not change production webhooks, tokens, databases, or deployments.
+Add a real Wrangler dry-run/bundle test, then verify a newly created Hyperdrive binding points only to the dedicated empty Neon staging database. After explicit staging setup, run end-to-end tests with staging-only tokens/secrets and the Node queue worker. Add a deploy workflow scoped to `cloudflare-staging` only after those gates pass. Do not change production webhooks, tokens, databases, or deployments.
