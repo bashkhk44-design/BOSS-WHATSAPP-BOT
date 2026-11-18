@@ -30,6 +30,25 @@ server.on('error', (err) => {
   process.exitCode = 1;
 });
 
-const { createMasterRuntime } = require('./telegram-master');
-const telegramRuntime = createMasterRuntime();
-void telegramRuntime.start();
+async function boot() {
+  const { pool } = require('./db');
+  const { createMigrationRunner } = require('./migrations/runner');
+
+  try {
+    const migrationRunner = createMigrationRunner({ pool });
+    const migrationResult = await migrationRunner.run();
+    console.log('Database migrations complete:', JSON.stringify(migrationResult));
+
+    const { createMasterRuntime } = require('./telegram-master');
+    const telegramRuntime = createMasterRuntime();
+    await telegramRuntime.start();
+  } catch (error) {
+    console.error('HOST STARTUP FAILED:', error.message);
+    runtimeReady = false;
+    server.close(() => {
+      void pool.end().finally(() => process.exit(1));
+    });
+  }
+}
+
+void boot();
