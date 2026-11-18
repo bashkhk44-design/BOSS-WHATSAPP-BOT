@@ -1,0 +1,48 @@
+name: Deploy Cloudflare staging Worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/cloudflare-staging-deploy.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    environment: cloudflare-staging
+    steps:
+      - name: Check out the approved staging source only
+        uses: actions/checkout@v4
+        with:
+          ref: cloudflare-webhook-prep
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Deploy staging Worker only
+        run: npx --yes wrangler@latest deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify staging Worker and Neon connection
+        run: |
+          set -euo pipefail
+          WORKER_URL="https://boss-bot-master-staging.bashkhk44.workers.dev"
+          echo "Checking Worker health..."
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 --retry-all-errors "$WORKER_URL/healthz"
+          echo
+          echo "Checking staging Neon database..."
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 --retry-all-errors "$WORKER_URL/db-healthz"
+          echo
