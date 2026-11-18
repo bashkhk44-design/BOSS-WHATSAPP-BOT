@@ -40,6 +40,9 @@ jobs:
           grep -Fq 'ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"' scripts/termux-worker.sh
       - name: Run AI quality tests
         run: npm test
+      - name: Bundle Cloudflare Worker without deploying
+        if: matrix.node-version == 24
+        run: npx --yes wrangler@4 deploy --dry-run --config cloudflare/wrangler.bundle-test.jsonc --outdir /tmp/boss-platform-worker-bundle
 
   database-migration:
     runs-on: ubuntu-latest
