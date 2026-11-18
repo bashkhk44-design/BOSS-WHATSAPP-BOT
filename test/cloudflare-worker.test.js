@@ -3,11 +3,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = globalThis.crypto;
-const {
-  createWorkerHandler,
-  deriveCustomerWebhookSecret,
-  parseRoute
-} = require('../cloudflare/worker.mjs');
+let workerModule;
+test.before(async () => {
+  workerModule = await import('../cloudflare/worker.mjs');
+});
 
 const encryptionKey = 'ab'.repeat(32);
 const platformSecrets = {
@@ -67,6 +66,7 @@ function makeRequest(path, { method = 'POST', secret, body = { update_id: 10 }, 
 }
 
 test('Cloudflare Worker routes only known webhook identities and numeric customer IDs', () => {
+  const { parseRoute } = workerModule;
   assert.deepEqual(parseRoute('/telegram/platform/master'), { kind: 'platform', identity: 'master' });
   assert.deepEqual(parseRoute('/telegram/platform/intake'), { kind: 'platform', identity: 'intake' });
   assert.deepEqual(parseRoute('/telegram/webhook/42'), { kind: 'customer', botId: 42 });
@@ -75,6 +75,7 @@ test('Cloudflare Worker routes only known webhook identities and numeric custome
 });
 
 test('Cloudflare Worker health endpoints do not expose configuration', async () => {
+  const { createWorkerHandler } = workerModule;
   const handler = createWorkerHandler({ ClientCtor: fakeClientFactory() });
   const response = await handler(new Request('https://worker.example/healthz'), {});
   assert.equal(response.status, 200);
@@ -82,6 +83,7 @@ test('Cloudflare Worker health endpoints do not expose configuration', async () 
 });
 
 test('Cloudflare Worker authenticates master and intake independently before enqueue', async () => {
+  const { createWorkerHandler } = workerModule;
   const calls = [];
   const queueApi = {
     async enqueuePlatformBotUpdate(_client, args) {
@@ -111,19 +113,21 @@ test('Cloudflare Worker authenticates master and intake independently before enq
 });
 
 test('Cloudflare Worker decrypts customer tokens and preserves the existing derived webhook secret', async () => {
+  const { createWorkerHandler, deriveCustomerWebhookSecret } = workerModule;
   const token = '123456:staging-customer-token';
   const encrypted = await encryptToken(token);
   const expectedSecret = await deriveCustomerWebhookSecret(42, token, encryptionKey, crypto);
-  const calls = [];
+  const databaseCalls = [];
+  const queueCalls = [];
   const queueApi = {
     async enqueueTelegramUpdate(_client, args) {
-      calls.push(args);
+      queueCalls.push(args);
       return { duplicate: false };
     },
     async enqueuePlatformBotUpdate() { throw new Error('platform route must not be used'); }
   };
   const handler = createWorkerHandler({
-    ClientCtor: fakeClientFactory({ rows: [{ id: 42, ...encrypted }], rowCount: 1, calls }),
+    ClientCtor: fakeClientFactory({ rows: [{ id: 42, ...encrypted }], rowCount: 1, calls: databaseCalls }),
     queueApi,
     logger: { error() {} }
   });
@@ -136,10 +140,11 @@ test('Cloudflare Worker decrypts customer tokens and preserves the existing deri
     body: { update_id: 91, message: { text: '/start' } }
   }), env);
   assert.equal(response.status, 200);
-  assert.deepEqual(calls[0], { botId: 42, update: { update_id: 91, message: { text: '/start' } } });
+  assert.deepEqual(queueCalls[0], { botId: 42, update: { update_id: 91, message: { text: '/start' } } });
 });
 
 test('Cloudflare Worker rejects oversized, malformed, and unauthenticated requests', async () => {
+  const { createWorkerHandler } = workerModule;
   const handler = createWorkerHandler({
     ClientCtor: fakeClientFactory(),
     queueApi: { enqueuePlatformBotUpdate: async () => { throw new Error('must not enqueue'); } },
