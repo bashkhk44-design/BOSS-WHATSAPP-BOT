@@ -98,8 +98,9 @@ jobs:
               }
 
               const tables = await pool.query(`
-                SELECT name, to_regclass('public.' || name) IS NOT NULL AS exists
-                FROM unnest($1::text[]) AS name
+                SELECT table_name,
+                       to_regclass('public.' || table_name) IS NOT NULL AS exists
+                FROM unnest($1::text[]) AS t(table_name)
               `, [[
                 'clients',
                 'client_projects',
@@ -113,7 +114,7 @@ jobs:
 
               const missingTables = tables.rows
                 .filter(row => !row.exists)
-                .map(row => row.name);
+                .map(row => row.table_name);
               if (missingTables.length) {
                 throw new Error('Missing required tables: ' + missingTables.join(', '));
               }
