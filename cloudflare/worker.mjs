@@ -146,7 +146,7 @@ export function createPlatformWebhookHandler({
     }
 
     const connectionString = env.HYPERDRIVE?.connectionString;
-    if (typeof connectionString !== 'string' || !connectionString.startsWith('postgres')) {
+    if (typeof connectionString !== 'string' || !/^postgres(?:ql)?:\\/\\//i.test(connectionString)) {
       return jsonResponse(503, { ok: false, error: 'temporarily_unavailable' });
     }
 
