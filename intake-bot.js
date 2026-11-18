@@ -1,10 +1,18 @@
 'use strict';
 
-function createIntakeRuntime() {
-  const { Bot, InlineKeyboard } = require('grammy');
-  const { pool } = require('./db');
+function createIntakeRuntime({ dependencies = null, createBot = null } = {}) {
+  const runtimeDependencies = dependencies || (() => {
+    const { Bot, InlineKeyboard } = require('grammy');
+    const { pool } = require('./db');
+    const projectDb = require('./project-db');
+    const aiIntake = require('./ai-intake');
+    return { Bot, InlineKeyboard, pool, ...projectDb, ...aiIntake };
+  })();
 
   const {
+    Bot,
+    InlineKeyboard,
+    pool,
     createClientProjectWithSession,
     setProjectBusinessType,
     updateProjectName,
@@ -14,15 +22,30 @@ function createIntakeRuntime() {
     getProjectConversation,
     saveIntakeSession,
     deleteIntakeSession,
-    approveProjectSpec
-  } = require('./project-db');
+    approveProjectSpec,
+    processIntakeTurn,
+    advanceFallbackIntake
+  } = runtimeDependencies;
 
-  const { processIntakeTurn, advanceFallbackIntake } = require('./ai-intake');
+  for (const name of [
+    'Bot', 'InlineKeyboard', 'pool', 'createClientProjectWithSession',
+    'setProjectBusinessType', 'updateProjectName', 'updateClientProjectStatus',
+    'addConversationMessage', 'getIntakeSession', 'getProjectConversation',
+    'saveIntakeSession', 'deleteIntakeSession', 'approveProjectSpec',
+    'processIntakeTurn', 'advanceFallbackIntake'
+  ]) {
+    if (!runtimeDependencies[name]) {
+      throw new TypeError('Missing intake runtime dependency: ' + name);
+    }
+  }
+
+  const botFactory = createBot || ((token) => new Bot(token, { client: { timeoutSeconds: 45 } }));
 
   let intakeBot = null;
   let pollingPromise = null;
   let intakeReadyPromise = null;
   let intakeStopping = false;
+  let intakeMode = null;
 
 
 const TYPES = [
@@ -283,8 +306,36 @@ async function beginProject(ctx) {
   );
 }
 
-async function startIntakeBot(notifyAdmin = null, onFatal = null) {
-  const token = process.env.INTAKE_BOT_TOKEN;
+function createWebhookAdapter(bot) {
+  return {
+    handleUpdate(update) {
+      if (!update || typeof update !== 'object' || Array.isArray(update) ||
+          !Number.isSafeInteger(update.update_id) || update.update_id < 0) {
+        throw new TypeError('A valid Telegram update is required');
+      }
+      if (typeof bot.handleUpdate !== 'function') {
+        throw new TypeError('The configured intake bot does not support handleUpdate');
+      }
+      return bot.handleUpdate(update);
+    },
+    async stop() {
+      if (intakeBot === bot && intakeMode === 'webhook') {
+        intakeBot = null;
+        pollingPromise = null;
+        intakeReadyPromise = null;
+        intakeMode = null;
+        intakeStopping = false;
+      }
+    }
+  };
+}
+
+async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) {
+  const mode = options.mode === 'webhook' ? 'webhook' : 'polling';
+  if (options.mode !== undefined && !['polling', 'webhook'].includes(options.mode)) {
+    throw new TypeError('Intake runtime mode must be polling or webhook');
+  }
+  const token = options.token || process.env.INTAKE_BOT_TOKEN;
 
   if (!token) {
     console.log('Intake bot disabled: INTAKE_BOT_TOKEN is not configured');
@@ -292,11 +343,15 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
   }
 
   if (intakeBot) {
-    if (intakeReadyPromise) await intakeReadyPromise;
-    return intakeBot;
+    if (intakeMode !== mode) {
+      throw new Error('Intake bot is already initialized in ' + intakeMode + ' mode');
+    }
+    if (mode === 'polling' && intakeReadyPromise) await intakeReadyPromise;
+    return mode === 'webhook' ? createWebhookAdapter(intakeBot) : intakeBot;
   }
 
-  intakeBot = new Bot(token, { client: { timeoutSeconds: 45 } });
+  intakeBot = botFactory(token);
+  intakeMode = mode;
 
   intakeBot.command('start', async (ctx) => {
     let session = await getIntakeSession(ctx.from.id);
@@ -816,6 +871,10 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
   const currentBot = intakeBot;
   intakeStopping = false;
 
+  if (mode === 'webhook') {
+    return createWebhookAdapter(currentBot);
+  }
+
   let resolveReady;
   let rejectReady;
   let ready = false;
@@ -872,6 +931,7 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
       intakeBot = null;
       pollingPromise = null;
       intakeReadyPromise = null;
+      intakeMode = null;
     }
 
     throw err;
@@ -881,6 +941,15 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null) {
 async function stopIntakeBot() {
   const currentBot = intakeBot;
   if (!currentBot) return;
+
+  if (intakeMode === 'webhook') {
+    intakeBot = null;
+    pollingPromise = null;
+    intakeReadyPromise = null;
+    intakeMode = null;
+    intakeStopping = false;
+    return;
+  }
 
   intakeStopping = true;
 
@@ -919,6 +988,10 @@ async function startIntakeBot(...args) {
   return getDefaultRuntime().startIntakeBot(...args);
 }
 
+async function createIntakeWebhookRuntime(options = {}) {
+  return getDefaultRuntime().createWebhookRuntime(options);
+}
+
 async function stopIntakeBot(...args) {
   if (!defaultRuntime) return;
   return defaultRuntime.stopIntakeBot(...args);
@@ -927,5 +1000,6 @@ async function stopIntakeBot(...args) {
 module.exports = {
   createIntakeRuntime,
   startIntakeBot,
-  stopIntakeBot
+  stopIntakeBot,
+  createIntakeWebhookRuntime
 };
