@@ -21,7 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # Owner connection is used only for schema creation and migrations.
+      DATABASE_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+      # The normal app connection remains least-privilege.
+      APP_DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_SSL: require
     steps:
       - name: Checkout selected branch
@@ -33,40 +36,62 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Verify target and initialize application schema
+      - name: Verify owner and application connections
+        run: |
+          node <<'NODE'
+          const { Pool } = require('pg');
+
+          async function verify(url, expectedRole, label) {
+            if (!url) throw new Error(label + ' connection secret is missing.');
+            const pool = new Pool({
+              connectionString: url,
+              ssl: { rejectUnauthorized: false },
+              max: 1,
+              connectionTimeoutMillis: 10000
+            });
+            try {
+              const result = await pool.query(
+                'SELECT current_database() AS database_name, current_user AS role_name'
+              );
+              const row = result.rows[0];
+              console.log(label + ' database:', row.database_name);
+              console.log(label + ' role:', row.role_name);
+              if (row.database_name !== 'neondb' || row.role_name !== expectedRole) {
+                throw new Error(label + ' must connect to neondb as ' + expectedRole + '.');
+              }
+            } finally {
+              await pool.end();
+            }
+          }
+
+          (async () => {
+            await verify(process.env.DATABASE_URL, 'neondb_owner', 'Schema owner');
+            await verify(process.env.APP_DATABASE_URL, 'boss_staging_app', 'Application');
+          })().catch(error => {
+            console.error('CONNECTION PREFLIGHT FAILED:', error.message);
+            process.exitCode = 1;
+          });
+          NODE
+      - name: Initialize application schema as owner
         run: |
           node <<'NODE'
           const { pool, initDatabase } = require('./db');
 
           (async () => {
             try {
-              const result = await pool.query(
-                'SELECT current_database() AS database_name, current_user AS role_name'
-              );
-              const target = result.rows[0];
-              console.log('Connected database:', target.database_name);
-              console.log('Connected role:', target.role_name);
-
-              if (target.database_name !== 'neondb' ||
-                  target.role_name !== 'boss_staging_app') {
-                throw new Error('Refusing to modify an unexpected database or role.');
-              }
-
               await initDatabase();
-              console.log('Application base schema initialized.');
+              console.log('Application base schema initialized by neondb_owner.');
             } finally {
               await pool.end();
             }
-          })().catch((error) => {
+          })().catch(error => {
             console.error('STAGING INITIALIZATION FAILED:', error.message);
             process.exitCode = 1;
           });
           NODE
-      - name: Apply database migrations
+      - name: Apply database migrations as owner
         run: npm run db:migrate
-      - name: Verify migration idempotency
-        run: npm run db:migrate
-      - name: Verify required schema and all seven migrations
+      - name: Grant application runtime permissions
         run: |
           node <<'NODE'
           const { Pool } = require('pg');
@@ -78,7 +103,60 @@ jobs:
 
           (async () => {
             try {
-              const expected = [
+              const identity = await pool.query('SELECT current_user');
+              if (identity.rows[0].current_user !== 'neondb_owner') {
+                throw new Error('Refusing to grant permissions from a non-owner connection.');
+              }
+
+              await pool.query('GRANT USAGE ON SCHEMA public TO boss_staging_app');
+              await pool.query('REVOKE CREATE ON SCHEMA public FROM boss_staging_app');
+              await pool.query(
+                'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO boss_staging_app'
+              );
+              await pool.query(
+                'GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO boss_staging_app'
+              );
+              await pool.query(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE neondb_owner IN SCHEMA public ' +
+                'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO boss_staging_app'
+              );
+              await pool.query(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE neondb_owner IN SCHEMA public ' +
+                'GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO boss_staging_app'
+              );
+
+              console.log('Application runtime permissions granted; schema ownership remains with neondb_owner.');
+            } finally {
+              await pool.end();
+            }
+          })().catch(error => {
+            console.error('APPLICATION GRANTS FAILED:', error.message);
+            process.exitCode = 1;
+          });
+          NODE
+      - name: Verify migration idempotency
+        run: npm run db:migrate
+      - name: Verify schema and application access
+        run: |
+          node <<'NODE'
+          const { Pool } = require('pg');
+          const pool = new Pool({
+            connectionString: process.env.APP_DATABASE_URL,
+            ssl: { rejectUnauthorized: false },
+            max: 1
+          });
+
+          (async () => {
+            try {
+              const identity = await pool.query(
+                'SELECT current_database() AS database_name, current_user AS role_name'
+              );
+              const target = identity.rows[0];
+              if (target.database_name !== 'neondb' || target.role_name !== 'boss_staging_app') {
+                throw new Error('Application verification connected to an unexpected target.');
+              }
+
+              const expectedMigrations = [
                 '001_foundation_database',
                 '002_distributed_bot_worker_indexes',
                 '003_bot_runtime_commands',
@@ -92,40 +170,57 @@ jobs:
                 'SELECT version FROM schema_migrations ORDER BY version'
               );
               const applied = new Set(migrations.rows.map(row => row.version));
-              const missing = expected.filter(version => !applied.has(version));
-              if (missing.length) {
-                throw new Error('Missing migrations: ' + missing.join(', '));
+              const missingMigrations = expectedMigrations.filter(version => !applied.has(version));
+              if (missingMigrations.length) {
+                throw new Error('Missing migrations: ' + missingMigrations.join(', '));
               }
 
-              const tables = await pool.query(`
-                SELECT table_name,
-                       to_regclass('public.' || table_name) IS NOT NULL AS exists
-                FROM unnest($1::text[]) AS t(table_name)
-              `, [[
+              const expectedTables = [
                 'clients',
                 'client_projects',
-                'telegram_bots',
+                'client_conversations',
                 'project_specs',
+                'project_events',
+                'client_intake_sessions',
+                'project_secrets',
                 'project_ai_jobs',
-                'platform_jobs',
+                'project_ai_job_attempts',
+                'project_build_approvals',
+                'project_release_candidates',
+                'project_release_approvals',
+                'project_deployment_authorizations',
+                'telegram_bots',
                 'bot_runtime_status',
+                'platform_jobs',
+                'bot_inbound_updates',
                 'platform_bot_inbound_updates'
-              ]]);
+              ];
 
-              const missingTables = tables.rows
-                .filter(row => !row.exists)
+              const tables = await pool.query(
+                `SELECT table_name,
+                        to_regclass('public.' || table_name) IS NOT NULL AS exists,
+                        has_table_privilege(current_user, 'public.' || table_name, 'SELECT') AS can_select,
+                        has_table_privilege(current_user, 'public.' || table_name, 'INSERT') AS can_insert,
+                        has_table_privilege(current_user, 'public.' || table_name, 'UPDATE') AS can_update,
+                        has_table_privilege(current_user, 'public.' || table_name, 'DELETE') AS can_delete
+                 FROM unnest($1::text[]) AS expected(table_name)`,
+                [expectedTables]
+              );
+
+              const missingTables = tables.rows.filter(row => !row.exists).map(row => row.table_name);
+              const deniedTables = tables.rows
+                .filter(row => row.exists && !(row.can_select && row.can_insert && row.can_update && row.can_delete))
                 .map(row => row.table_name);
-              if (missingTables.length) {
-                throw new Error('Missing required tables: ' + missingTables.join(', '));
-              }
+              if (missingTables.length) throw new Error('Missing required tables: ' + missingTables.join(', '));
+              if (deniedTables.length) throw new Error('Application permissions missing on: ' + deniedTables.join(', '));
 
-              console.log('Verified migrations:', expected.length);
-              console.log('Verified required tables:', tables.rows.length);
+              console.log('Verified migrations:', expectedMigrations.length);
+              console.log('Verified application tables and CRUD permissions:', tables.rows.length);
               console.log('Staging database bootstrap completed successfully.');
             } finally {
               await pool.end();
             }
-          })().catch((error) => {
+          })().catch(error => {
             console.error('STAGING VERIFICATION FAILED:', error.message);
             process.exitCode = 1;
           });
