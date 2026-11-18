@@ -205,6 +205,7 @@ test('Cloudflare configuration keeps Hyperdrive and Worker compatibility staging
   );
   assert.ok(stagingConfig.compatibility_flags.includes('nodejs_compat'));
   assert.equal(stagingConfig.workers_dev, false);
+  assert.equal(stagingConfig.hyperdrive[0].binding, 'HYPERDRIVE');
   assert.equal(stagingConfig.vars.PLATFORM_BOT_WEBHOOK_MODE, 'disabled');
   assert.equal(
     stagingConfig.hyperdrive[0].id,
