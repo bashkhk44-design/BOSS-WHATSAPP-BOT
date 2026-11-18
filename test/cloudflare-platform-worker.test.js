@@ -184,5 +184,5 @@ test('Cloudflare Worker source boundary excludes Node hosts, bot runtimes, and p
   }
   assert.equal(queueSource.includes('require('), false, 'the shared queue module must remain import-safe for Workers');
   assert.match(workerSource, /import \{ Client \} from 'pg'/);
-  assert.match(workerSource, /HYPERDRIVE\.connectionString/);
+  assert.match(workerSource, /HYPERDRIVE\?\.connectionString/);
 });
