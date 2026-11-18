@@ -8,3 +8,8 @@ npm-debug.log*
 .DS_Store
 
 !.env.worker.example
+
+# Local Cloudflare config and secrets
+cloudflare/wrangler.jsonc
+cloudflare/.dev.vars
+.dev.vars
