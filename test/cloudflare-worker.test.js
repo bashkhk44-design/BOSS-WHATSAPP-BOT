@@ -1,10 +1,11 @@
 'use strict';
 
 const test = require('node:test');
+const { before } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = globalThis.crypto;
 let workerModule;
-test.before(async () => {
+before(async () => {
   workerModule = await import('../cloudflare/worker.mjs');
 });
 
