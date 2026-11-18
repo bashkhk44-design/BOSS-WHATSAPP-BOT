@@ -1577,7 +1577,27 @@ async function startRuntime() {
   });
 }
 
-return { bot, start: startRuntime, shutdown };
+function createWebhookRuntime() {
+  let stopped = false;
+  return {
+    handleUpdate(update) {
+      if (stopped) throw new Error('Master webhook runtime is stopped');
+      if (!update || typeof update !== 'object' || Array.isArray(update) ||
+          !Number.isSafeInteger(update.update_id) || update.update_id < 0) {
+        throw new TypeError('A valid Telegram update is required');
+      }
+      if (typeof bot.handleUpdate !== 'function') {
+        throw new TypeError('The configured master bot does not support handleUpdate');
+      }
+      return bot.handleUpdate(update);
+    },
+    async stop() {
+      stopped = true;
+    }
+  };
+}
+
+return { bot, start: startRuntime, shutdown, createWebhookRuntime };
 }
 
 module.exports = { createMasterRuntime };
