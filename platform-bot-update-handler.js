@@ -135,7 +135,7 @@ function createPlatformBotUpdateHandler({
               )
           `, [
             identity, updateId, workerId, String(error.message || error),
-            job.id, expectedJobType, leaseSeconds
+            job.id, expectedJobType, activeLeaseSeconds
           ]);
         } catch (_) {}
       }
