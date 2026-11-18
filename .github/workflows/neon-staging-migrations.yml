@@ -121,5 +121,5 @@ jobs:
           });
           NODE
 
-      - name: Apply reviewed migrations to STAGING only
-        run: npm run db:migrate
+      - name: Finish read-only staging preflight
+        run: echo "Read-only preflight completed. No database migrations were executed."
