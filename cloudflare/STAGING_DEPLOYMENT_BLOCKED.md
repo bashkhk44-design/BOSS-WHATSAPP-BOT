@@ -1,28 +1,29 @@
-# Cloudflare staging deployment is paused
+# Cloudflare staging deployment
 
-## Why deployment is disabled
+## Approved deployment boundary
 
-The previous GitHub Actions workflow checked out the old `cloudflare-webhook-prep` branch and deployed it directly. That branch diverged from the current Telegram platform architecture and has not passed the current runtime, database, or webhook acceptance gates. Deploying it could restore obsolete code and bypass the current security and queue design.
+The approved workflow is stored on `main`, but checks out and deploys only the separate `cloudflare-webhook-prep` branch to the staging Worker:
 
-The old workflow has therefore been removed from the active workflow directory. No Cloudflare deployment, Telegram webhook change, production database migration, or production secret change was performed.
+`https://boss-bot-master-staging.bashkhk44.workers.dev`
 
-## What is already available
+The staging source is not merged into `main`. Do not deploy it to production and do not change Render, production Neon, or production Telegram webhooks.
 
-- The current Node runtime has separate customer-bot and platform-bot queue paths.
-- Master and intake bot handlers expose webhook-mode adapters for Node.
-- The new platform webhook ingress validates separate master/intake Telegram secret-token headers and durably enqueues updates.
-- The full GitHub Actions suite passed on the merged application PR.
+## Staging source and checks
 
-## What must happen before Cloudflare deployment
+- Staging branch: `cloudflare-webhook-prep`
+- Last verified staging source commit: `282d79af227ed5114a0a994734afdc2b2d048ac5`
+- Cloudflare staging checks run #17 succeeded: https://github.com/bashkhk44-design/BOSS-WHATSAPP-BOT/actions/runs/43973423849
+- The branch contains its own `wrangler.toml` with a Hyperdrive binding intended for the Neon staging database.
+- The earlier deploy-only workflow run succeeded. The restored workflow now also checks `/healthz` and `/db-healthz`; those checks must complete successfully to confirm the live staging Worker and database connection.
 
-1. Port the current webhook routes to a Cloudflare Worker entrypoint; do not import Node HTTP server, `pg.Pool`, or Node host startup modules into the Worker bundle.
-2. Implement and test a Hyperdrive database adapter that preserves the current PostgreSQL TLS and transaction rules.
-3. Keep AI analysis, code generation, builds, tests, and deployment preflight in the existing isolated Node workers.
-4. Create a dedicated empty Neon staging branch/database and a newly verified staging-only Hyperdrive binding.
-5. Configure a restricted GitHub Environment named `cloudflare-staging` with staging-only Cloudflare credentials, bot tokens, webhook secrets, and encryption material.
-6. Run bundle compatibility tests, database adapter tests, and end-to-end tests with separate staging master/intake/customer bots.
-7. Only then restore a staging-only deployment workflow that deploys the current reviewed branch and exact staging Worker.
+## Workflow behavior
 
-## Production boundary
+- Trigger: manual dispatch, or a change to this workflow file on `main`.
+- GitHub Environment: `cloudflare-staging`.
+- It checks out only `cloudflare-webhook-prep`.
+- It deploys only the staging Worker.
+- It verifies Worker health and the staging database endpoint after deployment.
 
-Do not copy production Telegram tokens, production database URLs, production encryption keys, or production Cloudflare credentials into staging. Production cutover remains a separate, explicitly approved operation.
+## Production safety
+
+No staging source code is merged into `main` by this workflow. Do not copy staging credentials into production or point the staging Hyperdrive binding at production. Production cutover requires a separate explicit review and approval.
