@@ -198,8 +198,11 @@ test('Cloudflare configuration keeps Hyperdrive and Worker compatibility staging
   ));
 
   const pgVersion = String(packageJson.dependencies.pg || '').replace(/^[^0-9]*/, '');
-  const [major, minor] = pgVersion.split('.').map(Number);
-  assert.ok(major > 8 || (major === 8 && minor >= 16), 'pg must meet Hyperdrive minimum 8.16.3');
+  const [major, minor, patch] = pgVersion.split('.').map(Number);
+  assert.ok(
+    major > 8 || (major === 8 && (minor > 16 || (minor === 16 && patch >= 3))),
+    'pg must meet Hyperdrive minimum 8.16.3'
+  );
   assert.ok(stagingConfig.compatibility_flags.includes('nodejs_compat'));
   assert.equal(stagingConfig.workers_dev, false);
   assert.equal(stagingConfig.vars.PLATFORM_BOT_WEBHOOK_MODE, 'disabled');
