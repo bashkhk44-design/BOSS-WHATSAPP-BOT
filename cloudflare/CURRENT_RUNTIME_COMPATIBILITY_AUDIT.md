@@ -22,7 +22,7 @@ Status: the current branch now contains a minimal Cloudflare edge-ingress adapte
 - It enqueues through the shared platform queue module and does not import the master/intake bot runtimes, `db.js`, Node HTTP servers, or queue workers.
 - It creates one `pg.Client` per request using `HYPERDRIVE.connectionString`, then closes the client in a `finally` block. Hyperdrive owns the regional connection pool.
 - `cloudflare/wrangler.staging.example.jsonc` is a non-deployable template with a placeholder Hyperdrive ID and platform mode disabled.
-- Unit tests exercise the Worker handler with an injected PostgreSQL client and check the source dependency boundary. This is not yet a real Wrangler bundle test or a live Hyperdrive test.
+- Unit tests exercise the Worker handler with an injected PostgreSQL client and check the source dependency boundary. CI also runs a real Wrangler `deploy --dry-run` bundle with a credential-free config that has no Hyperdrive binding. This is not a live Hyperdrive connection or end-to-end staging test.
 
 ## Hyperdrive compatibility basis
 
@@ -38,7 +38,7 @@ References:
 
 ## Remaining blockers
 
-1. Add a real Wrangler dry-run/bundle test using the staging example config after Wrangler is pinned in the project.
+1. Review the Wrangler dry-run output and keep Wrangler major version 4 in CI; the dry-run config intentionally has no Hyperdrive binding.
 2. Create a dedicated, empty Neon staging database/branch and a new Hyperdrive configuration. Verify the exact origin database and hostname before binding it. Do not reuse the old prototype Hyperdrive ID.
 3. Configure staging-only master/intake Telegram tokens and two independent webhook secrets in restricted environments.
 4. Run staging end-to-end tests: Telegram webhook authentication, Hyperdrive enqueue, Node worker dispatch, lease recovery, and no cross-identity dispatch.
