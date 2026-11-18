@@ -20,7 +20,7 @@ function createBotOwnershipService(pool) {
   }
 
   async function listProjects({ clientId, limit = 8, offset = 0 } = {}) {
-    if (!/^\\d+$/.test(String(clientId || ''))) {
+    if (!/^\d+$/.test(String(clientId || ''))) {
       throw new TypeError('A valid client ID is required');
     }
     const safeLimit = Math.min(20, Math.max(1, Number(limit) || 8));
@@ -37,7 +37,7 @@ function createBotOwnershipService(pool) {
 
   async function assignBotToProject({ botId, clientId, projectId } = {}) {
     for (const [name, value] of Object.entries({ botId, clientId, projectId })) {
-      if (!/^\\d+$/.test(String(value || '')) || Number(value) <= 0) {
+      if (!/^\d+$/.test(String(value || '')) || Number(value) <= 0) {
         throw new TypeError('Invalid ' + name);
       }
     }
