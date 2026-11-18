@@ -161,6 +161,45 @@ async function initDatabase() {
   await initProjectDatabase();
 }
 
+async function verifyDatabaseSchema() {
+  const requiredTables = [
+    'telegram_bots',
+    'clients',
+    'client_projects',
+    'client_conversations',
+    'project_specs',
+    'project_events',
+    'client_intake_sessions',
+    'project_secrets',
+    'project_ai_jobs',
+    'project_ai_job_attempts',
+    'project_build_approvals',
+    'project_release_candidates',
+    'project_release_approvals',
+    'project_deployment_authorizations'
+  ];
+
+  const result = await pool.query(
+    `SELECT table_name,
+            to_regclass('public.' || table_name) IS NOT NULL AS exists
+     FROM unnest($1::text[]) AS required(table_name)`,
+    [requiredTables]
+  );
+
+  const missing = result.rows
+    .filter((row) => !row.exists)
+    .map((row) => row.table_name);
+
+  if (missing.length) {
+    throw new Error(
+      'قاعدة البيانات غير مهيأة. شغّل Neon Staging Bootstrap بصلاحية المالك. الجداول الناقصة: ' +
+      missing.join(', ')
+    );
+  }
+
+  return true;
+}
+
 async function insertTelegramBot({ name, username, token }) {
   const encrypted = encryptToken(token);
 
@@ -358,6 +397,7 @@ async function releaseTelegramRuntimeLock() {
 module.exports = {
   pool,
   initDatabase,
+  verifyDatabaseSchema,
   insertTelegramBot,
   getActiveTelegramBots,
   decryptToken,
