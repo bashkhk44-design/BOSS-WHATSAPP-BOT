@@ -14,7 +14,7 @@ function validatePlatformWorkerEnvironment(env = process.env) {
       throw new Error(name + ' is required for the platform Telegram worker');
     }
   }
-  if (!/^\\d+$/.test(env.TELEGRAM_ADMIN_ID)) {
+  if (!/^\d+$/.test(env.TELEGRAM_ADMIN_ID)) {
     throw new Error('TELEGRAM_ADMIN_ID must be a numeric Telegram user ID');
   }
   return true;
