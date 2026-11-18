@@ -186,3 +186,34 @@ test('Cloudflare Worker source boundary excludes Node hosts, bot runtimes, and p
   assert.match(workerSource, /import \{ Client \} from 'pg'/);
   assert.match(workerSource, /HYPERDRIVE\?\.connectionString/);
 });
+
+
+test('Cloudflare configuration keeps Hyperdrive and Worker compatibility staging-only', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  const stagingConfig = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'cloudflare', 'wrangler.staging.example.jsonc'), 'utf8'
+  ));
+  const bundleConfig = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'cloudflare', 'wrangler.bundle-test.jsonc'), 'utf8'
+  ));
+
+  const pgVersion = String(packageJson.dependencies.pg || '').replace(/^[^0-9]*/, '');
+  const [major, minor, patch] = pgVersion.split('.').map(Number);
+  assert.ok(
+    major > 8 || (major === 8 && (minor > 16 || (minor === 16 && patch >= 3))),
+    'pg must meet Hyperdrive minimum 8.16.3'
+  );
+  assert.ok(stagingConfig.compatibility_flags.includes('nodejs_compat'));
+  assert.equal(stagingConfig.workers_dev, false);
+  assert.equal(stagingConfig.vars.PLATFORM_BOT_WEBHOOK_MODE, 'disabled');
+  assert.equal(
+    stagingConfig.hyperdrive[0].id,
+    'REPLACE_WITH_VERIFIED_STAGING_HYPERDRIVE_ID',
+    'a real Hyperdrive ID must not be committed in the example config'
+  );
+  assert.ok(bundleConfig.compatibility_flags.includes('nodejs_compat'));
+  assert.equal(bundleConfig.vars.PLATFORM_BOT_WEBHOOK_MODE, 'disabled');
+  assert.equal(bundleConfig.hyperdrive, undefined, 'bundle test must not connect to a database');
+  assert.equal('MASTER_WEBHOOK_SECRET' in stagingConfig.vars, false);
+  assert.equal('INTAKE_WEBHOOK_SECRET' in stagingConfig.vars, false);
+});
