@@ -17,6 +17,7 @@ const validEnv = {
 
 test('platform worker requires both system bot tokens and a master administrator ID', () => {
   assert.equal(validatePlatformWorkerEnvironment(validEnv), true);
+  assert.throws(() => validatePlatformWorkerEnvironment({ ...validEnv, TELEGRAM_ADMIN_ID: 'admin' }), /numeric Telegram user ID/);
   for (const name of ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_ADMIN_ID', 'INTAKE_BOT_TOKEN']) {
     const env = { ...validEnv };
     delete env[name];
