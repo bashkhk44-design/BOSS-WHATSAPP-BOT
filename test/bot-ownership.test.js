@@ -10,7 +10,7 @@ function makePool({ botExists = true, projectBelongsToClient = true } = {}) {
   let rolledBack = false;
   const client = {
     async query(sql, params = []) {
-      const normalized = sql.trim().replace(/\\s+/g, ' ');
+      const normalized = sql.trim().replace(/\s+/g, ' ');
       calls.push({ sql: normalized, params });
       if (normalized === 'BEGIN') return { rows: [], rowCount: null };
       if (normalized === 'COMMIT') {
