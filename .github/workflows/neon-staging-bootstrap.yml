@@ -1,0 +1,131 @@
+name: Neon Staging Bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_target:
+        description: "اكتب BOSS-BOT-STAGING/production/neondb لتأكيد قاعدة الاختبار"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neon-staging-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    if: ${{ inputs.confirm_target == 'BOSS-BOT-STAGING/production/neondb' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_SSL: require
+    steps:
+      - name: Checkout selected branch
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify target and initialize application schema
+        run: |
+          node <<'NODE'
+          const { pool, initDatabase } = require('./db');
+
+          (async () => {
+            try {
+              const result = await pool.query(
+                'SELECT current_database() AS database_name, current_user AS role_name'
+              );
+              const target = result.rows[0];
+              console.log('Connected database:', target.database_name);
+              console.log('Connected role:', target.role_name);
+
+              if (target.database_name !== 'neondb' ||
+                  target.role_name !== 'boss_staging_app') {
+                throw new Error('Refusing to modify an unexpected database or role.');
+              }
+
+              await initDatabase();
+              console.log('Application base schema initialized.');
+            } finally {
+              await pool.end();
+            }
+          })().catch((error) => {
+            console.error('STAGING INITIALIZATION FAILED:', error.message);
+            process.exitCode = 1;
+          });
+          NODE
+      - name: Apply database migrations
+        run: npm run db:migrate
+      - name: Verify migration idempotency
+        run: npm run db:migrate
+      - name: Verify required schema and all seven migrations
+        run: |
+          node <<'NODE'
+          const { Pool } = require('pg');
+          const pool = new Pool({
+            connectionString: process.env.DATABASE_URL,
+            ssl: { rejectUnauthorized: false },
+            max: 1
+          });
+
+          (async () => {
+            try {
+              const expected = [
+                '001_foundation_database',
+                '002_distributed_bot_worker_indexes',
+                '003_bot_runtime_commands',
+                '004_manager_command_recovery',
+                '005_worker_health_heartbeats',
+                '006_auto_remediation_audit',
+                '007_platform_bot_inbox'
+              ];
+
+              const migrations = await pool.query(
+                'SELECT version FROM schema_migrations ORDER BY version'
+              );
+              const applied = new Set(migrations.rows.map(row => row.version));
+              const missing = expected.filter(version => !applied.has(version));
+              if (missing.length) {
+                throw new Error('Missing migrations: ' + missing.join(', '));
+              }
+
+              const tables = await pool.query(`
+                SELECT name, to_regclass('public.' || name) IS NOT NULL AS exists
+                FROM unnest($1::text[]) AS name
+              `, [[
+                'clients',
+                'client_projects',
+                'telegram_bots',
+                'project_specs',
+                'project_ai_jobs',
+                'platform_jobs',
+                'bot_runtime_status',
+                'platform_bot_inbound_updates'
+              ]]);
+
+              const missingTables = tables.rows
+                .filter(row => !row.exists)
+                .map(row => row.name);
+              if (missingTables.length) {
+                throw new Error('Missing required tables: ' + missingTables.join(', '));
+              }
+
+              console.log('Verified migrations:', expected.length);
+              console.log('Verified required tables:', tables.rows.length);
+              console.log('Staging database bootstrap completed successfully.');
+            } finally {
+              await pool.end();
+            }
+          })().catch((error) => {
+            console.error('STAGING VERIFICATION FAILED:', error.message);
+            process.exitCode = 1;
+          });
+          NODE
