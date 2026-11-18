@@ -1,62 +1,59 @@
 # Cloudflare runtime compatibility audit
 
-Status: source audit only. No Worker is deployed and no staging database, Telegram bot, webhook, or secret is configured by this change.
+Status: revised 2026-11-18. The current Node runtime now exposes explicit webhook-mode adapters for master and intake bots, and a separate Cloudflare Worker ingress source has been added. The older findings below describe the earlier baseline and are historical where marked. No Cloudflare Worker has been deployed and no staging database, Telegram bot, webhook, or secret has been configured by this change.
 
-## Audit baseline
+## Current status
 
-This review compares the older `cloudflare-webhook-prep` prototype with the current `audit-hardening` runtime at the time this document was written. The older Worker must not be copied or deployed as-is.
+- `telegram-master.js` now exports a factory; importing it does not start polling. Its explicit `createWebhookRuntime()` adapter handles updates without acquiring the Node polling lock or starting long polling.
+- `intake-bot.js` now has an explicit webhook mode that registers the existing handlers and exposes `handleUpdate` without calling grammY `.start()`.
+- Node has a dedicated platform queue worker for `telegram.master.update` and `telegram.intake.update`, plus a separate authenticated platform webhook ingress.
+- `cloudflare/worker.mjs` is a lightweight edge ingress for master, intake, and customer webhook routes. It uses Hyperdrive and a per-request `pg.Client`; it does not import `db.js`, Node HTTP servers, or Telegram bot runtime modules.
+- Customer token decryption and the existing token-derived webhook HMAC are implemented with Web Crypto in the Worker.
+- AI analysis, code generation, builds, tests, deployment preflight, and bot update execution remain in durable Node workers.
+- The active Cloudflare deployment workflow is intentionally disabled until a new staging Hyperdrive binding and all end-to-end gates are verified.
 
-## Blocking incompatibilities found
+## Historical blockers found in the earlier implementation (superseded in part)
 
-### 1. Master bot module starts polling during import
+### 1. Master bot module startup
 
-The current `telegram-master.js`:
-- exits the process when `TELEGRAM_BOT_TOKEN` or `TELEGRAM_ADMIN_ID` is missing;
-- creates the grammY bot at module scope;
-- installs SIGTERM/SIGINT handlers at module scope;
-- calls its `start()` routine at module scope, which initializes the database, takes a PostgreSQL advisory runtime lock, starts customer/intake services, and begins long polling.
+The old Cloudflare prototype expected to import the master module and receive an already-created bot. That was unsafe because the earlier module started polling and process-wide lifecycle work during import. The current factory-based implementation supersedes this behavior: Worker ingress does not import the master runtime at all; the separate Node worker constructs the bot in webhook mode.
 
-The old Worker dynamically imports this module and expects to obtain an exported bot and initializer. That is not a safe or valid webhook contract for the current source. A Worker import must not trigger polling, process exit, or process-wide shutdown hooks.
+### 2. Database connection model
 
-### 2. Current database module is process-pool based
+The current Node `db.js` still creates process-scoped `pg.Pool` instances and must not be imported into the Worker. The edge Worker instead uses Cloudflare Hyperdrive with a new `pg.Client` per request. This follows Cloudflare's documented Hyperdrive pattern and keeps Node database pools out of the edge bundle.
 
-The current `db.js` creates the main `pg.Pool` and direct advisory-lock `pg.Pool` as soon as it is imported. It requires a valid `DATABASE_URL` and uses the shared strict PostgreSQL TLS configuration.
+### 3. Intake bot transport
 
-The older prototype's Worker-specific `pg.Client` adapter and disabled advisory-lock pool existed only on the diverged old branch. They are not present in current `audit-hardening`. Do not reintroduce the old branch's `rejectUnauthorized: false` TLS configuration.
+The old prototype assumed intake supported webhook mode when it did not. The current `intake-bot.js` now explicitly supports webhook mode and exposes `handleUpdate` without starting polling. The Cloudflare Worker only enqueues updates; the Node platform worker executes them.
 
-A Cloudflare-compatible database layer must be explicitly designed around Hyperdrive, bounded connections, transaction lifetime, and the current SSL policy. It must not mutate shared global connection settings between requests.
+### 4. Customer bot transport
 
-### 3. Intake bot still starts polling
-
-The current `intake-bot.js` exports `startIntakeBot` without the old prototype's webhook-mode option. The old Worker's call with a third `{ webhook: true }` argument is therefore not proof that current intake handlers can run in webhook mode.
-
-### 4. Customer runtime is polling-oriented
-
-The current `bot-runtime.js` starts customer bots using grammY polling. A Worker route cannot safely assume that importing the existing runtime exposes a webhook-ready customer bot factory without a deliberate refactor and tests.
+Customer bot updates are accepted by the Cloudflare Worker through the existing customer webhook identity. The Worker resolves the active customer bot record, decrypts its token using Web Crypto, derives the same HMAC secret as the Node ingress, and enqueues `telegram.update`. Customer bot execution remains in the Node customer worker.
 
 ### 5. Old deployment configuration is not trusted
 
-The old `wrangler.toml` contains a Hyperdrive ID copied from the prototype branch. Its current ownership, target database, and staging-only status have not been independently verified. It must not be reused. The new staging config must bind a newly verified Hyperdrive configuration that points only to a dedicated empty Neon staging project.
+The old `cloudflare-webhook-prep` branch and its Hyperdrive ID remain untrusted. The old deployment workflow that checked out that branch has been removed. Do not restore it or reuse its Hyperdrive ID.
 
-## Required implementation sequence
+## Required staging configuration
 
-1. Extract bot construction and handler registration into side-effect-free factories. Keep polling startup in explicit Node entrypoints only.
-2. Add an explicit webhook mode for master, intake, and customer bots. Verify that importing modules never starts polling, acquires runtime locks, exits the process, or installs global shutdown handlers.
-3. Design the Cloudflare database adapter for Hyperdrive using the current PostgreSQL TLS policy. Add tests for query, transaction, connection cleanup, and failure paths.
-4. Keep long-running AI analysis/build/test and deployment preflight work in the existing durable queue and isolated Node workers. Webhook requests should acknowledge quickly after durable acceptance.
-5. Add strict webhook authentication, content-type and body-size validation, safe update-ID validation, idempotency, and concurrency-safe claims. Reuse current security helpers where possible rather than copying the old prototype's weaker logic.
-6. Add Cloudflare runtime/bundle tests and end-to-end tests using only staging credentials and a dedicated empty staging database.
-7. Only after all gates pass, add a GitHub Actions deploy workflow scoped to the `cloudflare-staging` GitHub Environment and the named staging Worker.
+1. Create a new, empty Neon staging branch/database.
+2. Create a new Hyperdrive configuration pointing only to that staging database.
+3. Copy `cloudflare/wrangler.jsonc.example` to an untracked `cloudflare/wrangler.jsonc` and insert the new staging-only Hyperdrive ID.
+4. Configure staging-only Worker secrets: `BOTS_ENCRYPTION_KEY`, `MASTER_WEBHOOK_SECRET`, and `INTAKE_WEBHOOK_SECRET`.
+5. Configure the Node platform worker with staging-only master/intake bot tokens and the staging encryption key.
+6. Apply the reviewed migrations to the staging database.
+7. Run a real Wrangler bundle/deploy dry-run, Hyperdrive health check, and end-to-end webhook tests with staging bots.
+8. Only then restore a staging-only deploy workflow scoped to the `cloudflare-staging` GitHub Environment.
 
 ## Explicitly not done
 
-- No code from `cloudflare-webhook-prep` has been copied into the current runtime.
-- No `wrangler.toml` or Hyperdrive ID has been added to the current branch.
-- No Cloudflare API token, account ID, Telegram token, webhook secret, database URL, or encryption key has been requested, stored, or committed.
-- No database migration or schema initializer has been run.
-- No Telegram `setWebhook` call has been made.
+- No Cloudflare deployment.
+- No Hyperdrive configuration or ID created or verified.
+- No Cloudflare API token, account ID, Telegram token, webhook secret, database URL, or encryption key requested, stored, or committed.
+- No database migration or schema initializer run against production.
+- No Telegram `setWebhook` call made.
 - Render and production Neon remain untouched.
 
 ## Acceptance gate
 
-The integration is not ready for deployment until the implementation sequence above is completed and the dedicated staging resources are independently verified. A successful Node CI run alone does not establish Cloudflare runtime compatibility.
+A successful Node CI run is not proof of Cloudflare compatibility or a live webhook. Staging deployment remains blocked until the new Worker bundle, Hyperdrive connection, migrations, separate bot identities, duplicate delivery, retry, and lease recovery all pass against disposable staging resources.
