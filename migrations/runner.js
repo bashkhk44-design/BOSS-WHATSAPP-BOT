@@ -23,12 +23,7 @@ function listMigrationFiles(directory, fsApi = fs) {
   return APPROVED_MIGRATION_FILES.filter(name => available.has(name));
 }
 
-function createMigrationRunner({
-  pool,
-  migrationsDir = __dirname,
-  fsApi = fs,
-  logger = console
-}) {
+function createMigrationRunner({ pool, migrationsDir = __dirname, fsApi = fs, logger = console }) {
   if (!pool || typeof pool.connect !== 'function') {
     throw new TypeError('A PostgreSQL pool is required');
   }
@@ -47,20 +42,16 @@ function createMigrationRunner({
         );
 
         lockAcquired = lock.rows[0]?.locked === true;
-        if (!lockAcquired) {
-          throw new Error('Another migration runner is already active');
-        }
+        if (!lockAcquired) throw new Error('Another migration runner is already active');
 
-        await client.query(`
-          CREATE TABLE IF NOT EXISTS schema_migrations (
-            version TEXT PRIMARY KEY,
-            description TEXT NOT NULL,
-            applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-          )
-        `);
+        await client.query(
+          'CREATE TABLE IF NOT EXISTS schema_migrations (' +
+          'version TEXT PRIMARY KEY, description TEXT NOT NULL, ' +
+          'applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())'
+        );
 
         for (const filename of listMigrationFiles(migrationsDir, fsApi)) {
-          const version = filename.replace(/\\.sql$/i, '');
+          const version = filename.slice(0, -4);
           const existing = await client.query(
             'SELECT version FROM schema_migrations WHERE version = $1',
             [version]
@@ -72,26 +63,25 @@ function createMigrationRunner({
           }
 
           const sql = fsApi.readFileSync(path.join(migrationsDir, filename), 'utf8');
-          if (!/^\\s*(?:--[^\\r\\n]*(?:\\r?\\n|$)\\s*)*BEGIN\\s*;/i.test(sql) ||
-              !/\\bCOMMIT\\s*;\\s*$/.test(sql)) {
-            throw new Error(`Migration ${filename} must contain a transaction ending in COMMIT;`);
+          const firstStatement = sql.split('\n')
+            .map(line => line.trim())
+            .find(line => line && !line.startsWith('--'));
+          if (!/^BEGIN\s*;/i.test(firstStatement || '') || !sql.trimEnd().endsWith('COMMIT;')) {
+            throw new Error('Migration ' + filename + ' must contain a transaction ending in COMMIT;');
           }
 
           try {
             await client.query(sql);
             await client.query(
-              `INSERT INTO schema_migrations(version, description)
-               VALUES ($1, $2)
-               ON CONFLICT (version) DO NOTHING`,
-              [version, `Applied migration file ${filename}`]
+              'INSERT INTO schema_migrations(version, description) ' +
+              'VALUES ($1, $2) ON CONFLICT (version) DO NOTHING',
+              [version, 'Applied migration file ' + filename]
             );
             applied.push(version);
-            logger.log(`Migration applied: ${version}`);
+            logger.log('Migration applied: ' + version);
           } catch (error) {
-            try {
-              await client.query('ROLLBACK');
-            } catch (_) {}
-            throw new Error(`Migration ${version} failed: ${error.message}`, { cause: error });
+            try { await client.query('ROLLBACK'); } catch (_) {}
+            throw new Error('Migration ' + version + ' failed: ' + error.message, { cause: error });
           }
         }
 
@@ -140,8 +130,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = {
-  APPROVED_MIGRATION_FILES,
-  createMigrationRunner,
-  listMigrationFiles
-};
+module.exports = { APPROVED_MIGRATION_FILES, createMigrationRunner, listMigrationFiles };
