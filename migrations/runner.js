@@ -6,10 +6,21 @@ const path = require('node:path');
 const LOCK_KEY_1 = 20261117;
 const LOCK_KEY_2 = 1;
 
+// Explicit staging migration allowlist. New numbered SQL files must be reviewed
+// and added here deliberately; unlisted files are never executed by this runner.
+const APPROVED_MIGRATION_FILES = Object.freeze([
+  '001_foundation_database.sql',
+  '002_distributed_bot_worker_indexes.sql',
+  '003_bot_runtime_commands.sql',
+  '004_manager_command_recovery.sql',
+  '005_worker_health_heartbeats.sql',
+  '006_auto_remediation_audit.sql',
+  '007_platform_bot_inbox.sql'
+]);
+
 function listMigrationFiles(directory, fsApi = fs) {
-  return fsApi.readdirSync(directory)
-    .filter((name) => /^\d+_[a-z0-9_-]+\.sql$/i.test(name))
-    .sort((a, b) => a.localeCompare(b, 'en'));
+  const available = new Set(fsApi.readdirSync(directory));
+  return APPROVED_MIGRATION_FILES.filter((name) => available.has(name));
 }
 
 function createMigrationRunner({
@@ -129,6 +140,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  APPROVED_MIGRATION_FILES,
   createMigrationRunner,
   listMigrationFiles
 };
