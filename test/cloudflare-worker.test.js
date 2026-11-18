@@ -85,16 +85,17 @@ test('Cloudflare Worker health endpoints do not expose configuration', async () 
 
 test('Cloudflare Worker authenticates master and intake independently before enqueue', async () => {
   const { createWorkerHandler } = workerModule;
-  const calls = [];
+  const databaseCalls = [];
+  const queueCalls = [];
   const queueApi = {
     async enqueuePlatformBotUpdate(_client, args) {
-      calls.push(args);
+      queueCalls.push(args);
       return { duplicate: false };
     },
     async enqueueTelegramUpdate() { throw new Error('customer route must not be used'); }
   };
   const handler = createWorkerHandler({
-    ClientCtor: fakeClientFactory({ calls }),
+    ClientCtor: fakeClientFactory({ calls: databaseCalls }),
     queueApi,
     logger: { error() {} }
   });
@@ -105,7 +106,7 @@ test('Cloudflare Worker authenticates master and intake independently before enq
     const response = await handler(makeRequest('/telegram/platform/' + identity, { secret }), env);
     assert.equal(response.status, 200);
   }
-  assert.deepEqual(calls.map(item => item.botIdentity), ['master', 'intake']);
+  assert.deepEqual(queueCalls.map(item => item.botIdentity), ['master', 'intake']);
 
   const wrong = await handler(makeRequest('/telegram/platform/intake', {
     secret: platformSecrets.MASTER_WEBHOOK_SECRET
