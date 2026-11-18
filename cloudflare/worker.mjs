@@ -190,6 +190,7 @@ export function createWorkerHandler({
 
     let client;
     try {
+      const update = parseUpdate(await readBoundedBody(request));
       if (!env.HYPERDRIVE?.connectionString) throw new Error("HYPERDRIVE binding is missing");
 
       if (route.kind === "platform") {
@@ -216,7 +217,6 @@ export function createWorkerHandler({
         }
       }
 
-      const update = parseUpdate(await readBoundedBody(request));
       if (!client) {
         client = new ClientCtor({ connectionString: env.HYPERDRIVE.connectionString });
         await client.connect();
