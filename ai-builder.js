@@ -38,9 +38,14 @@ function validateBundle(bundle) {
         /^[a-zA-Z]:/.test(filePath)) {
       throw new Error('مسار ملف غير آمن: ' + filePath);
     }
-    const firstPart = filePath.split('/')[0];
-    if (['.git', 'node_modules', '.env'].includes(firstPart) ||
-        filePath.endsWith('.env') || filePath.includes('/.env')) {
+    const pathSegments = filePath.split('/');
+    const containsSensitiveSegment = pathSegments.some(segment =>
+      segment === '.git' ||
+      segment === 'node_modules' ||
+      /^\\.env(?:$|[._-])/.test(segment) ||
+      segment === '.envrc'
+    );
+    if (containsSensitiveSegment) {
       throw new Error('تم رفض مسار ملف حساس: ' + filePath);
     }
     if (seen.has(filePath)) throw new Error('مسار ملف مكرر: ' + filePath);
