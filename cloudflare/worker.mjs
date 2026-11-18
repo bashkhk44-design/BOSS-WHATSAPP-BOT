@@ -195,7 +195,9 @@ export function createWorkerHandler({
       if (route.kind === "platform") {
         const secretName = route.identity === "master" ? "MASTER_WEBHOOK_SECRET" : "INTAKE_WEBHOOK_SECRET";
         const expected = env[secretName];
+        const otherSecret = env[route.identity === "master" ? "INTAKE_WEBHOOK_SECRET" : "MASTER_WEBHOOK_SECRET"];
         if (!/^[A-Za-z0-9_-]{32,256}$/.test(expected || "") ||
+            expected === otherSecret ||
             !safeEqual(request.headers.get("x-telegram-bot-api-secret-token"), expected)) {
           return json(401, { ok: false, error: "unauthorized" });
         }
