@@ -1,57 +1,53 @@
-function createMasterRuntime() {
-require('dotenv').config();
+function createMasterRuntime(options = {}) {
+const env = options.env || (typeof process !== 'undefined' ? process.env : {});
+const runtimeDependencies = options.dependencies || (() => {
+  require('dotenv').config();
+  const grammy = require('grammy');
+  return {
+    ...grammy,
+    ...require('./telegram-admin-auth'),
+    ...require('./db'),
+    ...require('./bot-runtime'),
+    ...require('./project-db'),
+    ...require('./project-construction-points'),
+    ...require('./intake-bot'),
+    ...require('./gemini-analyst'),
+    ...require('./ai-designer'),
+    ...require('./project-pipeline'),
+    ...require('./ai-router'),
+    ...require('./project-release'),
+    ...require('./deployment-readiness-telegram'),
+    ...require('./deployment-preflight-queue')
+  };
+})();
 
-const { Bot, Keyboard, InlineKeyboard } = require('grammy');
-const { isPrivateAdmin } = require('./telegram-admin-auth');
 const {
-  pool,
-  initDatabase,
-  insertTelegramBot,
-  acquireTelegramRuntimeLock,
-  isTelegramRuntimeLockHeld,
-  releaseTelegramRuntimeLock,
-  setRuntimeLockFailureHandler
-} = require('./db');
+  Bot, Keyboard, InlineKeyboard, isPrivateAdmin,
+  pool, initDatabase, insertTelegramBot, acquireTelegramRuntimeLock,
+  isTelegramRuntimeLockHeld, releaseTelegramRuntimeLock, setRuntimeLockFailureHandler,
+  startBotRuntime, stopBotRuntime, startBotById, stopBotById,
+  getRunningBotCount, getBotRuntimeStatus,
+  createProjectAiJob, getLatestCompletedProjectAiJob, markProjectAiJobRunning,
+  completeProjectAiJob, failProjectAiJob, recoverInterruptedProjectAiJobs,
+  getProjectApprovalState, approveProjectMilestone, buildConstructionPoints,
+  startIntakeBot, stopIntakeBot, analyzeProject, designProject,
+  runProjectPipeline, getGeminiModel, getReleaseCandidate, decideRelease,
+  authorizeDeployment, reviewDeploymentReadiness, formatDeploymentReadinessReview,
+  enqueueDeploymentPreflight, getLatestDeploymentPreflightJob, formatDeploymentPreflightJob
+} = runtimeDependencies;
 
-const { startBotRuntime, stopBotRuntime, startBotById, stopBotById, getRunningBotCount, getBotRuntimeStatus } = require('./bot-runtime');
-const {
-  createProjectAiJob,
-  getLatestCompletedProjectAiJob,
-  markProjectAiJobRunning,
-  completeProjectAiJob,
-  failProjectAiJob,
-  recoverInterruptedProjectAiJobs,
-  getProjectApprovalState,
-  approveProjectMilestone
-} = require('./project-db');
-const { buildConstructionPoints } = require('./project-construction-points');
-const { startIntakeBot, stopIntakeBot } = require('./intake-bot');
-const { analyzeProject } = require('./gemini-analyst');
-const { designProject } = require('./ai-designer');
-const { runProjectPipeline } = require('./project-pipeline');
-const { getGeminiModel } = require('./ai-router');
-const { getReleaseCandidate, decideRelease, authorizeDeployment } = require('./project-release');
-const {
-  reviewDeploymentReadiness,
-  formatDeploymentReadinessReview
-} = require('./deployment-readiness-telegram');
-const {
-  enqueueDeploymentPreflight,
-  getLatestDeploymentPreflightJob,
-  formatDeploymentPreflightJob
-} = require('./deployment-preflight-queue');
+const botFactory = options.createBot || ((botToken) => new Bot(botToken, { client: { timeoutSeconds: 45 } }));
+const CUSTOMER_BOT_WORKER_MODE = env.CUSTOMER_BOT_WORKER_MODE === 'external';
 
-const CUSTOMER_BOT_WORKER_MODE = process.env.CUSTOMER_BOT_WORKER_MODE === 'external';
-
-const token = process.env.TELEGRAM_BOT_TOKEN;
-const adminId = process.env.TELEGRAM_ADMIN_ID;
+const token = options.token || env.TELEGRAM_BOT_TOKEN;
+const adminId = options.adminId || env.TELEGRAM_ADMIN_ID;
 
 if (!token || !adminId) {
   console.error('إعدادات Telegram ناقصة');
   throw new Error('إعدادات Telegram ناقصة');
 }
 
-const bot = new Bot(token, { client: { timeoutSeconds: 45 } });
+const bot = botFactory(token);
 const pendingAdds = new Map();
 
 function isAdmin(ctx) {
@@ -132,7 +128,6 @@ async function showProjects(ctx) {
     return ctx.reply('📁 لا توجد مشاريع مسجلة حالياً.');
   }
 
-  const { InlineKeyboard } = require('grammy');
   const labels = {
     collecting_requirements: 'يجمع المتطلبات',
     spec_approved: 'المواصفات معتمدة',
@@ -990,7 +985,7 @@ bot.callbackQuery(/^settings:(main|database|security|services|gemini|gemini:test
 
   if (section === 'security') {
     const encryptionReady = /^[0-9a-fA-F]{64}$/.test(
-      process.env.BOTS_ENCRYPTION_KEY || ''
+      env.BOTS_ENCRYPTION_KEY || ''
     );
     const adminReady = /^\d+$/.test(String(adminId || ''));
 
@@ -1016,14 +1011,14 @@ bot.callbackQuery(/^settings:(main|database|security|services|gemini|gemini:test
       'بوت المدير: ✅ يعمل (تم استقبال هذا الطلب)\n' +
       'بوتات العملاء العاملة: ' + runningCount + '\n' +
       'رمز بوت الاستقبال: ' +
-      (process.env.INTAKE_BOT_TOKEN ? '✅ مضبوط' : '⚠️ غير مضبوط') + '\n' +
+      (env.INTAKE_BOT_TOKEN ? '✅ مضبوط' : '⚠️ غير مضبوط') + '\n' +
       'المنصة: Telegram فقط'
     );
   }
 
   if (section === 'gemini') {
-    const configured = Boolean(process.env.GEMINI_API_KEY);
-    const model = process.env.GEMINI_MODEL || process.env.GEMINI_FREE_MODEL || 'gemini-3.8-flash';
+    const configured = Boolean(env.GEMINI_API_KEY);
+    const model = env.GEMINI_MODEL || env.GEMINI_FREE_MODEL || 'gemini-3.8-flash';
 
     const keyboard = new InlineKeyboard()
       .text('🧪 اختبار اتصال Gemini', 'settings:gemini:test')
@@ -1041,7 +1036,7 @@ bot.callbackQuery(/^settings:(main|database|security|services|gemini|gemini:test
   }
 
   if (section === 'gemini:test') {
-    if (!process.env.GEMINI_API_KEY) {
+    if (!env.GEMINI_API_KEY) {
       return showSettingsResult(ctx, '❌ لا يوجد GEMINI_API_KEY مضبوط في إعدادات Render.');
     }
 
@@ -1053,7 +1048,7 @@ bot.callbackQuery(/^settings:(main|database|security|services|gemini|gemini:test
     try {
       const { GoogleGenAI } = await import('@google/genai');
       const ai = new GoogleGenAI({
-        apiKey: process.env.GEMINI_API_KEY
+        apiKey: env.GEMINI_API_KEY
       });
       const model = getGeminiModel();
 
