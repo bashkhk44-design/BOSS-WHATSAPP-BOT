@@ -39,7 +39,7 @@ before any runtime code is moved.
 ## Acceptance criteria before enabling deployment
 
 - Worker entrypoint uses the current platform queue API and avoids importing Node bot runtimes or the Node HTTP server.
-- Worker unit tests and a static dependency-boundary test pass; a real Wrangler dry-run/bundle test is still required.
+- Worker unit tests, a static dependency-boundary test, and a credential-free Wrangler dry-run bundle test run in CI. The bundle test intentionally has no Hyperdrive binding.
 - A newly created, independently verified staging-only Hyperdrive binding connection test passes.
 - Master, intake, and customer webhook routes pass end-to-end staging tests.
 - AI build/test pipeline is dispatched to isolated Node workers/queue; it is not
