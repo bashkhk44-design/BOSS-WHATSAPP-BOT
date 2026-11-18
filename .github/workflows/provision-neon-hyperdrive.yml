@@ -1,0 +1,107 @@
+name: Provision Neon staging Hyperdrive
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or update the dedicated Neon staging Hyperdrive
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const required = [
+            'CLOUDFLARE_ACCOUNT_ID',
+            'CLOUDFLARE_API_TOKEN',
+            'NEON_DATABASE_URL'
+          ];
+          const missing = required.filter((key) => !process.env[key]);
+          if (missing.length) {
+            console.log('Not provisioned: add these GitHub Actions repository secrets, then run this workflow: ' + missing.join(', '));
+            process.exit(1);
+          }
+
+          const name = 'boss-bot-platform-staging-neon';
+          const url = new URL(process.env.NEON_DATABASE_URL);
+          const user = decodeURIComponent(url.username);
+          const database = decodeURIComponent(url.pathname.slice(1));
+
+          if (!['postgres:', 'postgresql:'].includes(url.protocol) ||
+              !url.hostname.endsWith('.neon.tech') ||
+              url.hostname.includes('-pooler') ||
+              database !== 'neondb' ||
+              user !== 'hyperdrive_user' ||
+              !url.password) {
+            throw new Error('NEON_DATABASE_URL must point to the direct Neon neondb endpoint using hyperdrive_user. No connection details were printed.');
+          }
+
+          const endpoint = 'https://api.cloudflare.com/client/v4/accounts/' +
+            encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID) +
+            '/hyperdrive/configs';
+          const headers = {
+            'Authorization': 'Bearer ' + process.env.CLOUDFLARE_API_TOKEN,
+            'Content-Type': 'application/json'
+          };
+
+          async function api(path, options = {}) {
+            const response = await fetch(endpoint + path, { ...options, headers });
+            const body = await response.json();
+            if (!response.ok || body.success !== true) {
+              const errors = (body.errors || []).map((e) => e.message).join('; ');
+              throw new Error('Cloudflare Hyperdrive API failed (' + response.status + '): ' + (errors || 'request rejected'));
+            }
+            return body.result;
+          }
+
+          (async () => {
+            const listed = await api('?per_page=100');
+            let config = (listed || []).find((item) => item.name === name);
+            if (!config) {
+              config = await api('', {
+                method: 'POST',
+                body: JSON.stringify({
+                  name,
+                  origin: {
+                    database,
+                    host: url.hostname,
+                    password: decodeURIComponent(url.password),
+                    port: Number(url.port || 5432),
+                    scheme: 'postgres',
+                    user
+                  },
+                  caching: { disabled: true },
+                  origin_connection_limit: 5
+                })
+              });
+              console.log('Created the dedicated staging Hyperdrive configuration.');
+            } else {
+              config = await api('/' + encodeURIComponent(config.id), {
+                method: 'PATCH',
+                body: JSON.stringify({
+                  origin: {
+                    host: url.hostname,
+                    port: Number(url.port || 5432)
+                  }
+                })
+              });
+              console.log('Updated the existing Hyperdrive origin host and port. Existing database credentials were not replaced.');
+            }
+
+            if (!config || !config.id) throw new Error('Cloudflare did not return a Hyperdrive configuration ID.');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'hyperdrive_id=' + config.id + '\n');
+            console.log('HYPERDRIVE_ID=' + config.id);
+            console.log('No Worker deployment, webhook activation, or database migration was performed.');
+          })().catch((error) => {
+            console.error(error.message);
+            process.exitCode = 1;
+          });
+          NODE
