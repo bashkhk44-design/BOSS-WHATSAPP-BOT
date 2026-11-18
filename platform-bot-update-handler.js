@@ -33,6 +33,11 @@ function createPlatformBotUpdateHandler({
       throw new Error('Invalid platform Telegram update job');
     }
 
+    const runtime = runtimes[identity];
+    if (!runtime || typeof runtime.handleUpdate !== 'function') {
+      throw new Error('No webhook handler runtime is registered for ' + identity);
+    }
+
     const claimed = await pool.query(`
       UPDATE platform_bot_inbound_updates AS inbox
       SET state = 'processing',
@@ -67,11 +72,6 @@ function createPlatformBotUpdateHandler({
       );
       if (current.rows[0]?.state === 'processed') return { duplicate: true, identity, updateId };
       throw new Error('Platform Telegram update is already leased or unavailable');
-    }
-
-    const runtime = runtimes[identity];
-    if (!runtime || typeof runtime.handleUpdate !== 'function') {
-      throw new Error('No webhook handler runtime is registered for ' + identity);
     }
 
     try {
