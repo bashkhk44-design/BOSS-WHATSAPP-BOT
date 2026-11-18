@@ -8,8 +8,8 @@ const valid = {
   DATABASE_URL: 'postgresql://boss:password@localhost:5432/boss_test',
   MASTER_WEBHOOK_SECRET: 'master_webhook_secret_abcdefghijklmnopqrstuvwxyz123456',
   INTAKE_WEBHOOK_SECRET: 'intake_webhook_secret_abcdefghijklmnopqrstuvwxyz123456',
-  TELEGRAM_BOT_TOKEN: '123456:master-bot-token',
-  INTAKE_BOT_TOKEN: '654321:intake-bot-token'
+  TELEGRAM_BOT_TOKEN: 'master-token-' + 'm'.repeat(40),
+  INTAKE_BOT_TOKEN: 'intake-token-' + 'i'.repeat(40)
 };
 
 test('platform webhook accepts independent secrets and PostgreSQL configuration', () => {
