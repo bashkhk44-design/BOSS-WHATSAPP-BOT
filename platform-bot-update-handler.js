@@ -25,6 +25,10 @@ function createPlatformBotUpdateHandler({
     const updateId = job?.payload?.updateId;
     const expectedJobType = JOB_TYPES[identity];
     const workerId = context.workerId;
+    const activeLeaseSeconds = context.leaseSeconds || leaseSeconds;
+    if (!Number.isInteger(activeLeaseSeconds) || activeLeaseSeconds < 10) {
+      throw new RangeError('worker leaseSeconds must be at least 10');
+    }
 
     if (!expectedJobType || job.job_type !== expectedJobType ||
         !Number.isSafeInteger(updateId) || updateId < 0 ||
@@ -63,7 +67,7 @@ function createPlatformBotUpdateHandler({
             AND job.locked_at >= NOW() - make_interval(secs => $6::int)
         )
       RETURNING inbox.payload
-    `, [identity, updateId, workerId, job.id, expectedJobType, leaseSeconds]);
+    `, [identity, updateId, workerId, job.id, expectedJobType, activeLeaseSeconds]);
 
     if (!claimed.rowCount) {
       const current = await pool.query(
@@ -101,7 +105,7 @@ function createPlatformBotUpdateHandler({
               AND job.locked_at >= NOW() - make_interval(secs => $6::int)
           )
         RETURNING inbox.id
-      `, [identity, updateId, workerId, job.id, expectedJobType, leaseSeconds]);
+      `, [identity, updateId, workerId, job.id, expectedJobType, activeLeaseSeconds]);
 
       if (!saved.rowCount) {
         throw new Error('Platform Telegram update lease was lost before completion');
