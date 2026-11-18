@@ -10,6 +10,31 @@ function getWebhookSslConfig(env = process.env) {
   return env.DATABASE_SSL === 'disable' ? false : true;
 }
 
+function validatePlatformWebhookSecrets(env = {}) {
+  const mode = env.PLATFORM_BOT_WEBHOOK_MODE;
+  if (mode === undefined || mode === 'disabled') return true;
+  if (mode !== 'enabled') {
+    throw new Error('PLATFORM_BOT_WEBHOOK_MODE must be enabled or disabled');
+  }
+
+  const secretPattern = /^[A-Za-z0-9_-]{32,256}$/;
+  for (const name of ['MASTER_WEBHOOK_SECRET', 'INTAKE_WEBHOOK_SECRET']) {
+    if (!secretPattern.test(env[name] || '')) {
+      throw new Error(name + ' must be 32-256 URL-safe characters when platform webhooks are enabled');
+    }
+  }
+  if (env.MASTER_WEBHOOK_SECRET === env.INTAKE_WEBHOOK_SECRET) {
+    throw new Error('Master and intake webhook secrets must be different');
+  }
+  if (env.TELEGRAM_BOT_TOKEN && env.MASTER_WEBHOOK_SECRET === env.TELEGRAM_BOT_TOKEN) {
+    throw new Error('Master webhook secret must be independent from the Telegram bot token');
+  }
+  if (env.INTAKE_BOT_TOKEN && env.INTAKE_WEBHOOK_SECRET === env.INTAKE_BOT_TOKEN) {
+    throw new Error('Intake webhook secret must be independent from the Telegram bot token');
+  }
+  return true;
+}
+
 function validateWebhookEnvironment(env = process.env) {
   if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
   if (!env.DATABASE_URL.toLowerCase().startsWith('postgres://') &&
@@ -22,6 +47,7 @@ function validateWebhookEnvironment(env = process.env) {
   if (env.DATABASE_SSL !== undefined && !['require', 'disable'].includes(env.DATABASE_SSL)) {
     throw new Error('DATABASE_SSL must be either require or disable');
   }
+  validatePlatformWebhookSecrets(env);
   return true;
 }
 
@@ -50,7 +76,12 @@ async function main() {
       if (!result.rowCount) return null;
       const token = decryptToken(result.rows[0]);
       return deriveTelegramWebhookSecret(botId, token, encryptionKey);
-    }
+    },
+    resolvePlatformSecret: process.env.PLATFORM_BOT_WEBHOOK_MODE === 'enabled'
+      ? async identity => identity === 'master'
+        ? process.env.MASTER_WEBHOOK_SECRET
+        : process.env.INTAKE_WEBHOOK_SECRET
+      : undefined
   });
 
   const port = Number(process.env.PORT || 8081);
@@ -85,4 +116,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, validateWebhookEnvironment, getWebhookSslConfig };
+module.exports = { main, validateWebhookEnvironment, getWebhookSslConfig, validatePlatformWebhookSecrets };
