@@ -21,13 +21,15 @@ function makeRequest(pathname, {
   method = 'POST',
   secret = env.MASTER_WEBHOOK_SECRET,
   body = JSON.stringify({ update_id: 77, message: { text: '/start' } }),
-  contentType = 'application/json'
+  contentType = 'application/json',
+  contentEncoding = null
 } = {}) {
   return new Request('https://edge.example.invalid' + pathname, {
     method,
     headers: {
       'content-type': contentType,
-      'x-telegram-bot-api-secret-token': secret
+      'x-telegram-bot-api-secret-token': secret,
+      ...(contentEncoding ? { 'content-encoding': contentEncoding } : {})
     },
     body: method === 'GET' ? undefined : body
   });
@@ -65,6 +67,9 @@ test('Cloudflare Worker authenticates platform identities and atomically enqueue
   assert.equal(state.connected, 1);
   assert.equal(state.ended, 1);
   assert.equal(state.config.connectionString, env.HYPERDRIVE.connectionString);
+  assert.equal(state.config.connectionTimeoutMillis, 5000);
+  assert.equal(state.config.query_timeout, 10000);
+  assert.equal(state.config.statement_timeout, 10000);
   assert.equal(state.queries[0].params[0], 'master');
   assert.match(state.queries[0].sql, /platform_bot_inbound_updates/);
   assert.match(state.queries[0].sql, /INSERT INTO platform_jobs/);
@@ -100,6 +105,7 @@ test('Cloudflare Worker validates route, mode, method, and content type before d
   assert.equal((await handler(makeRequest('/telegram/platform/customer'), env)).status, 404);
   assert.equal((await handler(makeRequest('/telegram/platform/master', { method: 'GET' }), env)).status, 405);
   assert.equal((await handler(makeRequest('/telegram/platform/master', { contentType: 'text/plain' }), env)).status, 415);
+  assert.equal((await handler(makeRequest('/telegram/platform/master', { contentEncoding: 'gzip' }), env)).status, 415);
   assert.equal((await handler(makeRequest('/telegram/platform/master'), {
     ...env,
     PLATFORM_BOT_WEBHOOK_MODE: 'disabled'
