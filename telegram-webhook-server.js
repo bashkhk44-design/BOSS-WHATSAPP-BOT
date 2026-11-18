@@ -2,7 +2,7 @@
 
 const http = require('node:http');
 const crypto = require('node:crypto');
-const { enqueueTelegramUpdate } = require('./platform-queue');
+const { enqueueTelegramUpdate, enqueuePlatformBotUpdate } = require('./platform-queue');
 
 function safeEqual(left, right) {
   const a = Buffer.from(String(left || ''), 'utf8');
@@ -21,6 +21,7 @@ function sendJson(res, status, body) {
 function createTelegramWebhookServer({
   pool,
   resolveSecret,
+  resolvePlatformSecret = null,
   maxBodyBytes = 1024 * 1024,
   headersTimeoutMs = 10_000,
   requestTimeoutMs = 30_000,
@@ -36,16 +37,20 @@ function createTelegramWebhookServer({
 
   const server = http.createServer(async (req, res) => {
     const pathname = (req.url || '').split('?')[0];
-    const match = pathname.match(/^\/telegram\/webhook\/(\d+)$/);
+    const customerMatch = pathname.match(/^\/telegram\/webhook\/(\d+)$/);
+    const platformMatch = pathname.match(/^\/telegram\/platform\/(master|intake)$/);
 
-    if (!match) return sendJson(res, 404, { ok: false, error: 'not_found' });
+    if (!customerMatch && (!platformMatch || typeof resolvePlatformSecret !== 'function')) {
+      return sendJson(res, 404, { ok: false, error: 'not_found' });
+    }
     if (req.method !== 'POST') {
       res.setHeader('Allow', 'POST');
       return sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
     }
 
-    const botId = Number(match[1]);
-    if (!Number.isSafeInteger(botId) || botId < 1) {
+    const botId = customerMatch ? Number(customerMatch[1]) : null;
+    const botIdentity = platformMatch ? platformMatch[1] : null;
+    if (customerMatch && (!Number.isSafeInteger(botId) || botId < 1)) {
       return sendJson(res, 404, { ok: false, error: 'not_found' });
     }
 
@@ -67,9 +72,12 @@ function createTelegramWebhookServer({
     }
 
     try {
-      const expectedSecret = await resolveSecret(botId);
+      const expectedSecret = botIdentity
+        ? await resolvePlatformSecret(botIdentity)
+        : await resolveSecret(botId);
       const suppliedSecret = req.headers['x-telegram-bot-api-secret-token'];
       if (!expectedSecret || !safeEqual(suppliedSecret, expectedSecret)) {
+        req.resume();
         return sendJson(res, 401, { ok: false, error: 'unauthorized' });
       }
 
@@ -95,7 +103,9 @@ function createTelegramWebhookServer({
         return sendJson(res, 400, { ok: false, error: 'invalid_update' });
       }
 
-      const queued = await enqueueTelegramUpdate(pool, { botId, update });
+      const queued = botIdentity
+        ? await enqueuePlatformBotUpdate(pool, { botIdentity, update })
+        : await enqueueTelegramUpdate(pool, { botId, update });
       return sendJson(res, 200, {
         ok: true,
         duplicate: queued.duplicate,
