@@ -18,12 +18,12 @@ const APPROVED_MIGRATION_FILES = Object.freeze([
   '007_platform_bot_inbox.sql'
 ]);
 
-function listMigrationFiles(directory, fsApi = fs) {
+function listMigrationFiles(directory, fsApi = fs, approvedFiles = APPROVED_MIGRATION_FILES) {
   const available = new Set(fsApi.readdirSync(directory));
-  return APPROVED_MIGRATION_FILES.filter(name => available.has(name));
+  return approvedFiles.filter(name => available.has(name));
 }
 
-function createMigrationRunner({ pool, migrationsDir = __dirname, fsApi = fs, logger = console }) {
+function createMigrationRunner({ pool, migrationsDir = __dirname, fsApi = fs, logger = console, approvedMigrationFiles = APPROVED_MIGRATION_FILES }) {
   if (!pool || typeof pool.connect !== 'function') {
     throw new TypeError('A PostgreSQL pool is required');
   }
@@ -50,7 +50,7 @@ function createMigrationRunner({ pool, migrationsDir = __dirname, fsApi = fs, lo
           'applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())'
         );
 
-        for (const filename of listMigrationFiles(migrationsDir, fsApi)) {
+        for (const filename of listMigrationFiles(migrationsDir, fsApi, approvedMigrationFiles)) {
           const version = filename.slice(0, -4);
           const existing = await client.query(
             'SELECT version FROM schema_migrations WHERE version = $1',
