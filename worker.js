@@ -72,12 +72,17 @@ async function main() {
     throw error;
   }
 
-  if (process.env.JOB_HANDLERS_MODULE) {
-    const handlersPath = path.isAbsolute(process.env.JOB_HANDLERS_MODULE)
-      ? process.env.JOB_HANDLERS_MODULE
-      : path.resolve(process.cwd(), process.env.JOB_HANDLERS_MODULE);
-    const loaded = require(handlersPath);
-    Object.assign(handlers, loaded.handlers || loaded);
+  try {
+    if (process.env.JOB_HANDLERS_MODULE) {
+      const handlersPath = path.isAbsolute(process.env.JOB_HANDLERS_MODULE)
+        ? process.env.JOB_HANDLERS_MODULE
+        : path.resolve(process.cwd(), process.env.JOB_HANDLERS_MODULE);
+      const loaded = require(handlersPath);
+      Object.assign(handlers, loaded.handlers || loaded);
+    }
+  } catch (error) {
+    try { await platformBotWorker.close(); } finally { await pool.end(); }
+    throw error;
   }
 
   const worker = createQueueWorker({
