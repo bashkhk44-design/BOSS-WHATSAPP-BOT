@@ -92,10 +92,18 @@ test('platform bot update handler records retryable failure while the worker sti
   assert.ok(calls.some(sql => sql.includes("SET state = 'failed'")));
 });
 
-test('platform bot update handler rejects mismatched job identity and lost lease before dispatch', async () => {
+test('platform bot update handler rejects mismatched job identity and a lost queue lease before dispatch', async () => {
   let queries = 0;
   let dispatchCalls = 0;
-  const pool = { async query() { queries += 1; return { rowCount: 0, rows: [] }; } };
+  const pool = {
+    async query(sql) {
+      queries += 1;
+      if (sql.includes("SET state = 'processing'")) {
+        return { rowCount: 1, rows: [{ payload: { update_id: 123 } }] };
+      }
+      assert.fail('a lost queue lease must not write inbox state');
+    }
+  };
   const handler = createPlatformBotUpdateHandler({
     pool,
     runtimes: { master: { async handleUpdate() { dispatchCalls += 1; } } }
@@ -107,8 +115,8 @@ test('platform bot update handler rejects mismatched job identity and lost lease
   );
   await assert.rejects(
     handler(makeJob(), { workerId: 'worker-d', isLeaseLost: () => true }),
-    /already leased or unavailable/
+    /queue lease was lost/
   );
-  assert.equal(queries, 2);
+  assert.equal(queries, 1);
   assert.equal(dispatchCalls, 0);
 });
