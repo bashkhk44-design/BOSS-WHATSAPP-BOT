@@ -11,6 +11,7 @@ on:
       - cloudflare-ci-staging-branch
   pull_request:
     branches:
+      - main
       - audit-hardening
       - feat/runtime-health-monitor
 
