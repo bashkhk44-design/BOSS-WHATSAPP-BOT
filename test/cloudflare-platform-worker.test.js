@@ -12,8 +12,8 @@ const env = {
   PLATFORM_BOT_WEBHOOK_MODE: 'enabled',
   MASTER_WEBHOOK_SECRET: 'master_edge_secret_abcdefghijklmnopqrstuvwxyz123456',
   INTAKE_WEBHOOK_SECRET: 'intake_edge_secret_abcdefghijklmnopqrstuvwxyz123456',
-  TELEGRAM_BOT_TOKEN: 'master-telegram-token',
-  INTAKE_BOT_TOKEN: 'intake-telegram-token',
+  TELEGRAM_BOT_TOKEN: 'master-telegram-token-' + 'm'.repeat(40),
+  INTAKE_BOT_TOKEN: 'intake-telegram-token-' + 'i'.repeat(40),
   HYPERDRIVE: { connectionString: 'postgresql://staging-user:staging-password@staging.example.invalid/staging' }
 };
 
@@ -217,4 +217,30 @@ test('Cloudflare configuration keeps Hyperdrive and Worker compatibility staging
   assert.equal(bundleConfig.hyperdrive, undefined, 'bundle test must not connect to a database');
   assert.equal('MASTER_WEBHOOK_SECRET' in stagingConfig.vars, false);
   assert.equal('INTAKE_WEBHOOK_SECRET' in stagingConfig.vars, false);
+});
+
+test('Cloudflare Worker rejects reuse of either platform webhook secret as either bot token', async () => {
+  const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
+  const { FakeClient, state } = makeClientClass();
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+
+  const cases = [
+    ['MASTER_WEBHOOK_SECRET', 'TELEGRAM_BOT_TOKEN'],
+    ['MASTER_WEBHOOK_SECRET', 'INTAKE_BOT_TOKEN'],
+    ['INTAKE_WEBHOOK_SECRET', 'TELEGRAM_BOT_TOKEN'],
+    ['INTAKE_WEBHOOK_SECRET', 'INTAKE_BOT_TOKEN']
+  ];
+
+  for (const [secretName, tokenName] of cases) {
+    const invalidEnv = {
+      ...env,
+      [secretName]: env[tokenName]
+    };
+    const identity = secretName === 'MASTER_WEBHOOK_SECRET' ? 'master' : 'intake';
+    const response = await handler(makeRequest('/telegram/platform/' + identity, {
+      secret: invalidEnv[secretName]
+    }), invalidEnv);
+    assert.equal(response.status, 401, secretName + ' must not reuse ' + tokenName);
+  }
+  assert.equal(state.constructed, 0);
 });
