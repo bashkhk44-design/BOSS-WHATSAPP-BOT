@@ -32,9 +32,14 @@ function resolvePlatformSecret(identity, env) {
   const master = env.MASTER_WEBHOOK_SECRET;
   const intake = env.INTAKE_WEBHOOK_SECRET;
   if (!SECRET_PATTERN.test(master || '') || !SECRET_PATTERN.test(intake || '') ||
-      master === intake ||
-      (env.TELEGRAM_BOT_TOKEN && master === env.TELEGRAM_BOT_TOKEN) ||
-      (env.INTAKE_BOT_TOKEN && intake === env.INTAKE_BOT_TOKEN)) {
+      master === intake) {
+    return null;
+  }
+
+  const webhookSecrets = [master, intake];
+  const botTokens = [env.TELEGRAM_BOT_TOKEN, env.INTAKE_BOT_TOKEN]
+    .filter(token => typeof token === 'string' && token.length > 0);
+  if (webhookSecrets.some(secret => botTokens.includes(secret))) {
     return null;
   }
 
