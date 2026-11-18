@@ -1,15 +1,12 @@
 # Cloudflare staging integration
 
-Status: preparation only. This branch is based on the current `audit-hardening` head.
-It intentionally does not deploy, change production services, alter Telegram webhooks,
-run database migrations, or connect to the production Neon database.
+Status: Worker source and local tests are prepared, but deployment remains disabled. No staging Hyperdrive binding, secret, route, webhook, or Cloudflare deployment has been configured. Production services and production Neon remain untouched.
 
 ## Deployment design
 
 1. GitHub Actions runs the repository's existing quality checks on every push to
    `cloudflare-staging-integration` and on pull requests targeting `audit-hardening`.
-2. A later, separately reviewed change will add the Cloudflare Worker runtime and
-   a staging-only deploy workflow.
+2. `cloudflare/worker.mjs` now provides the edge-only master/intake webhook ingress. A real Wrangler bundle test and staging-only deploy workflow are still required.
 3. Cloudflare deployment must use a dedicated Neon staging branch and a GitHub
    Environment named `cloudflare-staging` with restricted deployment approvals.
 4. Cloudflare credentials and Telegram staging tokens must be GitHub Environment
@@ -41,9 +38,9 @@ before any runtime code is moved.
 
 ## Acceptance criteria before enabling deployment
 
-- Worker entrypoint and imports are reconciled with current source.
-- Cloudflare compatibility checks and unit tests pass.
-- Staging-only Hyperdrive connection test passes.
+- Worker entrypoint uses the current platform queue API and avoids importing Node bot runtimes or the Node HTTP server.
+- Worker unit tests and a static dependency-boundary test pass; a real Wrangler dry-run/bundle test is still required.
+- A newly created, independently verified staging-only Hyperdrive binding connection test passes.
 - Master, intake, and customer webhook routes pass end-to-end staging tests.
 - AI build/test pipeline is dispatched to isolated Node workers/queue; it is not
   silently treated as supported by the edge Worker.
