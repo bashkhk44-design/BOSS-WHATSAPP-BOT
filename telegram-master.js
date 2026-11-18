@@ -1597,7 +1597,21 @@ function createWebhookRuntime() {
   };
 }
 
-return { bot, start: startRuntime, shutdown, createWebhookRuntime };
+let webhookResourcesClosePromise = null;
+async function closeWebhookResources() {
+  if (!webhookResourcesClosePromise) {
+    webhookResourcesClosePromise = (async () => {
+      try {
+        await releaseTelegramRuntimeLock();
+      } finally {
+        await pool.end();
+      }
+    })();
+  }
+  return webhookResourcesClosePromise;
+}
+
+return { bot, start: startRuntime, shutdown, createWebhookRuntime, closeWebhookResources };
 }
 
 module.exports = { createMasterRuntime };

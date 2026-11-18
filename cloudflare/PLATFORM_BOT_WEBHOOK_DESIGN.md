@@ -96,9 +96,10 @@ The Worker must not receive production tokens, production database credentials, 
 - PR 77: additive platform-bot inbox migration and disposable PostgreSQL identity/deduplication tests — merged.
 - PR 78: injectable intake runtime and no-polling `handleUpdate` adapter — merged.
 - PR 79: injectable master runtime and no-polling `handleUpdate` adapter — merged.
-- PR 80 (in progress): atomic platform inbox + queue-job enqueue, distinct master/intake job types, and worker-lease-fenced dispatch handler with unit and PostgreSQL integration tests.
-- None of these changes enables live webhook delivery or changes production tokens.
+- PR 80: atomic platform inbox + queue-job enqueue, distinct master/intake job types, and worker-lease-fenced dispatch handler with unit and PostgreSQL integration tests — merged.
+- PR 81 (in progress): opt-in Node worker wiring for the two system job types. It requires `PLATFORM_BOT_WEBHOOK_MODE=enabled` plus distinct master/intake tokens and an admin ID; the default remains disabled.
+- None of these changes configures Telegram webhook delivery or changes production tokens.
 
 ## Next coding slice
 
-Wire the new master/intake job types into a dedicated Node worker using explicit secret resolution and injected webhook runtimes. Prove identity isolation, lease renewal/recovery, failure retry, and no cross-dispatch end to end. Then add a platform webhook ingress with separate route identities and secret resolvers. Only after that should the Cloudflare Worker adapter and staging bundle test be added. Do not change production webhooks, tokens, databases, or deployments.
+Add a platform webhook ingress with separate `master` and `intake` route identities and independent secret resolvers. Prove secret isolation, request validation, durable enqueue, and end-to-end queue dispatch using staging-only tokens. Only after those gates should the Cloudflare Worker adapter and staging bundle test be added. Do not change production webhooks, tokens, databases, or deployments.
