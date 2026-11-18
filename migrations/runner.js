@@ -6,10 +6,21 @@ const path = require('node:path');
 const LOCK_KEY_1 = 20261117;
 const LOCK_KEY_2 = 1;
 
+// Only reviewed migrations are executable. New numbered SQL files must be
+// reviewed and added here deliberately; bootstrap and legacy files stay excluded.
+const APPROVED_MIGRATION_FILES = Object.freeze([
+  '001_foundation_database.sql',
+  '002_distributed_bot_worker_indexes.sql',
+  '003_bot_runtime_commands.sql',
+  '004_manager_command_recovery.sql',
+  '005_worker_health_heartbeats.sql',
+  '006_auto_remediation_audit.sql',
+  '007_platform_bot_inbox.sql'
+]);
+
 function listMigrationFiles(directory, fsApi = fs) {
-  return fsApi.readdirSync(directory)
-    .filter((name) => /^\d+_[a-z0-9_-]+\.sql$/i.test(name))
-    .sort((a, b) => a.localeCompare(b, 'en'));
+  const available = new Set(fsApi.readdirSync(directory));
+  return APPROVED_MIGRATION_FILES.filter(name => available.has(name));
 }
 
 function createMigrationRunner({
@@ -49,7 +60,7 @@ function createMigrationRunner({
         `);
 
         for (const filename of listMigrationFiles(migrationsDir, fsApi)) {
-          const version = filename.replace(/\.sql$/i, '');
+          const version = filename.replace(/\\.sql$/i, '');
           const existing = await client.query(
             'SELECT version FROM schema_migrations WHERE version = $1',
             [version]
@@ -61,7 +72,8 @@ function createMigrationRunner({
           }
 
           const sql = fsApi.readFileSync(path.join(migrationsDir, filename), 'utf8');
-          if (!/^\s*(?:--[^\r\n]*(?:\r?\n|$)\s*)*BEGIN\s*;/i.test(sql) || !/\bCOMMIT\s*;\s*$/i.test(sql)) {
+          if (!/^\\s*(?:--[^\\r\\n]*(?:\\r?\\n|$)\\s*)*BEGIN\\s*;/i.test(sql) ||
+              !/\\bCOMMIT\\s*;\\s*$/.test(sql)) {
             throw new Error(`Migration ${filename} must contain a transaction ending in COMMIT;`);
           }
 
@@ -122,13 +134,14 @@ async function main() {
 }
 
 if (require.main === module) {
-  main().catch((error) => {
+  main().catch(error => {
     console.error('DATABASE MIGRATION FAILED:', error.message);
     process.exitCode = 1;
   });
 }
 
 module.exports = {
+  APPROVED_MIGRATION_FILES,
   createMigrationRunner,
   listMigrationFiles
 };
