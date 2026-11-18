@@ -1,5 +1,6 @@
 const { Pool } = require('pg');
 const crypto = require('crypto');
+const { getPostgresSslConfig } = require('./postgres-ssl');
 
 if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL غير مضبوط في متغيرات البيئة');
@@ -7,22 +8,26 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: getPostgresSslConfig(),
   max: 3,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000
 });
 
-if (!process.env.DATABASE_DIRECT_URL) {
-  throw new Error('DATABASE_DIRECT_URL غير مضبوط في Render');
-}
-
 const lockPool = new Pool({
-  connectionString: process.env.DATABASE_DIRECT_URL,
-  ssl: { rejectUnauthorized: false },
+  connectionString: process.env.DATABASE_DIRECT_URL || process.env.DATABASE_URL,
+  ssl: getPostgresSslConfig(),
   max: 1,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000
+});
+
+pool.on('error', (err) => {
+  console.error('POSTGRES IDLE CLIENT ERROR:', err.message);
+});
+
+lockPool.on('error', (err) => {
+  console.error('POSTGRES LOCK POOL ERROR:', err.message);
 });
 
 function getEncryptionKey() {
@@ -73,6 +78,55 @@ function decryptToken(record) {
 
   decrypted += decipher.final('utf8');
   return decrypted;
+}
+
+
+function encryptSecret(value) {
+  if (typeof value !== 'string' || !value.length) {
+    throw new Error('قيمة السر يجب أن تكون نصاً غير فارغ.');
+  }
+
+  const key = getEncryptionKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+
+  const ciphertext = Buffer.concat([
+    cipher.update(value, 'utf8'),
+    cipher.final()
+  ]).toString('base64');
+
+  return {
+    ciphertext,
+    iv: iv.toString('hex'),
+    authTag: cipher.getAuthTag().toString('hex')
+  };
+}
+
+function decryptSecret(record) {
+  if (
+    !record ||
+    !record.secret_ciphertext ||
+    !record.secret_iv ||
+    !record.secret_auth_tag
+  ) {
+    throw new Error('بيانات السر المشفر غير مكتملة.');
+  }
+
+  const key = getEncryptionKey();
+  const decipher = crypto.createDecipheriv(
+    'aes-256-gcm',
+    key,
+    Buffer.from(record.secret_iv, 'hex')
+  );
+
+  decipher.setAuthTag(Buffer.from(record.secret_auth_tag, 'hex'));
+
+  const decrypted = Buffer.concat([
+    decipher.update(record.secret_ciphertext, 'base64'),
+    decipher.final()
+  ]);
+
+  return decrypted.toString('utf8');
 }
 
 async function initDatabase() {
@@ -148,9 +202,63 @@ async function getActiveTelegramBots() {
 
 
 let runtimeLockClient = null;
+let runtimeLockFailureHandler = null;
+let runtimeLockFailureClient = null;
+let runtimeLockFailureError = null;
+let lockPoolEndPromise = null;
+
+function setRuntimeLockFailureHandler(handler) {
+  if (handler !== null && typeof handler !== 'function') {
+    throw new TypeError('Runtime lock failure handler must be a function or null');
+  }
+  runtimeLockFailureHandler = handler;
+}
+
+function notifyRuntimeLockFailure(client, err) {
+  if (runtimeLockClient !== client || runtimeLockFailureClient === client) return;
+
+  runtimeLockFailureClient = client;
+  runtimeLockClient = null;
+  const error = err instanceof Error
+    ? err
+    : new Error(String(err || 'Telegram runtime lock connection lost'));
+  runtimeLockFailureError = error;
+
+  console.error('TELEGRAM RUNTIME LOCK FAILURE:', error.message);
+
+  try {
+    client.release(error);
+  } catch (_) {}
+
+  if (runtimeLockFailureHandler) {
+    Promise.resolve()
+      .then(() => runtimeLockFailureHandler(error))
+      .catch(handlerError => {
+        console.error('RUNTIME LOCK FAILURE HANDLER ERROR:', handlerError.message);
+      });
+  }
+}
+
+function closeLockPool() {
+  if (!lockPoolEndPromise) {
+    lockPoolEndPromise = lockPool.end();
+  }
+  return lockPoolEndPromise;
+}
 
 async function acquireTelegramRuntimeLock() {
-  if (runtimeLockClient) return true;
+  if (runtimeLockClient) {
+    const stillHeld = await isTelegramRuntimeLockHeld();
+    if (stillHeld) return true;
+
+    const staleClient = runtimeLockClient;
+    if (staleClient) {
+      runtimeLockClient = null;
+      try {
+        staleClient.release();
+      } catch (_) {}
+    }
+  }
 
   const client = await lockPool.connect();
 
@@ -166,42 +274,84 @@ async function acquireTelegramRuntimeLock() {
     }
 
     runtimeLockClient = client;
+    runtimeLockFailureClient = null;
+    runtimeLockFailureError = null;
 
     client.on('error', (err) => {
-      console.error('TELEGRAM RUNTIME LOCK CONNECTION LOST:', err.message);
-      process.exit(1);
+      notifyRuntimeLockFailure(client, err);
     });
 
     client.on('end', () => {
-      if (runtimeLockClient === client) {
-        console.error('TELEGRAM RUNTIME LOCK CONNECTION ENDED');
-        process.exit(1);
-      }
+      notifyRuntimeLockFailure(
+        client,
+        new Error('Telegram runtime lock connection ended')
+      );
     });
 
     console.log('Telegram runtime lock acquired using direct connection');
     return true;
   } catch (err) {
-    client.release();
+    client.release(err);
     throw err;
+  }
+}
+
+async function isTelegramRuntimeLockHeld() {
+  const client = runtimeLockClient;
+
+  if (!client || runtimeLockFailureClient === client) {
+    return false;
+  }
+
+  try {
+    const result = await client.query(
+      `SELECT EXISTS (
+        SELECT 1
+        FROM pg_locks
+        WHERE locktype = 'advisory'
+          AND pid = pg_backend_pid()
+          AND classid = 20261115::oid
+          AND objid = 1::oid
+          AND objsubid = 2
+      ) AS locked`
+    );
+
+    return runtimeLockClient === client
+      && runtimeLockFailureClient !== client
+      && result.rows[0]?.locked === true;
+  } catch (err) {
+    notifyRuntimeLockFailure(client, err);
+    return false;
   }
 }
 
 async function releaseTelegramRuntimeLock() {
   const client = runtimeLockClient;
-  if (!client) return;
-
   runtimeLockClient = null;
 
+  let releaseError = runtimeLockFailureError;
+
   try {
-    await client.query(
-      'SELECT pg_advisory_unlock($1, $2)',
-      [20261115, 1]
-    );
-    console.log('Telegram runtime lock released');
+    if (client && !releaseError) {
+      await client.query(
+        'SELECT pg_advisory_unlock($1, $2)',
+        [20261115, 1]
+      );
+      console.log('Telegram runtime lock released');
+    }
+  } catch (err) {
+    releaseError = err;
+    console.error('RUNTIME LOCK UNLOCK ERROR:', err.message);
   } finally {
-    client.release();
-    await lockPool.end();
+    if (client) {
+      try {
+        client.release(releaseError || undefined);
+      } catch (err) {
+        console.error('RUNTIME LOCK CLIENT RELEASE ERROR:', err.message);
+      }
+    }
+
+    await closeLockPool();
   }
 }
 
@@ -211,6 +361,10 @@ module.exports = {
   insertTelegramBot,
   getActiveTelegramBots,
   decryptToken,
+  encryptSecret,
+  decryptSecret,
   acquireTelegramRuntimeLock,
-  releaseTelegramRuntimeLock
+  isTelegramRuntimeLockHeld,
+  releaseTelegramRuntimeLock,
+  setRuntimeLockFailureHandler
 };

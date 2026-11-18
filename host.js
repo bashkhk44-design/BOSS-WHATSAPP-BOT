@@ -1,20 +1,35 @@
-const http = require('http');
+'use strict';
+
+const { createHealthServer } = require('./health-server');
 
 const PORT = Number(process.env.PORT || 8080);
 
-http.createServer((req, res) => {
-  if (req.url === '/health' || req.url === '/healthz') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({
-      status: 'ok',
-      service: 'BOSS BOT MASTER'
-    }));
-  }
+let runtimeReady = false;
+let runtimeStopping = false;
 
-  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end('BOSS BOT MASTER is running');
-}).listen(PORT, '0.0.0.0', () => {
+process.on('boss:runtime-ready', () => {
+  runtimeReady = true;
+  runtimeStopping = false;
+  console.log('Health status: READY');
+});
+
+process.on('boss:runtime-stopping', (signal) => {
+  runtimeReady = false;
+  runtimeStopping = true;
+  console.log('Health status: STOPPING', signal || '');
+});
+
+const server = createHealthServer(() => ({ runtimeReady, runtimeStopping }));
+
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`BOSS BOT MASTER health server running on port ${PORT}`);
 });
 
-require('./telegram-master');
+server.on('error', (err) => {
+  console.error('HEALTH SERVER ERROR:', err.message);
+  process.exitCode = 1;
+});
+
+const { createMasterRuntime } = require('./telegram-master');
+const telegramRuntime = createMasterRuntime();
+void telegramRuntime.start();
