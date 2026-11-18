@@ -338,6 +338,9 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
   const token = options.token || process.env.INTAKE_BOT_TOKEN;
 
   if (!token) {
+    if (mode === 'webhook') {
+      throw new Error('An intake bot token is required for webhook mode');
+    }
     console.log('Intake bot disabled: INTAKE_BOT_TOKEN is not configured');
     return null;
   }
