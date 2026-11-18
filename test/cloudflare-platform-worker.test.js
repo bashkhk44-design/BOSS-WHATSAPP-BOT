@@ -125,6 +125,20 @@ test('Cloudflare Worker rejects malformed JSON, invalid update IDs, and oversize
   assert.equal(state.constructed, 0);
 });
 
+test('Cloudflare Worker fails closed when the Hyperdrive binding is missing', async () => {
+  const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
+  const { FakeClient, state } = makeClientClass();
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+
+  const response = await handler(makeRequest('/telegram/platform/master'), {
+    ...env,
+    HYPERDRIVE: undefined
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { ok: false, error: 'temporarily_unavailable' });
+  assert.equal(state.constructed, 0);
+});
+
 test('Cloudflare Worker acknowledges duplicate delivery and always closes the Hyperdrive client', async () => {
   const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
   const { FakeClient, state } = makeClientClass({ duplicate: true });
