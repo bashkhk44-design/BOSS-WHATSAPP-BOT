@@ -3,6 +3,8 @@ import platformQueue from '../platform-queue.js';
 
 const { enqueuePlatformBotUpdate } = platformQueue;
 const MAX_BODY_BYTES = 1024 * 1024;
+const DB_CONNECT_TIMEOUT_MS = 5000;
+const DB_QUERY_TIMEOUT_MS = 10000;
 const SECRET_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
 
 function jsonResponse(status, body) {
@@ -114,6 +116,12 @@ export function createPlatformWebhookHandler({
       return jsonResponse(415, { ok: false, error: 'unsupported_media_type' });
     }
 
+    const contentEncoding = (request.headers.get('content-encoding') || 'identity').trim().toLowerCase();
+    if (contentEncoding !== 'identity') {
+      await request.body?.cancel().catch(() => {});
+      return jsonResponse(415, { ok: false, error: 'unsupported_content_encoding' });
+    }
+
     const declaredLength = request.headers.get('content-length');
     if (declaredLength !== null) {
       if (!/^\d+$/.test(declaredLength) || !Number.isSafeInteger(Number(declaredLength))) {
@@ -157,7 +165,12 @@ export function createPlatformWebhookHandler({
 
     let client;
     try {
-      client = new ClientClass({ connectionString });
+      client = new ClientClass({
+        connectionString,
+        connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
+        query_timeout: DB_QUERY_TIMEOUT_MS,
+        statement_timeout: DB_QUERY_TIMEOUT_MS
+      });
       await client.connect();
       const queued = await enqueue(client, { botIdentity: identity, update });
       return jsonResponse(200, {
