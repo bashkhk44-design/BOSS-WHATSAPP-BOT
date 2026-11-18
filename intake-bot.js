@@ -970,11 +970,15 @@ async function stopIntakeBot() {
     intakeBot = null;
     pollingPromise = null;
     intakeReadyPromise = null;
+    intakeMode = null;
   }
 }
 
+async function createWebhookRuntime({ token, notifyAdmin = null } = {}) {
+  return startIntakeBot(notifyAdmin, null, { mode: 'webhook', token });
+}
 
-  return { startIntakeBot, stopIntakeBot };
+  return { startIntakeBot, stopIntakeBot, createWebhookRuntime };
 }
 
 let defaultRuntime = null;
