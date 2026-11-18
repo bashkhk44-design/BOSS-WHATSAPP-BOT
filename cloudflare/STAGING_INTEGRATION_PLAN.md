@@ -1,51 +1,32 @@
 # Cloudflare staging integration
 
-Status: preparation only. This branch is based on the current `audit-hardening` head.
-It intentionally does not deploy, change production services, alter Telegram webhooks,
-run database migrations, or connect to the production Neon database.
+Status: an isolated staging deployment is approved and has a separate source branch. The staging source must remain separate from `main` and must never be treated as a production release.
 
-## Deployment design
+## Approved staging source
 
-1. GitHub Actions runs the repository's existing quality checks on every push to
-   `cloudflare-staging-integration` and on pull requests targeting `audit-hardening`.
-2. A later, separately reviewed change will add the Cloudflare Worker runtime and
-   a staging-only deploy workflow.
-3. Cloudflare deployment must use a dedicated Neon staging branch and a GitHub
-   Environment named `cloudflare-staging` with restricted deployment approvals.
-4. Cloudflare credentials and Telegram staging tokens must be GitHub Environment
-   secrets, never committed to the repository.
-5. Production Render, production Neon, production Telegram bot tokens/webhooks,
-   and `BOTS_ENCRYPTION_KEY` remain untouched until a separately approved cutover.
+- Branch: `cloudflare-webhook-prep`
+- Verified commit: `282d79af227ed5114a0a994734afdc2b2d048ac5`
+- Staging checks run #17: https://github.com/bashkhk44-design/BOSS-WHATSAPP-BOT/actions/runs/43973423849
+- Staging Worker: `https://boss-bot-master-staging.bashkhk44.workers.dev`
+- Hyperdrive binding ID in the staging branch: `cd5e3271174a425c914d3c25da64e816`
+- GitHub Environment: `cloudflare-staging`
 
-## Required staging configuration (not yet populated)
+The workflow on `main` checks out only `cloudflare-webhook-prep`, deploys only the staging Worker, and checks `/healthz` and `/db-healthz`. It does not deploy the `main` application source.
 
-GitHub Environment: `cloudflare-staging`
+## Separation from the main application
 
-- `CLOUDFLARE_API_TOKEN` — secret with access only to the staging Worker.
-- `CLOUDFLARE_ACCOUNT_ID` — staging account identifier (may be a variable).
-- Staging-only Telegram bot tokens and webhook secrets.
-- Hyperdrive binding connected only to a dedicated Neon staging database.
-- A staging encryption key and staging-only bot records.
+The current `main` branch has a newer durable queue architecture and separate Node workers for master/intake and customer bot updates. The Cloudflare staging branch is a separate integration candidate that was tested in isolation. Do not merge `cloudflare-webhook-prep` into `main` as part of this staging workflow.
 
-Do not copy production credentials into this environment.
+Any future Cloudflare port of the current durable queue architecture must be reviewed and tested as a separate change. Do not silently replace the approved staging source with a different branch.
 
-## Current migration boundary
+## Staging acceptance
 
-The previous Cloudflare prototype lives on the older
-`cloudflare-webhook-prep` branch. That branch diverged substantially from the
-current application branch. Its runtime files must be ported and reconciled with
-the current source; merging or deploying that old branch wholesale could roll
-back security and reliability fixes. This integration branch therefore starts
-from the current application head and records the safe deployment contract
-before any runtime code is moved.
+1. Deploy the approved staging branch through the `cloudflare-staging` GitHub Environment.
+2. Confirm `/healthz` and `/db-healthz` both return success.
+3. Test master, intake, and customer webhook routes with staging-only bot credentials.
+4. Verify duplicate update handling, retry behavior, and clean Worker lifecycle.
+5. Confirm the Hyperdrive connection points only to the Neon staging database.
 
-## Acceptance criteria before enabling deployment
+## Production boundary
 
-- Worker entrypoint and imports are reconciled with current source.
-- Cloudflare compatibility checks and unit tests pass.
-- Staging-only Hyperdrive connection test passes.
-- Master, intake, and customer webhook routes pass end-to-end staging tests.
-- AI build/test pipeline is dispatched to isolated Node workers/queue; it is not
-  silently treated as supported by the edge Worker.
-- GitHub Actions deploys only the staging Worker after all checks pass.
-- Production cutover remains a separate, explicitly approved operation.
+No production Render service, production Neon database, production Telegram token or webhook, or production encryption key may be changed by this workflow. Production cutover requires a separate explicit approval.
