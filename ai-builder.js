@@ -42,7 +42,10 @@ function validateBundle(bundle) {
     const containsSensitiveSegment = pathSegments.some(segment =>
       segment === '.git' ||
       segment === 'node_modules' ||
-      /^\\.env(?:$|[._-])/.test(segment) ||
+      segment === '.env' ||
+      segment.startsWith('.env.') ||
+      segment.startsWith('.env-') ||
+      segment.startsWith('.env_') ||
       segment === '.envrc'
     );
     if (containsSensitiveSegment) {
