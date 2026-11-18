@@ -18,15 +18,6 @@ function validatePlatformWebhookEnvironment(env = process.env) {
   if (!/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL || '')) {
     throw new Error('DATABASE_URL must use the PostgreSQL protocol');
   }
-  for (const name of ['MASTER_WEBHOOK_SECRET', 'INTAKE_WEBHOOK_SECRET']) {
-    if (!/^[A-Za-z0-9_-]{32,256}$/.test(env[name] || '')) {
-      throw new Error(name + ' must be 32-256 URL-safe characters');
-    }
-  }
-  if (env.MASTER_WEBHOOK_SECRET === env.INTAKE_WEBHOOK_SECRET) {
-    throw new Error('Master and intake webhook secrets must be different');
-  }
-
   // Telegram webhook secrets are authentication credentials, not bot API tokens.
   // Reject reuse against either platform token to keep the transport boundary separate.
   const webhookSecrets = [
@@ -44,6 +35,15 @@ function validatePlatformWebhookEnvironment(env = process.env) {
       }
     }
   }
+  for (const name of ['MASTER_WEBHOOK_SECRET', 'INTAKE_WEBHOOK_SECRET']) {
+    if (!/^[A-Za-z0-9_-]{32,256}$/.test(env[name] || '')) {
+      throw new Error(name + ' must be 32-256 URL-safe characters');
+    }
+  }
+  if (env.MASTER_WEBHOOK_SECRET === env.INTAKE_WEBHOOK_SECRET) {
+    throw new Error('Master and intake webhook secrets must be different');
+  }
+
   return true;
 }
 
