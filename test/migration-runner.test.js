@@ -41,6 +41,7 @@ test('migration runner applies pending files once and skips recorded versions', 
   const runner = createMigrationRunner({
     pool: mock.pool,
     migrationsDir: directory,
+    approvedMigrationFiles: ['001_test_foundation.sql'],
     logger: { log() {}, error() {} }
   });
 
@@ -66,13 +67,13 @@ test('migration runner refuses to proceed when another runner owns the lock', as
   assert.equal(mock.calls.filter((call) => call.released).length, 1);
 });
 
-test('migration discovery is ordered and ignores non-migration files', (t) => {
+test('migration discovery includes only reviewed migration files', (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-migration-list-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  for (const name of ['002_second.sql', 'notes.txt', '001_first.sql']) {
+  for (const name of ['20261118_bot_runtime_status.sql', 'notes.txt', '001_foundation_database.sql', '009_future_unreviewed.sql']) {
     fs.writeFileSync(path.join(directory, name), '');
   }
-  assert.deepEqual(listMigrationFiles(directory), ['001_first.sql', '002_second.sql']);
+  assert.deepEqual(listMigrationFiles(directory), ['001_foundation_database.sql']);
 });
 
 test('foundation migration has balanced PL/pgSQL dollar delimiters and ownership checks', () => {
