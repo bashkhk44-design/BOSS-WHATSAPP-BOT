@@ -6,12 +6,14 @@ const path = require('node:path');
 const { Pool } = require('pg');
 const { createQueueWorker } = require('./queue-worker');
 const { createTelegramUpdateHandler } = require('./telegram-update-handler');
+const { createPlatformBotWorker, validatePlatformBotWorkerEnvironment } = require('./platform-bot-worker');
 
 function getWorkerSslConfig(env = process.env) {
   return env.DATABASE_SSL === 'disable' ? false : true;
 }
 
 function validateWorkerEnvironment(env = process.env) {
+  validatePlatformBotWorkerEnvironment(env);
   if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
   if (!/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL)) {
     throw new Error('DATABASE_URL must use the PostgreSQL protocol');
@@ -57,6 +59,19 @@ async function main() {
     'telegram.update': createTelegramUpdateHandler({ pool, decryptToken })
   };
 
+  let platformBotWorker;
+  try {
+    platformBotWorker = await createPlatformBotWorker({
+      pool,
+      env: process.env,
+      leaseSeconds: Number(process.env.QUEUE_LEASE_SECONDS || 120)
+    });
+    Object.assign(handlers, platformBotWorker.handlers);
+  } catch (error) {
+    await pool.end();
+    throw error;
+  }
+
   if (process.env.JOB_HANDLERS_MODULE) {
     const handlersPath = path.isAbsolute(process.env.JOB_HANDLERS_MODULE)
       ? process.env.JOB_HANDLERS_MODULE
@@ -77,8 +92,15 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log('Queue worker stopping: ' + signal);
-    await worker.stop();
-    await pool.end();
+    try {
+      await worker.stop();
+    } finally {
+      try {
+        await platformBotWorker.close();
+      } finally {
+        await pool.end();
+      }
+    }
   };
 
   process.once('SIGTERM', () => shutdown('SIGTERM').catch(err => {
