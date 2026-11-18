@@ -3,7 +3,10 @@
 const { createPlatformBotUpdateHandler } = require('./platform-bot-update-handler');
 
 function validatePlatformBotWorkerEnvironment(env = {}) {
-  if (env.PLATFORM_BOT_WEBHOOK_MODE !== 'enabled') return false;
+  if (env.PLATFORM_BOT_WEBHOOK_MODE === undefined || env.PLATFORM_BOT_WEBHOOK_MODE === 'disabled') return false;
+  if (env.PLATFORM_BOT_WEBHOOK_MODE !== 'enabled') {
+    throw new Error('PLATFORM_BOT_WEBHOOK_MODE must be enabled or disabled');
+  }
   const required = ['TELEGRAM_BOT_TOKEN', 'INTAKE_BOT_TOKEN', 'TELEGRAM_ADMIN_ID'];
   for (const name of required) {
     if (typeof env[name] !== 'string' || !env[name].trim()) {
@@ -40,25 +43,25 @@ async function createPlatformBotWorker({
   const intakeFactory = createIntakeRuntime ||
     require('./intake-bot').createIntakeRuntime;
 
-  const masterRuntime = masterFactory({
-    env,
-    token: env.TELEGRAM_BOT_TOKEN,
-    adminId: env.TELEGRAM_ADMIN_ID
-  });
-  if (!masterRuntime || typeof masterRuntime.createWebhookRuntime !== 'function') {
-    throw new TypeError('Master runtime factory must expose createWebhookRuntime()');
-  }
-
-  const masterWebhook = masterRuntime.createWebhookRuntime();
-  const intakeRuntime = intakeFactory();
-  if (!intakeRuntime || typeof intakeRuntime.createWebhookRuntime !== 'function') {
-    await masterWebhook.stop();
-    await masterRuntime.closeWebhookResources?.();
-    throw new TypeError('Intake runtime factory must expose createWebhookRuntime()');
-  }
-
-  let intakeWebhook;
+  let masterRuntime = null;
+  let masterWebhook = null;
+  let intakeWebhook = null;
   try {
+    masterRuntime = masterFactory({
+      env,
+      token: env.TELEGRAM_BOT_TOKEN,
+      adminId: env.TELEGRAM_ADMIN_ID
+    });
+    if (!masterRuntime || typeof masterRuntime.createWebhookRuntime !== 'function') {
+      throw new TypeError('Master runtime factory must expose createWebhookRuntime()');
+    }
+
+    masterWebhook = masterRuntime.createWebhookRuntime();
+    const intakeRuntime = intakeFactory();
+    if (!intakeRuntime || typeof intakeRuntime.createWebhookRuntime !== 'function') {
+      throw new TypeError('Intake runtime factory must expose createWebhookRuntime()');
+    }
+
     intakeWebhook = await intakeRuntime.createWebhookRuntime({
       token: env.INTAKE_BOT_TOKEN,
       notifyAdmin: async ({ text, extra }) => {
@@ -66,8 +69,9 @@ async function createPlatformBotWorker({
       }
     });
   } catch (error) {
-    await masterWebhook.stop();
-    await masterRuntime.closeWebhookResources?.();
+    try { await intakeWebhook?.stop(); } catch (_) {}
+    try { await masterWebhook?.stop(); } catch (_) {}
+    try { await masterRuntime?.closeWebhookResources?.(); } catch (_) {}
     throw error;
   }
 
