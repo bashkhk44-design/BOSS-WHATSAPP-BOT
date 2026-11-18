@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { validateWebhookEnvironment, getWebhookSslConfig } = require('../webhook');
+const { validateWebhookEnvironment, getWebhookSslConfig, validatePlatformWebhookSecrets } = require('../webhook');
 
 const validEnvironment = {
   DATABASE_URL: 'postgresql://test_user:test_password@localhost:5432/boss_test',
@@ -72,4 +72,35 @@ test('webhook PostgreSQL connections verify TLS certificates by default and when
 
 test('webhook PostgreSQL TLS can only be disabled through explicit configuration', () => {
   assert.equal(getWebhookSslConfig({ DATABASE_SSL: 'disable' }), false);
+});
+
+
+test('platform webhook secrets are optional while platform routes are disabled', () => {
+  assert.equal(validatePlatformWebhookSecrets({}), true);
+  assert.equal(validatePlatformWebhookSecrets({ PLATFORM_BOT_WEBHOOK_MODE: 'disabled' }), true);
+});
+
+test('platform webhook secrets require distinct strong secrets when enabled', () => {
+  const valid = {
+    PLATFORM_BOT_WEBHOOK_MODE: 'enabled',
+    MASTER_WEBHOOK_SECRET: 'master_secret_abcdefghijklmnopqrstuvwxyz123456',
+    INTAKE_WEBHOOK_SECRET: 'intake_secret_abcdefghijklmnopqrstuvwxyz123456'
+  };
+  assert.equal(validatePlatformWebhookSecrets(valid), true);
+  assert.throws(
+    () => validatePlatformWebhookSecrets({ ...valid, INTAKE_WEBHOOK_SECRET: valid.MASTER_WEBHOOK_SECRET }),
+    /must be different/
+  );
+  assert.throws(
+    () => validatePlatformWebhookSecrets({ ...valid, MASTER_WEBHOOK_SECRET: 'short' }),
+    /32-256 URL-safe characters/
+  );
+  assert.throws(
+    () => validatePlatformWebhookSecrets({ ...valid, TELEGRAM_BOT_TOKEN: valid.MASTER_WEBHOOK_SECRET }),
+    /independent from the Telegram bot token/
+  );
+  assert.throws(
+    () => validatePlatformWebhookSecrets({ PLATFORM_BOT_WEBHOOK_MODE: 'true' }),
+    /must be enabled or disabled/
+  );
 });
