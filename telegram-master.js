@@ -23,7 +23,7 @@ const runtimeDependencies = options.dependencies || (() => {
 
 const {
   Bot, Keyboard, InlineKeyboard, isPrivateAdmin,
-  pool, initDatabase, insertTelegramBot, acquireTelegramRuntimeLock,
+  pool, verifyDatabaseSchema, insertTelegramBot, acquireTelegramRuntimeLock,
   isTelegramRuntimeLockHeld, releaseTelegramRuntimeLock, setRuntimeLockFailureHandler,
   startBotRuntime, stopBotRuntime, startBotById, stopBotById,
   getRunningBotCount, getBotRuntimeStatus,
@@ -1435,7 +1435,7 @@ async function start() {
 
     while (!databaseReady && !shuttingDown) {
       try {
-        await initDatabase();
+        await verifyDatabaseSchema();
         databaseReady = true;
       } catch (databaseError) {
         console.error('DATABASE INITIALIZATION FAILED; retrying in 10 seconds:', databaseError.message);
