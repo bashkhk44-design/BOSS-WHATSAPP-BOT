@@ -11,9 +11,11 @@ Design/audit only. This document does not enable webhook delivery, change Telegr
 - `migrations/001_foundation_database.sql` defines `bot_inbound_updates.bot_id` as a foreign key to `telegram_bots(id)`. This is a customer-bot identity model.
 - `worker.js` registers `telegram.update` with `createTelegramUpdateHandler`.
 - `telegram-update-handler.js` loads the encrypted customer bot record, decrypts its token and creates a customer bot through `createCustomerBot`; it does not dispatch master or intake bot updates.
-- `telegram-master.js` still starts the master bot through grammY polling and owns the distributed runtime lock/recovery lifecycle.
-- `intake-bot.js` now has a lazy `createIntakeRuntime()` factory, but its current `startIntakeBot()` path still calls grammY `.start()` and runs polling.
-- The master runtime imports and starts the intake bot; neither platform bot currently has a verified webhook-mode entrypoint.
+- `telegram-master.js` preserves its Node polling lifecycle but now accepts injected dependencies/environment and exposes `createWebhookRuntime().handleUpdate(update)` without starting polling.
+- `intake-bot.js` preserves its Node polling entry points and now exposes an injected `createWebhookRuntime()` that registers the same handlers without calling grammY `.start()`.
+- Customer bot updates already use `createCustomerBot(...).handleUpdate(update)` through the durable customer queue worker.
+- Migration `007_platform_bot_inbox` adds a dedicated inbox for `master` and `intake`; these identities remain separate from customer bot records.
+- The platform queue now has an atomic identity-scoped enqueue API and a lease-fenced handler factory; the production worker and ingress are not wired to these new job types yet.
 
 ## Non-negotiable design boundary
 
@@ -89,6 +91,14 @@ The Worker must not receive production tokens, production database credentials, 
 - No Cloudflare production deployment.
 - No automatic promotion from staging to production.
 
+## Implementation progress
+
+- PR 77: additive platform-bot inbox migration and disposable PostgreSQL identity/deduplication tests — merged.
+- PR 78: injectable intake runtime and no-polling `handleUpdate` adapter — merged.
+- PR 79: injectable master runtime and no-polling `handleUpdate` adapter — merged.
+- PR 80 (in progress): atomic platform inbox + queue-job enqueue, distinct master/intake job types, and worker-lease-fenced dispatch handler with unit and PostgreSQL integration tests.
+- None of these changes enables live webhook delivery or changes production tokens.
+
 ## Next coding slice
 
-Start with the additive platform-bot inbox migration and its isolated PostgreSQL integration tests. Then extract the intake handler-registration factory and add a no-polling `handleUpdate` path. Repeat for the master bot only after its command handlers can receive injected persistence and authorization dependencies. Do not implement the Cloudflare Worker until these contracts and tests exist.
+Wire the new master/intake job types into a dedicated Node worker using explicit secret resolution and injected webhook runtimes. Prove identity isolation, lease renewal/recovery, failure retry, and no cross-dispatch end to end. Then add a platform webhook ingress with separate route identities and secret resolvers. Only after that should the Cloudflare Worker adapter and staging bundle test be added. Do not change production webhooks, tokens, databases, or deployments.

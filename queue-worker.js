@@ -87,7 +87,7 @@ function createQueueWorker({
     }
 
     try {
-      const result = await handler(job);
+      const result = await handler(job, { workerId, leaseSeconds, isLeaseLost: () => leaseLost });
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (heartbeatInFlight) await heartbeatInFlight;
       if (leaseLost) {

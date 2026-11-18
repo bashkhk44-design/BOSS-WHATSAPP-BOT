@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { enqueuePlatformJob, enqueueTelegramUpdate, claimPlatformJob, normalizeJobTypes, recoverExpiredPlatformJobs } = require('../platform-queue');
+const { enqueuePlatformJob, enqueueTelegramUpdate, enqueuePlatformBotUpdate, claimPlatformJob, normalizeJobTypes, recoverExpiredPlatformJobs } = require('../platform-queue');
 const { createQueueWorker } = require('../queue-worker');
 
 test('job enqueue uses a stable idempotency key and returns existing job on conflict', async () => {
@@ -369,4 +369,48 @@ test('Telegram update queue rejects coerced or malformed update identifiers befo
       /Telegram update_id is required/
     );
   }
+});
+
+
+test('platform bot update enqueue creates identity-scoped durable jobs and deduplicates retries', async () => {
+  const calls = [];
+  let duplicate = false;
+  const pool = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return duplicate
+        ? { rowCount: 0, rows: [] }
+        : { rowCount: 1, rows: [{ id: 51, job_id: 61 }] };
+    }
+  };
+
+  const first = await enqueuePlatformBotUpdate(pool, {
+    botIdentity: 'master',
+    update: { update_id: 888, message: { text: '/start' } }
+  });
+  duplicate = true;
+  const repeated = await enqueuePlatformBotUpdate(pool, {
+    botIdentity: 'master',
+    update: { update_id: 888, message: { text: '/start' } }
+  });
+
+  assert.deepEqual(first, { accepted: true, duplicate: false, id: 51, jobId: 61 });
+  assert.deepEqual(repeated, { accepted: true, duplicate: true, id: null, jobId: null });
+  assert.match(calls[0].sql, /INSERT INTO platform_bot_inbound_updates/);
+  assert.match(calls[0].sql, /INSERT INTO platform_jobs/);
+  assert.match(calls[0].sql, /ON CONFLICT \(bot_identity, update_id\) DO NOTHING/);
+  assert.deepEqual(calls[0].params.slice(0, 2), ['master', 888]);
+  assert.equal(calls[0].params[3], 'telegram.master.update');
+});
+
+test('platform bot update enqueue rejects customer identities and malformed Telegram updates', async () => {
+  const pool = { async query() { assert.fail('invalid update must not reach PostgreSQL'); } };
+  await assert.rejects(
+    enqueuePlatformBotUpdate(pool, { botIdentity: 'customer:9', update: { update_id: 1 } }),
+    /botIdentity/
+  );
+  await assert.rejects(
+    enqueuePlatformBotUpdate(pool, { botIdentity: 'intake', update: { update_id: -1 } }),
+    /update_id/
+  );
 });

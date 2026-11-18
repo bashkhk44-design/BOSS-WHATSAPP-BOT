@@ -123,3 +123,34 @@ test('queue worker does not overlap lease renewals and drains the active renewal
     clearInterval(keepAlive);
   }
 });
+
+
+test('queue worker passes its fenced lease context to update handlers', async () => {
+  let received;
+  const queueApi = {
+    async recoverExpiredPlatformJobs() { return []; },
+    async claimPlatformJob() {
+      return { id: 97, job_type: 'test.context', attempts: 1 };
+    },
+    async renewPlatformJobLease() { return true; },
+    async completePlatformJob() {},
+    async failPlatformJob() { assert.fail('job must not fail'); }
+  };
+  const worker = createQueueWorker({
+    pool: { query() {} },
+    workerId: 'context-worker',
+    handlers: {
+      'test.context': async (job, context) => {
+        received = { jobId: job.id, workerId: context.workerId, leaseSeconds: context.leaseSeconds };
+        assert.equal(context.isLeaseLost(), false);
+        return { ok: true };
+      }
+    },
+    queueApi,
+    leaseSeconds: 30,
+    logger: { log() {}, warn() {}, error() {} }
+  });
+
+  assert.equal(await worker.processOne(), true);
+  assert.deepEqual(received, { jobId: 97, workerId: 'context-worker', leaseSeconds: 30 });
+});
