@@ -37,7 +37,7 @@ jobs:
           const missing = required.filter((key) => !process.env[key]);
           if (missing.length) {
             console.log('Not provisioned: add these GitHub Actions repository secrets, then rerun this workflow: ' + missing.join(', '));
-            process.exit(0);
+            process.exit(1);
           }
 
           const name = 'boss-bot-platform-staging-neon';
