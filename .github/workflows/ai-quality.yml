@@ -100,6 +100,8 @@ jobs:
         run: npm run db:migrate
       - name: Exercise real PostgreSQL queue operations
         run: node --test test/platform-queue.integration.test.js
+      - name: Exercise isolated platform bot inbox on disposable PostgreSQL
+        run: node --test test/platform-bot-inbox.integration.test.js
       - name: Exercise isolated deployment worker on disposable PostgreSQL
         run: node --test test/deployment-preflight-worker.postgres.integration.test.js
       - name: Exercise deployment worker lease recovery on disposable PostgreSQL
@@ -146,6 +148,12 @@ jobs:
             END IF;
             IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '005_worker_health_heartbeats') THEN
               RAISE EXCEPTION 'Worker heartbeat migration was not recorded';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'platform_bot_inbound_updates') THEN
+              RAISE EXCEPTION 'Platform bot inbox table was not created';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '007_platform_bot_inbox') THEN
+              RAISE EXCEPTION 'Platform bot inbox migration was not recorded';
             END IF;
             IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '006_auto_remediation_audit') THEN
               RAISE EXCEPTION 'Automatic remediation audit migration was not recorded';
