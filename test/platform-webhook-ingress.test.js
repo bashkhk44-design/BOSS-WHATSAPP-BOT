@@ -30,6 +30,11 @@ test('platform webhook environment requires independent URL-safe secrets', () =>
     MASTER_WEBHOOK_SECRET: 'short',
     INTAKE_WEBHOOK_SECRET: secrets.intake
   }), /MASTER_WEBHOOK_SECRET/);
+  assert.throws(() => validatePlatformWebhookEnvironment({
+    DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
+    MASTER_WEBHOOK_SECRET: secrets.master,
+    INTAKE_WEBHOOK_SECRET: secrets.master
+  }), /must be different/);
 });
 
 test('platform webhook authenticates identity and enqueues the exact update', async () => {
