@@ -1,7 +1,6 @@
-import pg from "pg";
+import { Client } from "pg";
 import queue from "../platform-queue.js";
 
-const { Client } = pg;
 const { enqueueTelegramUpdate, enqueuePlatformBotUpdate } = queue;
 const encoder = new TextEncoder();
 const MAX_BODY_BYTES = 1024 * 1024;
