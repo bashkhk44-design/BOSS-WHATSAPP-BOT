@@ -37,6 +37,12 @@ if (env.BOSS_WORKER_MODE !== 'termux-test') throw new Error('BOSS_WORKER_MODE mu
 if (env.BOSS_TEST_DATABASE !== 'YES') throw new Error('BOSS_TEST_DATABASE must be YES');
 if (!/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL || '')) throw new Error('DATABASE_URL must be a PostgreSQL test-branch URL');
 if (!/^[0-9a-fA-F]{64}$/.test(env.BOTS_ENCRYPTION_KEY || '')) throw new Error('BOTS_ENCRYPTION_KEY must be 64 hexadecimal characters');
+if (env.DATABASE_SSL !== 'require') throw new Error('DATABASE_SSL must be require for the Termux test worker');
+if (!env.BOSS_TEST_DATABASE_HOST || !env.BOSS_TEST_DATABASE_NAME) throw new Error('Expected test database host and name are required');
+const url = new URL(env.DATABASE_URL);
+if (!['postgres:', 'postgresql:'].includes(url.protocol)) throw new Error('Invalid PostgreSQL URL');
+if (url.hostname.toLowerCase() !== env.BOSS_TEST_DATABASE_HOST.trim().toLowerCase()) throw new Error('DATABASE_URL host does not match BOSS_TEST_DATABASE_HOST');
+if (decodeURIComponent(url.pathname.slice(1)) !== env.BOSS_TEST_DATABASE_NAME) throw new Error('DATABASE_URL database name does not match BOSS_TEST_DATABASE_NAME');
 NODE
 
 echo
@@ -64,6 +70,9 @@ const { Pool } = require('pg');
     const result = await pool.query(
       "SELECT current_database() AS db, to_regclass('public.platform_jobs') IS NOT NULL AS has_jobs, to_regclass('public.telegram_bots') IS NOT NULL AS has_bots"
     );
+    if (result.rows[0].db !== process.env.BOSS_TEST_DATABASE_NAME) {
+      throw new Error('Connected database name does not match BOSS_TEST_DATABASE_NAME.');
+    }
     if (!result.rows[0].has_jobs || !result.rows[0].has_bots) {
       throw new Error('Required queue schema is missing. Apply migrations to the TEST branch through the approved test workflow first.');
     }
