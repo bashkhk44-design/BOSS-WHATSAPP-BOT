@@ -15,6 +15,32 @@ function createTelegramUpdateHandler({
   // The webhook worker and existing polling runtime share exactly the same
   // command handlers, so moving transport does not change customer behavior.
   const makeBot = botFactory || createCustomerBot;
+  const initializedBots = new Map();
+
+  async function getInitializedBot(record, token) {
+    const id = String(record.id);
+    const cached = initializedBots.get(id);
+    if (cached && cached.token === token) {
+      await cached.initializing;
+      return cached.bot;
+    }
+
+    const bot = makeBot(record, token);
+    if (!bot || typeof bot.init !== 'function' || typeof bot.handleUpdate !== 'function') {
+      throw new TypeError('Customer bot must provide grammY init() and handleUpdate() methods');
+    }
+
+    const entry = { token, bot, initializing: null };
+    entry.initializing = Promise.resolve().then(() => bot.init());
+    initializedBots.set(id, entry);
+    try {
+      await entry.initializing;
+      return bot;
+    } catch (error) {
+      if (initializedBots.get(id) === entry) initializedBots.delete(id);
+      throw error;
+    }
+  }
 
   return async function handleTelegramUpdate(job) {
     const botId = Number(job.payload?.botId);
@@ -56,7 +82,7 @@ function createTelegramUpdateHandler({
     const record = claimed.rows[0];
     try {
       const token = decryptToken(record);
-      const bot = makeBot(record, token);
+      const bot = await getInitializedBot(record, token);
       await bot.handleUpdate(record.payload);
 
       const saved = await pool.query(`
