@@ -75,7 +75,7 @@ jobs:
 
             const dir = path.join(process.cwd(), 'migrations');
             const actual = fs.readdirSync(dir)
-              .filter(name => /^\\d+_[a-z0-9_-]+\\.sql$/i.test(name))
+              .filter(name => /^\d+_[a-z0-9_-]+\.sql$/i.test(name))
               .sort();
             const allowed = [...expectedFiles, ...baselineFiles, ...excludedFiles].sort();
             const missing = expectedFiles.filter(name => !actual.includes(name));
