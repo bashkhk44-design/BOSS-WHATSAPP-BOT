@@ -92,7 +92,32 @@ export function createPlatformWebhookHandler({
   return async function fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/healthz' && request.method === 'GET') {
-      return jsonResponse(200, { ok: true, service: 'platform-telegram-webhook-edge' });
+      const connectionString = env.HYPERDRIVE?.connectionString;
+      if (typeof connectionString !== 'string' || !/^postgres(?:ql)?:\\/\\//i.test(connectionString)) {
+        return jsonResponse(503, { ok: false, error: 'database_unavailable' });
+      }
+
+      let healthClient;
+      try {
+        healthClient = new ClientClass({
+          connectionString,
+          connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
+          query_timeout: DB_QUERY_TIMEOUT_MS,
+          statement_timeout: DB_QUERY_TIMEOUT_MS
+        });
+        await healthClient.connect();
+        const result = await healthClient.query('SELECT 1 AS probe');
+        if (result.rows?.[0]?.probe !== 1) {
+          return jsonResponse(503, { ok: false, error: 'database_unavailable' });
+        }
+        return jsonResponse(200, { ok: true, service: 'platform-telegram-webhook-edge', database: 'reachable' });
+      } catch (_) {
+        return jsonResponse(503, { ok: false, error: 'database_unavailable' });
+      } finally {
+        if (healthClient) {
+          try { await healthClient.end(); } catch (_) {}
+        }
+      }
     }
 
     const match = url.pathname.match(/^\/telegram\/platform\/(master|intake)$/);
