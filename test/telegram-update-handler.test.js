@@ -114,3 +114,98 @@ test('Telegram update handler reuses one initialized bot instance for subsequent
   assert.equal(initCalls, 1);
   assert.equal(handledUpdates, 2);
 });
+
+
+test('Telegram update handler shares one in-flight initialization across concurrent updates', async () => {
+  let factoryCalls = 0;
+  let initCalls = 0;
+  let handledUpdates = 0;
+  let releaseInit;
+  const initGate = new Promise(resolve => { releaseInit = resolve; });
+  const pool = {
+    async query(sql, params) {
+      if (sql.includes('UPDATE bot_inbound_updates AS inbound')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            payload: { update_id: params[1] },
+            id: 21,
+            name: 'Concurrent bot',
+            token_ciphertext: 'encrypted'
+          }]
+        };
+      }
+      if (sql.includes("SET state = 'processed'")) return { rowCount: 1, rows: [] };
+      throw new Error('unexpected SQL');
+    }
+  };
+  const handler = createTelegramUpdateHandler({
+    pool,
+    decryptToken: () => 'concurrent-test-token',
+    botFactory: () => {
+      factoryCalls += 1;
+      return {
+        async init() { initCalls += 1; await initGate; },
+        async handleUpdate() { handledUpdates += 1; }
+      };
+    }
+  });
+
+  const first = handler({ payload: { botId: 21, updateId: 101 } });
+  const second = handler({ payload: { botId: 21, updateId: 102 } });
+  await new Promise(resolve => setImmediate(resolve));
+  releaseInit();
+  await Promise.all([first, second]);
+
+  assert.equal(factoryCalls, 1);
+  assert.equal(initCalls, 1);
+  assert.equal(handledUpdates, 2);
+});
+
+test('Telegram update handler evicts a bot whose initialization fails so a retry can recover', async () => {
+  let factoryCalls = 0;
+  let initCalls = 0;
+  const pool = {
+    async query(sql, params) {
+      if (sql.includes('UPDATE bot_inbound_updates AS inbound')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            payload: { update_id: params[1] },
+            id: 22,
+            name: 'Recovering bot',
+            token_ciphertext: 'encrypted'
+          }]
+        };
+      }
+      if (sql.includes("SET state = 'failed'")) return { rowCount: 1, rows: [] };
+      if (sql.includes("SET state = 'processed'")) return { rowCount: 1, rows: [] };
+      throw new Error('unexpected SQL');
+    }
+  };
+  const handler = createTelegramUpdateHandler({
+    pool,
+    decryptToken: () => 'recovering-test-token',
+    botFactory: () => {
+      factoryCalls += 1;
+      const currentAttempt = factoryCalls;
+      return {
+        async init() {
+          initCalls += 1;
+          if (currentAttempt === 1) throw new Error('temporary getMe failure');
+        },
+        async handleUpdate() {}
+      };
+    }
+  });
+
+  await assert.rejects(
+    handler({ payload: { botId: 22, updateId: 201 } }),
+    /temporary getMe failure/
+  );
+  const recovered = await handler({ payload: { botId: 22, updateId: 202 } });
+
+  assert.deepEqual(recovered, { processed: true, botId: 22, updateId: 202 });
+  assert.equal(factoryCalls, 2);
+  assert.equal(initCalls, 2);
+});
