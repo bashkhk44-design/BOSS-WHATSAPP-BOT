@@ -95,6 +95,46 @@ export function createPlatformWebhookHandler({
       return jsonResponse(200, { ok: true, service: 'platform-telegram-webhook-edge' });
     }
 
+    if (url.pathname === '/db-check') {
+      if (request.method !== 'GET') {
+        return jsonResponse(405, { ok: false, error: 'method_not_allowed' });
+      }
+
+      const expectedSecret = env.DB_CHECK_SECRET;
+      const suppliedSecret = request.headers.get('x-boss-db-check-token');
+      if (!SECRET_PATTERN.test(expectedSecret || '') || !safeEqual(suppliedSecret, expectedSecret)) {
+        return jsonResponse(401, { ok: false, error: 'unauthorized' });
+      }
+
+      const connectionString = env.HYPERDRIVE?.connectionString;
+      if (typeof connectionString !== 'string' || !/^postgres(?:ql)?:\\/\\//i.test(connectionString)) {
+        return jsonResponse(503, { ok: false, error: 'temporarily_unavailable' });
+      }
+
+      let client;
+      try {
+        client = new ClientClass({
+          connectionString,
+          connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
+          query_timeout: DB_QUERY_TIMEOUT_MS,
+          statement_timeout: DB_QUERY_TIMEOUT_MS
+        });
+        await client.connect();
+        const result = await client.query('SELECT 1 AS db_check');
+        if (result?.rows?.[0]?.db_check !== 1) {
+          throw new Error('database_probe_failed');
+        }
+        return jsonResponse(200, { ok: true, database: 'connected', probe: 1 });
+      } catch (error) {
+        console.error('PLATFORM DATABASE CHECK ERROR:', error?.message || 'unknown');
+        return jsonResponse(503, { ok: false, error: 'temporarily_unavailable' });
+      } finally {
+        if (client) {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+    }
+
     const match = url.pathname.match(/^\/telegram\/platform\/(master|intake)$/);
     if (!match || env.PLATFORM_BOT_WEBHOOK_MODE !== 'enabled') {
       return jsonResponse(404, { ok: false, error: 'not_found' });
