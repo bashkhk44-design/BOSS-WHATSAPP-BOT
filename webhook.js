@@ -10,6 +10,23 @@ function getWebhookSslConfig(env = process.env) {
   return env.DATABASE_SSL === 'disable' ? false : true;
 }
 
+function createCustomerWebhookSecretResolver({ pool, decryptToken, encryptionKey }) {
+  if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required');
+  if (typeof decryptToken !== 'function') throw new TypeError('decryptToken(record) is required');
+
+  return async botId => {
+    const result = await pool.query(
+      'SELECT id, token_ciphertext, token_iv, token_auth_tag ' +
+      'FROM telegram_bots WHERE id = $1 AND active = TRUE ' +
+      "AND update_transport = 'webhook' AND token_ciphertext IS NOT NULL LIMIT 1",
+      [botId]
+    );
+    if (!result.rowCount) return null;
+    const token = decryptToken(result.rows[0]);
+    return deriveTelegramWebhookSecret(botId, token, encryptionKey);
+  };
+}
+
 function validatePlatformWebhookSecrets(env = {}) {
   const mode = env.PLATFORM_BOT_WEBHOOK_MODE;
   if (mode === undefined || mode === 'disabled') return true;
@@ -66,17 +83,11 @@ async function main() {
   const encryptionKey = Buffer.from(process.env.BOTS_ENCRYPTION_KEY, 'hex');
   const server = createTelegramWebhookServer({
     pool,
-    resolveSecret: async botId => {
-      const result = await pool.query(
-        'SELECT id, token_ciphertext, token_iv, token_auth_tag ' +
-        'FROM telegram_bots WHERE id = $1 AND active = TRUE ' +
-        'AND token_ciphertext IS NOT NULL LIMIT 1',
-        [botId]
-      );
-      if (!result.rowCount) return null;
-      const token = decryptToken(result.rows[0]);
-      return deriveTelegramWebhookSecret(botId, token, encryptionKey);
-    },
+    resolveSecret: createCustomerWebhookSecretResolver({
+      pool,
+      decryptToken,
+      encryptionKey
+    }),
     resolvePlatformSecret: process.env.PLATFORM_BOT_WEBHOOK_MODE === 'enabled'
       ? async identity => identity === 'master'
         ? process.env.MASTER_WEBHOOK_SECRET
@@ -116,4 +127,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, validateWebhookEnvironment, getWebhookSslConfig, validatePlatformWebhookSecrets };
+module.exports = { main, validateWebhookEnvironment, getWebhookSslConfig, validatePlatformWebhookSecrets, createCustomerWebhookSecretResolver };
