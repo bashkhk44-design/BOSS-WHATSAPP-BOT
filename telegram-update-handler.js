@@ -109,7 +109,7 @@ function createTelegramUpdateHandler({
     const record = claimed.rows[0];
     let leaseLost = false;
     let heartbeatInFlight = null;
-    const heartbeatIntervalMs = Math.max(1000, Math.floor(leaseSeconds * 1000 / 3));
+    const heartbeatIntervalMs = Math.max(1000, Math.floor(activeLeaseSeconds * 1000 / 3));
 
     async function renewInboxLease() {
       const renewed = await pool.query(`
