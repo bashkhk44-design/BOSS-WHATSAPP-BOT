@@ -1577,8 +1577,9 @@ async function startRuntime() {
   });
 }
 
-function createWebhookRuntime() {
+async function createWebhookRuntime() {
   let stopped = false;
+  await bot.init();
   return {
     handleUpdate(update) {
       if (stopped) throw new Error('Master webhook runtime is stopped');
