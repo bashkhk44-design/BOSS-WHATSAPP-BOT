@@ -46,6 +46,8 @@ test('Telegram update handler claims, dispatches, and marks an update processed'
   assert.deepEqual(order, ['init', 'handle']);
   assert.deepEqual(result, { processed: true, botId: 5, updateId: 77 });
   assert.equal(calls.length, 2);
+  assert.match(calls[0].sql, /bot\.active = TRUE/);
+  assert.match(calls[0].sql, /bot\.update_transport = 'webhook'/);
 });
 
 test('Telegram update handler leaves failed updates retryable', async () => {
