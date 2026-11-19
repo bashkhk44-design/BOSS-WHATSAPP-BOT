@@ -120,3 +120,47 @@ test('platform bot update handler rejects mismatched job identity and a lost que
   assert.equal(queries, 1);
   assert.equal(dispatchCalls, 0);
 });
+
+
+test('platform bot update handler renews its inbox lease during long-running dispatch', async () => {
+  const calls = [];
+  const pool = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes("SET state = 'processing'")) {
+        return { rowCount: 1, rows: [{ payload: { update_id: 123, message: { text: '/slow' } } }] };
+      }
+      if (sql.includes('SET locked_at = NOW()')) {
+        return { rowCount: 1, rows: [{ id: 8 }] };
+      }
+      if (sql.includes("SET state = 'processed'")) {
+        return { rowCount: 1, rows: [{ id: 8 }] };
+      }
+      throw new Error('unexpected SQL');
+    }
+  };
+  const handler = createPlatformBotUpdateHandler({
+    pool,
+    runtimes: {
+      master: {
+        async handleUpdate() {
+          await new Promise(resolve => setTimeout(resolve, 260));
+        }
+      }
+    }
+  });
+
+  const result = await handler(makeJob(), {
+    workerId: 'long-handler-worker',
+    leaseSeconds: 10,
+    leaseRenewalIntervalMs: 100,
+    isLeaseLost: () => false
+  });
+
+  assert.equal(result.processed, true);
+  const renewals = calls.filter(call => call.sql.includes('SET locked_at = NOW()'));
+  assert.ok(renewals.length >= 1, 'inbox lease must be renewed while the runtime is working');
+  assert.deepEqual(renewals[0].params, ['master', 123, 'long-handler-worker', 91, 'telegram.master.update', 10]);
+  assert.match(renewals[0].sql, /job\.locked_by = \$3/);
+  assert.match(renewals[0].sql, /job\.status = 'processing'/);
+});
