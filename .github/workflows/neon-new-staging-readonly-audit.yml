@@ -56,7 +56,7 @@ jobs:
             }
 
             const target = new URL(process.env.DATABASE_URL);
-            const database = decodeURIComponent(target.pathname.replace(/^\\//, ''));
+            const database = decodeURIComponent(target.pathname.slice(1));
             const role = decodeURIComponent(target.username);
 
             if (target.hostname !== EXPECTED_HOST ||
