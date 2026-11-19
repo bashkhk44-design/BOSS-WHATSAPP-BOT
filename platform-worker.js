@@ -59,7 +59,7 @@ async function main() {
     token: process.env.TELEGRAM_BOT_TOKEN,
     adminId: process.env.TELEGRAM_ADMIN_ID
   });
-  const masterWebhook = master.createWebhookRuntime();
+  const masterWebhook = await master.createWebhookRuntime();
   const intake = createIntakeRuntime();
   const intakeWebhook = await intake.createWebhookRuntime({
     token: process.env.INTAKE_BOT_TOKEN
