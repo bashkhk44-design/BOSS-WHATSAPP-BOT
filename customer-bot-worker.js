@@ -255,6 +255,10 @@ function createCustomerBotWorker({
     } catch (error) {
       clearInterval(commandHeartbeat);
       await commandHeartbeatPromise;
+      if (commandLeaseLost && (command.action === 'start' || command.action === 'restart')) {
+        try { await runtime.stopBotById(botId); }
+        catch (stopError) { logger.error('Could not stop bot after manager command lease loss ' + botId + ': ' + stopError.message); }
+      }
       const failed = await pool.query(`
         UPDATE bot_runtime_commands
         SET status = 'failed', processed_at = NOW(), error_message = $3
