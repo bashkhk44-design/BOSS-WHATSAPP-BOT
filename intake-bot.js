@@ -875,7 +875,18 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
   intakeStopping = false;
 
   if (mode === 'webhook') {
-    return createWebhookAdapter(currentBot);
+    try {
+      await currentBot.init();
+      return createWebhookAdapter(currentBot);
+    } catch (error) {
+      if (intakeBot === currentBot) {
+        intakeBot = null;
+        pollingPromise = null;
+        intakeReadyPromise = null;
+        intakeMode = null;
+      }
+      throw error;
+    }
   }
 
   let resolveReady;
