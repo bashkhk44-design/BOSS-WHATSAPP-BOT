@@ -4,6 +4,7 @@ require('dotenv').config();
 
 const path = require('node:path');
 const { Pool } = require('pg');
+const { normalizeJobTypes } = require('./platform-queue');
 const { createQueueWorker } = require('./queue-worker');
 const { createTelegramUpdateHandler } = require('./telegram-update-handler');
 const { createPlatformBotWorker, validatePlatformBotWorkerEnvironment } = require('./platform-bot-worker');
@@ -43,6 +44,41 @@ function validateWorkerEnvironment(env = process.env) {
   return true;
 }
 
+
+function mergeWorkerHandlers(currentHandlers, loadedModule) {
+  if (!currentHandlers || typeof currentHandlers !== 'object' || Array.isArray(currentHandlers)) {
+    throw new TypeError('Existing worker handlers must be an object');
+  }
+
+  const additions = loadedModule &&
+    typeof loadedModule === 'object' &&
+    Object.prototype.hasOwnProperty.call(loadedModule, 'handlers')
+      ? loadedModule.handlers
+      : loadedModule;
+
+  if (!additions || typeof additions !== 'object' || Array.isArray(additions)) {
+    throw new TypeError('Custom worker module must export a handlers object');
+  }
+
+  const entries = Object.entries(additions);
+  if (entries.length === 0) {
+    throw new TypeError('Custom worker module must register at least one handler');
+  }
+
+  normalizeJobTypes(entries.map(([jobType]) => jobType));
+
+  for (const [jobType, handler] of entries) {
+    if (Object.prototype.hasOwnProperty.call(currentHandlers, jobType)) {
+      throw new Error('Custom worker handler cannot replace existing job type: ' + jobType);
+    }
+    if (typeof handler !== 'function') {
+      throw new TypeError('Custom worker handler must be a function: ' + jobType);
+    }
+  }
+
+  return { ...currentHandlers, ...Object.fromEntries(entries) };
+}
+
 async function main() {
   validateWorkerEnvironment();
 
@@ -55,7 +91,7 @@ async function main() {
     connectionTimeoutMillis: 10000
   });
 
-  const handlers = {
+  let handlers = {
     'telegram.update': createTelegramUpdateHandler({ pool, decryptToken })
   };
 
@@ -78,7 +114,7 @@ async function main() {
         ? process.env.JOB_HANDLERS_MODULE
         : path.resolve(process.cwd(), process.env.JOB_HANDLERS_MODULE);
       const loaded = require(handlersPath);
-      Object.assign(handlers, loaded.handlers || loaded);
+      handlers = mergeWorkerHandlers(handlers, loaded);
     }
   } catch (error) {
     try { await platformBotWorker.close(); } finally { await pool.end(); }
@@ -128,4 +164,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, validateWorkerEnvironment, getWorkerSslConfig };
+module.exports = { main, validateWorkerEnvironment, getWorkerSslConfig, mergeWorkerHandlers };
