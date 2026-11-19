@@ -10,20 +10,52 @@ function createBotRuntime({
   maxBots = DEFAULT_MAX_BOTS,
   heartbeatIntervalMs = 30000,
   workerId = String(process.pid),
-  onStatusPersistError = null
+  requireLease = false,
+  leaseSeconds = 90,
+  onStatusPersistError = null,
+  onLeaseLost = null
 }) {
   if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required');
   if (typeof decryptToken !== 'function') throw new TypeError('decryptToken(record) is required');
   if (typeof createCustomerBot !== 'function') throw new TypeError('createCustomerBot(record, token) is required');
   if (!Number.isInteger(maxBots) || maxBots < 1) throw new RangeError('maxBots must be a positive integer');
+  if (!Number.isInteger(leaseSeconds) || leaseSeconds < 30) throw new RangeError('leaseSeconds must be at least 30 seconds');
 
   const runningBots = new Map();
   let runtimeStopping = false;
   let warnedStatusTable = false;
   let statusPersistenceFailureNotified = false;
 
+  let leaseLossNotified = false;
+
   async function persistStatus(state) {
     try {
+      if (requireLease) {
+        const result = await pool.query(`
+          UPDATE bot_runtime_status
+          SET status = $2,
+              last_started_at = CASE WHEN $2 = 'starting' THEN NOW() ELSE last_started_at END,
+              last_heartbeat_at = NOW(),
+              last_error_code = $4,
+              last_error_message = $5,
+              restart_count = restart_count + CASE WHEN $2 = 'starting' THEN 1 ELSE 0 END,
+              updated_at = NOW()
+          WHERE bot_id = $1
+            AND worker_id = $3
+            AND last_heartbeat_at >= NOW() - ($6::int * INTERVAL '1 second')
+          RETURNING bot_id
+        `, [
+          state.id,
+          state.status,
+          String(workerId),
+          state.lastErrorCode || null,
+          state.lastErrorMessage || null,
+          leaseSeconds
+        ]);
+        if (!result.rowCount) return false;
+        return true;
+      }
+
       await pool.query(`
         INSERT INTO bot_runtime_status
           (bot_id, status, worker_id, last_started_at, last_heartbeat_at,
@@ -50,6 +82,7 @@ function createBotRuntime({
         state.lastErrorCode || null,
         state.lastErrorMessage || null
       ]);
+      return true;
     } catch (error) {
       if (!warnedStatusTable) {
         warnedStatusTable = true;
@@ -61,7 +94,27 @@ function createBotRuntime({
           logger.error('BOT RUNTIME STATUS FAILURE HANDLER ERROR:', callbackError.message);
         }
       }
+      return false;
     }
+  }
+
+  function loseLease(state) {
+    if (!requireLease || state.leaseLost) return;
+    state.leaseLost = true;
+    state.stopRequested = true;
+    if (state.wakeRetry) state.wakeRetry();
+    if (state.bot && typeof state.bot.stop === 'function') {
+      Promise.resolve().then(() => state.bot && state.bot.stop()).catch(error => {
+        logger.error('CUSTOMER BOT STOP AFTER LEASE LOSS ' + state.id + ':', error.message);
+      });
+    }
+    if (!leaseLossNotified && typeof onLeaseLost === 'function') {
+      leaseLossNotified = true;
+      try { onLeaseLost(state.id); } catch (error) {
+        logger.error('BOT LEASE LOSS HANDLER ERROR:', error.message);
+      }
+    }
+    logger.error('CUSTOMER BOT ' + state.id + ' LOST ITS WORKER LEASE; stopping local runtime.');
   }
 
   function setStatus(state, status, error) {
@@ -73,7 +126,11 @@ function createBotRuntime({
       state.lastErrorCode = null;
       state.lastErrorMessage = null;
     }
-    void persistStatus(state);
+    const write = persistStatus(state);
+    if (requireLease) {
+      void write.then(owned => { if (!owned) loseLease(state); });
+    }
+    return write;
   }
 
   function waitForRetry(ms, state) {
@@ -102,22 +159,24 @@ function createBotRuntime({
     if (typeof state.heartbeatTimer.unref === 'function') state.heartbeatTimer.unref();
 
     try {
-      while (!runtimeStopping && !state.stopRequested) {
+      while (!runtimeStopping && !state.stopRequested && !state.leaseLost) {
         const startedAt = Date.now();
         try {
+          const ownsLease = await setStatus(state, 'starting');
+          if (requireLease && !ownsLease) { loseLease(state); break; }
+          if (state.stopRequested || state.leaseLost) break;
           state.bot = createCustomerBot(record, token);
-          setStatus(state, 'starting');
           await state.bot.start({
             onStart: info => {
               setStatus(state, 'running');
               logger.log('Customer bot ' + state.id + ' running: @' + (info.username || record.username || 'unknown'));
             }
           });
-          if (runtimeStopping || state.stopRequested) break;
+          if (runtimeStopping || state.stopRequested || state.leaseLost) break;
           throw new Error('Polling loop ended unexpectedly');
         } catch (error) {
           state.bot = null;
-          if (runtimeStopping || state.stopRequested) break;
+          if (runtimeStopping || state.stopRequested || state.leaseLost) break;
           const errorCode = Number(error.error_code || 0);
           if (errorCode === 409 || errorCode === 401) {
             setStatus(state, errorCode === 409 ? 'conflict' : 'unauthorized', error);
@@ -139,8 +198,10 @@ function createBotRuntime({
       clearInterval(state.heartbeatTimer);
       state.heartbeatTimer = null;
       state.bot = null;
-      if (state.stopRequested || runtimeStopping) setStatus(state, 'stopped');
-      else if (!['conflict', 'unauthorized', 'error'].includes(state.status)) setStatus(state, 'stopped');
+      if (!state.leaseLost) {
+        if (state.stopRequested || runtimeStopping) setStatus(state, 'stopped');
+        else if (!['conflict', 'unauthorized', 'error'].includes(state.status)) setStatus(state, 'stopped');
+      }
       logger.log('CUSTOMER BOT ' + state.id + ' runtime ended: ' + state.status);
     }
   }
@@ -163,6 +224,7 @@ function createBotRuntime({
         status: 'stopped',
         retryCount: 0,
         stopRequested: false,
+        leaseLost: false,
         retryTimer: null,
         wakeRetry: null,
         heartbeatTimer: null,
@@ -173,6 +235,7 @@ function createBotRuntime({
     }
 
     state.stopRequested = false;
+    state.leaseLost = false;
     runtimeStopping = false;
     state.task = runCustomerBot(record, state)
       .catch(error => {
@@ -254,7 +317,8 @@ function createBotRuntime({
       retryCount: state.retryCount,
       lastErrorCode: state.lastErrorCode,
       lastErrorMessage: state.lastErrorMessage,
-      running: state.status === 'running'
+      running: state.status === 'running',
+      leaseLost: state.leaseLost
     }));
   }
 
