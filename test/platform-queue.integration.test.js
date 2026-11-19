@@ -52,9 +52,9 @@ const integrationTest = test('PostgreSQL queue integration: idempotency, claims,
     assert.equal(duplicate.created, false);
     assert.equal(duplicate.job.id, first.job.id);
 
-    const claimed = await claimPlatformJob(pool, `worker-a-${suffix}`);
+    const claimed = await claimPlatformJob(pool, `worker-a-${suffix}`, ['ci.queue.success']);
     assert.equal(String(claimed.id), String(first.job.id));
-    const competingClaim = await claimPlatformJob(pool, `worker-b-${suffix}`);
+    const competingClaim = await claimPlatformJob(pool, `worker-b-${suffix}`, ['ci.queue.success']);
     assert.equal(competingClaim, null, 'a claimed job must not be claimed a second time');
     await completePlatformJob(pool, {
       jobId: claimed.id,
@@ -68,7 +68,7 @@ const integrationTest = test('PostgreSQL queue integration: idempotency, claims,
       idempotencyKey: keys[1],
       maxAttempts: 1
     });
-    const failing = await claimPlatformJob(pool, `worker-fail-${suffix}`);
+    const failing = await claimPlatformJob(pool, `worker-fail-${suffix}`, ['ci.queue.fail']);
     const failed = await failPlatformJob(pool, {
       jobId: failing.id,
       workerId: `worker-fail-${suffix}`,
@@ -83,14 +83,14 @@ const integrationTest = test('PostgreSQL queue integration: idempotency, claims,
       idempotencyKey: keys[2],
       maxAttempts: 2
     });
-    const leased = await claimPlatformJob(pool, `worker-lease-${suffix}`);
+    const leased = await claimPlatformJob(pool, `worker-lease-${suffix}`, ['ci.queue.lease']);
     await pool.query(
       "UPDATE platform_jobs SET locked_at = NOW() - INTERVAL '10 minutes' WHERE id = $1",
       [leased.id]
     );
     const recovered = await recoverExpiredPlatformJobs(pool, 10);
     assert.ok(recovered.some(row => String(row.id) === String(leased.id)));
-    const reclaimed = await claimPlatformJob(pool, `worker-reclaim-${suffix}`);
+    const reclaimed = await claimPlatformJob(pool, `worker-reclaim-${suffix}`, ['ci.queue.lease']);
     assert.equal(String(reclaimed.id), String(leased.id));
     const dead = await failPlatformJob(pool, {
       jobId: reclaimed.id,
@@ -111,10 +111,11 @@ const integrationTest = test('PostgreSQL queue integration: idempotency, claims,
     // Synthetic queue-only concurrency check; this does not contact Telegram.
     for (const workerCount of [5, 10, 25, 50, 100]) {
       const phase = `ci-load:${suffix}:${workerCount}`;
+      const phaseJobType = `ci.queue.load.${suffix}.${workerCount}`;
       const totalJobs = workerCount * 3;
       for (let index = 0; index < totalJobs; index += 1) {
         await enqueuePlatformJob(pool, {
-          jobType: 'ci.queue.load',
+          jobType: phaseJobType,
           botId,
           idempotencyKey: `${phase}:${index}`,
           payload: { phase, index }
@@ -125,7 +126,7 @@ const integrationTest = test('PostgreSQL queue integration: idempotency, claims,
       await Promise.all(Array.from({ length: workerCount }, async (_, workerIndex) => {
         const workerId = `${phase}:worker:${workerIndex}`;
         while (true) {
-          const job = await claimPlatformJob(pool, workerId);
+          const job = await claimPlatformJob(pool, workerId, [phaseJobType]);
           if (!job) break;
           const jobId = String(job.id);
           assert.equal(claimedIds.has(jobId), false, `job ${jobId} claimed more than once`);
