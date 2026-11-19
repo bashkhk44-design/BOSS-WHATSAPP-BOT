@@ -63,7 +63,7 @@ async function enqueuePlatformJob(pool, {
 }
 
 function normalizeJobTypes(jobTypes) {
-  if (jobTypes === undefined || jobTypes === null) return null;
+  if (jobTypes === undefined || jobTypes === null) throw new TypeError('jobTypes is required; unrestricted queue access is disabled');
   if (!Array.isArray(jobTypes) || jobTypes.length < 1 || jobTypes.length > 50) {
     throw new TypeError('jobTypes must be an array containing 1 to 50 registered job types');
   }

@@ -88,7 +88,7 @@ const integrationTest = test('PostgreSQL queue integration: idempotency, claims,
       "UPDATE platform_jobs SET locked_at = NOW() - INTERVAL '10 minutes' WHERE id = $1",
       [leased.id]
     );
-    const recovered = await recoverExpiredPlatformJobs(pool, 10);
+    const recovered = await recoverExpiredPlatformJobs(pool, 10, ['ci.queue.lease']);
     assert.ok(recovered.some(row => String(row.id) === String(leased.id)));
     const reclaimed = await claimPlatformJob(pool, `worker-reclaim-${suffix}`, ['ci.queue.lease']);
     assert.equal(String(reclaimed.id), String(leased.id));
