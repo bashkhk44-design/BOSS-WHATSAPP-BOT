@@ -26,8 +26,6 @@ function createBotRuntime({
   let warnedStatusTable = false;
   let statusPersistenceFailureNotified = false;
 
-  let leaseLossNotified = false;
-
   async function persistStatus(state) {
     try {
       if (requireLease) {
@@ -108,8 +106,8 @@ function createBotRuntime({
         logger.error('CUSTOMER BOT STOP AFTER LEASE LOSS ' + state.id + ':', error.message);
       });
     }
-    if (!leaseLossNotified && typeof onLeaseLost === 'function') {
-      leaseLossNotified = true;
+    if (!state.leaseLossNotified && typeof onLeaseLost === 'function') {
+      state.leaseLossNotified = true;
       try { onLeaseLost(state.id); } catch (error) {
         logger.error('BOT LEASE LOSS HANDLER ERROR:', error.message);
       }
@@ -155,7 +153,9 @@ function createBotRuntime({
       return;
     }
 
-    state.heartbeatTimer = setInterval(() => { void persistStatus(state); }, heartbeatIntervalMs);
+    state.heartbeatTimer = setInterval(() => {
+      void persistStatus(state).then(owned => { if (!owned) loseLease(state); });
+    }, heartbeatIntervalMs);
     if (typeof state.heartbeatTimer.unref === 'function') state.heartbeatTimer.unref();
 
     try {
@@ -168,8 +168,10 @@ function createBotRuntime({
           state.bot = createCustomerBot(record, token);
           await state.bot.start({
             onStart: info => {
-              setStatus(state, 'running');
-              logger.log('Customer bot ' + state.id + ' running: @' + (info.username || record.username || 'unknown'));
+              void setStatus(state, 'running').then(owned => {
+                if (!owned) loseLease(state);
+                else logger.log('Customer bot ' + state.id + ' running: @' + (info.username || record.username || 'unknown'));
+              });
             }
           });
           if (runtimeStopping || state.stopRequested || state.leaseLost) break;
@@ -225,6 +227,7 @@ function createBotRuntime({
         retryCount: 0,
         stopRequested: false,
         leaseLost: false,
+        leaseLossNotified: false,
         retryTimer: null,
         wakeRetry: null,
         heartbeatTimer: null,
@@ -236,6 +239,7 @@ function createBotRuntime({
 
     state.stopRequested = false;
     state.leaseLost = false;
+    state.leaseLossNotified = false;
     runtimeStopping = false;
     state.task = runCustomerBot(record, state)
       .catch(error => {
