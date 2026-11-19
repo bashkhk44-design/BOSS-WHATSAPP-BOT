@@ -15,6 +15,7 @@ async function claimNextBot(pool, workerId, leaseSeconds = DEFAULT_LEASE_SECONDS
       LEFT JOIN bot_runtime_status s ON s.bot_id = b.id
       WHERE b.active = TRUE
         AND b.token_ciphertext IS NOT NULL
+        AND b.update_transport = 'polling'
         AND ($2::bigint IS NULL OR b.id = $2::bigint)
         AND (
           s.bot_id IS NULL
