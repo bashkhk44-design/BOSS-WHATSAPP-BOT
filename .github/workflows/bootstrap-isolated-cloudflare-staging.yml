@@ -23,6 +23,7 @@ jobs:
     environment: cloudflare-staging
     env:
       DATABASE_URL: ${{ secrets.CLOUDFLARE_STAGING_DATABASE_URL }}
+      OWNER_DATABASE_URL: ${{ secrets.CLOUDFLARE_STAGING_OWNER_DATABASE_URL }}
       DATABASE_SSL: require
     steps:
       - name: Checkout main
@@ -34,23 +35,22 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Verify isolated target and schema-create permission
+      - name: Verify isolated target and separate migration owner
         run: |
           node <<'NODE'
           const { Pool } = require('pg');
           const EXPECTED_HOST = 'ep-jolly-dust-bep7yrxv.c-9.us-east-2.aws.neon.tech';
           const EXPECTED_DB = 'neondb';
-          const EXPECTED_ROLE = 'hyperdrive_user';
-          (async () => {
-            if (!process.env.DATABASE_URL) throw new Error('Missing isolated staging database secret.');
-            const url = new URL(process.env.DATABASE_URL);
+          async function verifyUrl(raw, expectedRole, label) {
+            if (!raw) throw new Error('Missing ' + label + ' database secret.');
+            const url = new URL(raw);
             if (url.hostname !== EXPECTED_HOST ||
                 decodeURIComponent(url.pathname.slice(1)) !== EXPECTED_DB ||
-                decodeURIComponent(url.username) !== EXPECTED_ROLE ||
+                decodeURIComponent(url.username) !== expectedRole ||
                 (url.port && url.port !== '5432') || !url.password) {
-              throw new Error('Refusing: database URL is not the approved isolated staging target.');
+              throw new Error('Refusing: ' + label + ' URL is not the approved isolated staging target/role.');
             }
-            const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1, connectionTimeoutMillis: 10000 });
+            const pool = new Pool({ connectionString: raw, max: 1, connectionTimeoutMillis: 10000 });
             try {
               const result = await pool.query(`
                 SELECT current_database() AS db, current_user AS role,
@@ -58,16 +58,38 @@ jobs:
                        has_schema_privilege(current_user, 'public', 'CREATE') AS can_create
               `);
               const row = result.rows[0];
-              if (row.db !== EXPECTED_DB || row.role !== EXPECTED_ROLE) throw new Error('Connected identity mismatch.');
-              console.log('Verified isolated staging target:', row.db, '/', row.role);
-              console.log('public schema USAGE:', row.can_use, 'CREATE:', row.can_create);
-              if (!row.can_use || !row.can_create) {
-                throw new Error('This staging role cannot create schema objects. Stopped before any database changes; an owner-level grant is required.');
+              if (row.db !== EXPECTED_DB || row.role !== expectedRole) {
+                throw new Error(label + ' connected identity mismatch.');
               }
+              if (!row.can_use || (label === 'owner' && !row.can_create)) {
+                throw new Error(label + ' role lacks required public schema privileges.');
+              }
+              if (label === 'owner') {
+                const ownership = await pool.query(`
+                  SELECT pg_get_userbyid(c.relowner) AS owner
+                  FROM pg_class c
+                  JOIN pg_namespace n ON n.oid = c.relnamespace
+                  WHERE n.nspname = 'public' AND c.relname = 'telegram_bots'
+                `);
+                if (!ownership.rowCount || ownership.rows[0].owner !== expectedRole) {
+                  throw new Error('Owner role does not own public.telegram_bots; stopped before changes.');
+                }
+              }
+              console.log('Verified ' + label + ' connection:', row.db + ' / ' + row.role);
+              console.log('public schema USAGE:', row.can_use, 'CREATE:', row.can_create);
             } finally { await pool.end(); }
-          })().catch(error => { console.error('SAFE PREFLIGHT FAILED:', error.message); process.exitCode = 1; });
+          }
+          (async () => {
+            await verifyUrl(process.env.DATABASE_URL, 'hyperdrive_user', 'application');
+            await verifyUrl(process.env.OWNER_DATABASE_URL, 'neondb_owner', 'owner');
+          })().catch(error => {
+            console.error('SAFE PREFLIGHT FAILED:', error.message);
+            process.exitCode = 1;
+          });
           NODE
       - name: Initialize application tables
+        env:
+          DATABASE_URL: ${{ secrets.CLOUDFLARE_STAGING_OWNER_DATABASE_URL }}
         run: |
           node <<'NODE'
           const { pool, initDatabase } = require('./db');
@@ -79,6 +101,8 @@ jobs:
           })().catch(error => { console.error('APPLICATION SCHEMA INIT FAILED:', error.message); process.exitCode = 1; });
           NODE
       - name: Apply reviewed migrations
+        env:
+          DATABASE_URL: ${{ secrets.CLOUDFLARE_STAGING_OWNER_DATABASE_URL }}
         run: npm run db:migrate
       - name: Verify complete isolated staging schema
         run: |
