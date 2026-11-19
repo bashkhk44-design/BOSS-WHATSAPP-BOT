@@ -59,6 +59,8 @@ function createTelegramUpdateHandler({
       WHERE inbound.bot_id = $1
         AND inbound.update_id = $2
         AND bot.id = inbound.bot_id
+        AND bot.active = TRUE
+        AND bot.update_transport = 'webhook'
         AND (
           inbound.state IN ('queued', 'failed')
           OR (
