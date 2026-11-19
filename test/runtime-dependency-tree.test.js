@@ -127,7 +127,15 @@ test('rejects duplicate executable names within the same bin directory', t => {
 
 test('rejects linked files anywhere in the runtime dependency tree', t => {
   const item = fixture(t, [{ name: 'demo', version: '1.0.0' }]);
-  fs.linkSync(path.join(item.nodeModulesDir, 'demo', 'index.js'),
-    path.join(item.nodeModulesDir, 'demo', 'copy.js'));
+  try {
+    fs.linkSync(path.join(item.nodeModulesDir, 'demo', 'index.js'),
+      path.join(item.nodeModulesDir, 'demo', 'copy.js'));
+  } catch (error) {
+    if (['EACCES', 'EPERM', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP'].includes(error.code)) {
+      t.skip(`Hard links are unavailable in this environment: ${error.code}`);
+      return;
+    }
+    throw error;
+  }
   assert.throws(() => computeDirectoryTreeDigest(item.nodeModulesDir), /hard-linked file/);
 });
