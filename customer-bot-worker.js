@@ -32,7 +32,7 @@ async function claimNextBot(pool, workerId, leaseSeconds = DEFAULT_LEASE_SECONDS
       return null;
     }
     const botId = String(candidate.rows[0].id);
-    await client.query(`
+    const ownership = await client.query(`
       INSERT INTO bot_runtime_status
         (bot_id, status, worker_id, last_heartbeat_at, updated_at)
       VALUES ($1, 'starting', $2, NOW(), NOW())
@@ -43,7 +43,16 @@ async function claimNextBot(pool, workerId, leaseSeconds = DEFAULT_LEASE_SECONDS
         last_error_code = NULL,
         last_error_message = NULL,
         updated_at = NOW()
-    `, [botId, workerId]);
+      WHERE bot_runtime_status.worker_id = EXCLUDED.worker_id
+        OR bot_runtime_status.status IN ('unknown', 'stopped', 'error')
+        OR bot_runtime_status.last_heartbeat_at IS NULL
+        OR bot_runtime_status.last_heartbeat_at < NOW() - ($3::int * INTERVAL '1 second')
+      RETURNING bot_id
+    `, [botId, workerId, leaseSeconds]);
+    if (!ownership.rowCount) {
+      await client.query('COMMIT');
+      return null;
+    }
     await client.query('COMMIT');
     return botId;
   } catch (error) {
