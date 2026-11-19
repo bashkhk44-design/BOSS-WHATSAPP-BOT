@@ -1,0 +1,156 @@
+name: Apply Neon STAGING Migrations (Manual Approval)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_target:
+        description: "Type STAGING-ONLY"
+        required: true
+        type: string
+      confirm_apply:
+        description: "Type APPLY-STAGING-MIGRATIONS to authorize this run"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neon-staging-migrations-apply-only
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: ${{ github.ref == 'refs/heads/ops/neon-staging-migration-apply' && inputs.confirm_target == 'STAGING-ONLY' && inputs.confirm_apply == 'APPLY-STAGING-MIGRATIONS' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.STAGING_MIGRATION_DATABASE_URL }}
+      DATABASE_SSL: require
+    steps:
+      - name: Checkout isolated migration branch
+        uses: actions/checkout@v4
+        with:
+          ref: ops/neon-staging-migration-apply
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Test migration runner and allowlist
+        run: node --test migrations/runner.test.js
+
+      - name: Verify exact STAGING target and complete migration set
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { Pool } = require('pg');
+          const expectedHost = 'ep-wispy-night-bexu4b47.c-9.us-east-2.aws.neon.tech';
+          const expectedFiles = [
+            '001_foundation_database.sql',
+            '002_distributed_bot_worker_indexes.sql',
+            '003_bot_runtime_commands.sql',
+            '004_manager_command_recovery.sql',
+            '005_worker_health_heartbeats.sql',
+            '006_auto_remediation_audit.sql',
+            '007_platform_bot_inbox.sql'
+          ];
+          const baselineFiles = ['000_staging_bootstrap.sql'];
+          const excludedFiles = ['20261118_bot_runtime_status.sql'];
+
+          async function main() {
+            if (!process.env.DATABASE_URL) throw new Error('Missing STAGING_MIGRATION_DATABASE_URL.');
+            const parsed = new URL(process.env.DATABASE_URL);
+            if (parsed.protocol !== 'postgresql:' ||
+                parsed.hostname !== expectedHost ||
+                parsed.pathname !== '/neondb') {
+              throw new Error('Refusing to run: connection is not the approved Neon STAGING endpoint.');
+            }
+
+            const dir = path.join(process.cwd(), 'migrations');
+            const actual = fs.readdirSync(dir)
+              .filter(name => /^\\d+_[a-z0-9_-]+\\.sql$/i.test(name))
+              .sort();
+            const allowed = [...expectedFiles, ...baselineFiles, ...excludedFiles].sort();
+            const missing = expectedFiles.filter(name => !actual.includes(name));
+            const missingBaseline = baselineFiles.filter(name => !actual.includes(name));
+            const unexpected = actual.filter(name => !allowed.includes(name));
+            const { listMigrationFiles, APPROVED_MIGRATION_FILES } = require('./migrations/runner');
+            if (missing.length || missingBaseline.length || unexpected.length ||
+                JSON.stringify(listMigrationFiles(dir)) !== JSON.stringify(expectedFiles) ||
+                JSON.stringify(APPROVED_MIGRATION_FILES) !== JSON.stringify(expectedFiles)) {
+              throw new Error('Migration file set does not exactly match the reviewed 001-007 allowlist.');
+            }
+
+            const pool = new Pool({
+              connectionString: process.env.DATABASE_URL,
+              ssl: { rejectUnauthorized: false },
+              max: 1,
+              connectionTimeoutMillis: 10000
+            });
+            try {
+              const result = await pool.query(
+                'SELECT current_database() AS db, current_user AS role'
+              );
+              if (result.rows[0].db !== 'neondb' || result.rows[0].role !== 'neondb_owner') {
+                throw new Error('Refusing to run: expected database neondb and role neondb_owner.');
+              }
+              console.log('Approved STAGING target verified. No connection string or secret is printed.');
+              console.log('The explicitly reviewed migration set contains exactly seven files.');
+            } finally {
+              await pool.end();
+            }
+          }
+          main().catch(error => {
+            console.error('STAGING APPLY PREFLIGHT FAILED:', error.message);
+            process.exitCode = 1;
+          });
+          NODE
+
+      - name: Apply reviewed migrations 001-007 to Neon STAGING
+        run: node migrations/runner.js
+
+      - name: Verify all seven migrations were recorded
+        run: |
+          node <<'NODE'
+          const { Pool } = require('pg');
+          const expected = [
+            '001_foundation_database',
+            '002_distributed_bot_worker_indexes',
+            '003_bot_runtime_commands',
+            '004_manager_command_recovery',
+            '005_worker_health_heartbeats',
+            '006_auto_remediation_audit',
+            '007_platform_bot_inbox'
+          ];
+          async function main() {
+            const pool = new Pool({
+              connectionString: process.env.DATABASE_URL,
+              ssl: { rejectUnauthorized: false },
+              max: 1,
+              connectionTimeoutMillis: 10000
+            });
+            try {
+              const result = await pool.query(
+                'SELECT version FROM public.schema_migrations WHERE version = ANY($1::text[]) ORDER BY version',
+                [expected]
+              );
+              const found = result.rows.map(row => row.version);
+              const missing = expected.filter(version => !found.includes(version));
+              if (missing.length) throw new Error('Migration verification incomplete: ' + missing.join(', '));
+              console.log('Verified all seven approved migrations are recorded.');
+            } finally {
+              await pool.end();
+            }
+          }
+          main().catch(error => {
+            console.error('POST-MIGRATION VERIFICATION FAILED:', error.message);
+            process.exitCode = 1;
+          });
+          NODE
