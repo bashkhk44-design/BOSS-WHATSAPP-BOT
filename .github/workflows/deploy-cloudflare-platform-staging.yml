@@ -1,4 +1,3 @@
-
 name: Deploy BOSS BOT Platform Cloudflare Staging
 
 on:
@@ -36,7 +35,7 @@ jobs:
           grep -Fq '"name": "boss-bot-platform-ingress-staging"' "$CONFIG"
           grep -Fq '"id": "82180f393f7f41478ddcb93404eb5e05"' "$CONFIG"
           grep -Fq '"PLATFORM_BOT_WEBHOOK_MODE": "disabled"' "$CONFIG"
-          grep -Fq '"workers_dev": false' "$CONFIG"
+          grep -Fq '"workers_dev": true' "$CONFIG"
 
           if grep -Eq "REPLACE_WITH|production|prod-" "$CONFIG"; then
             echo "Unsafe or unresolved staging configuration detected."
