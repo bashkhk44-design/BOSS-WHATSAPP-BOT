@@ -49,10 +49,12 @@ test('injected intake webhook runtime handles updates without starting polling o
   const { createIntakeRuntime } = require('../intake-bot');
   const handled = [];
   let startCalls = 0;
+  let initCalls = 0;
   let stopCalls = 0;
   let registeredHandlers = 0;
 
   const fakeBot = {
+    async init() { initCalls += 1; },
     command() { registeredHandlers += 1; return this; },
     callbackQuery() { registeredHandlers += 1; return this; },
     on() { registeredHandlers += 1; return this; },
@@ -91,6 +93,7 @@ test('injected intake webhook runtime handles updates without starting polling o
   const webhook = await runtime.createWebhookRuntime({ token: 'injected-test-token' });
 
   assert.ok(registeredHandlers > 0, 'intake handlers should be registered on the injected bot');
+  assert.equal(initCalls, 1, 'intake bot must initialize before webhook updates');
   assert.equal(startCalls, 0, 'webhook mode must not start long polling');
   assert.equal(await webhook.handleUpdate({ update_id: 123, message: { text: '/start' } }), 'handled');
   assert.equal(handled.length, 1);
