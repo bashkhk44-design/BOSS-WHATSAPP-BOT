@@ -44,6 +44,7 @@ function createTelegramUpdateHandler({
     const botId = Number(job.payload?.botId);
     const updateId = Number(job.payload?.updateId);
     const workerId = context.workerId || job.locked_by;
+    const activeLeaseSeconds = context.leaseSeconds ?? leaseSeconds;
     const jobId = job.id;
     if (!Number.isSafeInteger(botId) || botId < 1 || !Number.isSafeInteger(updateId) || updateId < 0) {
       throw new Error('Invalid Telegram update job payload');
@@ -94,7 +95,7 @@ function createTelegramUpdateHandler({
         )
       RETURNING inbound.payload, bot.id, bot.name,
                 bot.token_ciphertext, bot.token_iv, bot.token_auth_tag
-    `, [botId, updateId, leaseSeconds, workerId, jobId]);
+    `, [botId, updateId, activeLeaseSeconds, workerId, jobId]);
 
     if (!claimed.rowCount) {
       const current = await pool.query(
@@ -127,7 +128,7 @@ function createTelegramUpdateHandler({
               AND active_job.locked_at >= NOW() - make_interval(secs => $5::int)
           )
         RETURNING inbound.id
-      `, [botId, updateId, workerId, jobId, leaseSeconds]);
+      `, [botId, updateId, workerId, jobId, activeLeaseSeconds]);
       if (!renewed.rowCount) leaseLost = true;
     }
 
@@ -174,7 +175,7 @@ function createTelegramUpdateHandler({
               AND active_job.locked_at >= NOW() - make_interval(secs => $5::int)
           )
         RETURNING inbound.id
-      `, [botId, updateId, workerId, jobId, leaseSeconds]);
+      `, [botId, updateId, workerId, jobId, activeLeaseSeconds]);
       if (!saved.rowCount) throw new Error('Telegram update lease was lost before completion');
       return { processed: true, botId, updateId };
     } catch (error) {
@@ -200,7 +201,7 @@ function createTelegramUpdateHandler({
                   AND active_job.locked_by = $3
                   AND active_job.locked_at >= NOW() - make_interval(secs => $6::int)
               )
-          `, [botId, updateId, workerId, jobId, String(error.message || error), leaseSeconds]);
+          `, [botId, updateId, workerId, jobId, String(error.message || error), activeLeaseSeconds]);
         } catch (_) {}
       }
       throw error;
