@@ -94,9 +94,22 @@ async function createPlatformBotWorker({
     close() {
       if (!closePromise) {
         closePromise = (async () => {
-          await intakeWebhook.stop();
-          await masterWebhook.stop();
-          await masterRuntime.closeWebhookResources?.();
+          const failures = [];
+          const stopped = await Promise.allSettled([
+            Promise.resolve().then(() => intakeWebhook.stop()),
+            Promise.resolve().then(() => masterWebhook.stop())
+          ]);
+          for (const result of stopped) {
+            if (result.status === 'rejected') failures.push(result.reason);
+          }
+          try {
+            await masterRuntime.closeWebhookResources?.();
+          } catch (error) {
+            failures.push(error);
+          }
+          if (failures.length) {
+            throw new AggregateError(failures, 'One or more platform bot resources failed to close');
+          }
         })();
       }
       return closePromise;
