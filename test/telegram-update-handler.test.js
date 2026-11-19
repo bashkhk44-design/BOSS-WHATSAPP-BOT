@@ -48,6 +48,10 @@ test('Telegram update handler claims, dispatches, and marks an update processed'
   assert.equal(calls.length, 2);
   assert.match(calls[0].sql, /bot\.active = TRUE/);
   assert.match(calls[0].sql, /bot\.update_transport = 'webhook'/);
+  assert.match(calls[0].sql, /NOT EXISTS/);
+  assert.match(calls[0].sql, /earlier.update_id < inbound.update_id/);
+  assert.match(calls[0].sql, /active_job.locked_by = \\$4/);
+  assert.match(calls[0].sql, /locked_by = \\$4/);
 });
 
 test('Telegram update handler leaves failed updates retryable', async () => {
