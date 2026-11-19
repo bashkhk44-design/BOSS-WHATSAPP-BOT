@@ -3,6 +3,7 @@
 require('dotenv').config();
 
 const path = require('node:path');
+const fs = require('node:fs');
 const { Pool } = require('pg');
 const { normalizeJobTypes } = require('./platform-queue');
 const { createQueueWorker } = require('./queue-worker');
@@ -44,6 +45,39 @@ function validateWorkerEnvironment(env = process.env) {
   return true;
 }
 
+
+
+function resolveWorkerHandlersPath(modulePath, projectRoot = __dirname) {
+  if (typeof modulePath !== 'string' || !modulePath.trim()) {
+    throw new TypeError('JOB_HANDLERS_MODULE must be a non-empty path');
+  }
+  if (path.extname(modulePath) !== '.js') {
+    throw new Error('Custom worker handlers must use a .js file');
+  }
+
+  const root = fs.realpathSync(projectRoot);
+  const directory = fs.realpathSync(path.join(root, 'worker-handlers'));
+
+  const inside = (parent, candidate) => {
+    const relative = path.relative(parent, candidate);
+    return relative !== '' && relative !== '..' &&
+      !relative.startsWith('..' + path.sep) &&
+      !path.isAbsolute(relative);
+  };
+
+  if (!inside(root, directory)) {
+    throw new Error('worker-handlers directory must remain inside the project');
+  }
+
+  const resolved = fs.realpathSync(path.resolve(root, modulePath));
+  if (!inside(directory, resolved)) {
+    throw new Error('JOB_HANDLERS_MODULE must resolve inside worker-handlers');
+  }
+  if (!fs.statSync(resolved).isFile()) {
+    throw new Error('JOB_HANDLERS_MODULE must point to a file');
+  }
+  return resolved;
+}
 
 function mergeWorkerHandlers(currentHandlers, loadedModule) {
   if (!currentHandlers || typeof currentHandlers !== 'object' || Array.isArray(currentHandlers)) {
@@ -110,9 +144,7 @@ async function main() {
 
   try {
     if (process.env.JOB_HANDLERS_MODULE) {
-      const handlersPath = path.isAbsolute(process.env.JOB_HANDLERS_MODULE)
-        ? process.env.JOB_HANDLERS_MODULE
-        : path.resolve(process.cwd(), process.env.JOB_HANDLERS_MODULE);
+      const handlersPath = resolveWorkerHandlersPath(process.env.JOB_HANDLERS_MODULE);
       const loaded = require(handlersPath);
       handlers = mergeWorkerHandlers(handlers, loaded);
     }
@@ -164,4 +196,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, validateWorkerEnvironment, getWorkerSslConfig, mergeWorkerHandlers };
+module.exports = { main, validateWorkerEnvironment, getWorkerSslConfig, mergeWorkerHandlers, resolveWorkerHandlersPath };
