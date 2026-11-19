@@ -21,9 +21,11 @@ test('injected master webhook runtime handles updates without starting polling o
   const { createMasterRuntime } = require('../telegram-master');
   const handled = [];
   let startCalls = 0;
+  let initCalls = 0;
   let registeredHandlers = 0;
 
   const fakeBot = {
+    async init() { initCalls += 1; },
     command() { registeredHandlers += 1; return this; },
     callbackQuery() { registeredHandlers += 1; return this; },
     on() { registeredHandlers += 1; return this; },
@@ -87,7 +89,9 @@ test('injected master webhook runtime handles updates without starting polling o
       return fakeBot;
     }
   });
-  const webhook = runtime.createWebhookRuntime();
+  const webhook = await runtime.createWebhookRuntime();
+
+  assert.equal(initCalls, 1, 'master bot must initialize before webhook updates');
 
   assert.ok(registeredHandlers > 0, 'master handlers should be registered');
   assert.equal(startCalls, 0, 'creating a webhook runtime must not start polling');
