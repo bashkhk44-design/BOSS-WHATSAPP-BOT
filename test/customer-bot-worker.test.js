@@ -22,7 +22,8 @@ test('claims the next eligible bot transactionally with SKIP LOCKED', async () =
   assert.match(calls[1].sql, /FOR UPDATE OF b SKIP LOCKED/);
   assert.match(calls[1].sql, /b\.update_transport = 'polling'/);
   assert.match(calls[2].sql, /ON CONFLICT \(bot_id\) DO UPDATE/);
-  assert.deepEqual(calls[2].params, ['42', 'worker-test']);
+  assert.match(calls[2].sql, /last_heartbeat_at < NOW\(\) - \(\$3::int/);
+  assert.deepEqual(calls[2].params, ['42', 'worker-test', 90]);
   assert.equal(calls[3].sql, 'COMMIT');
   assert.equal(calls[4].sql, 'RELEASE');
 });
