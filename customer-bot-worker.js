@@ -194,11 +194,13 @@ function createCustomerBotWorker({
             const deadline = Date.now() + botReadyTimeoutMs;
             let healthy = false;
             while (Date.now() < deadline) {
+              assertCommandLease();
               const statusResult = await pool.query(`
                 SELECT status, worker_id, last_heartbeat_at
                 FROM bot_runtime_status
                 WHERE bot_id = $1
               `, [botId]);
+              assertCommandLease();
               const status = statusResult.rows[0];
               const heartbeatAt = status?.last_heartbeat_at
                 ? new Date(status.last_heartbeat_at).getTime()
