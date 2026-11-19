@@ -15,6 +15,7 @@ async function claimNextBot(pool, workerId, leaseSeconds = DEFAULT_LEASE_SECONDS
       LEFT JOIN bot_runtime_status s ON s.bot_id = b.id
       WHERE b.active = TRUE
         AND b.token_ciphertext IS NOT NULL
+        AND b.update_transport = 'polling'
         AND ($2::bigint IS NULL OR b.id = $2::bigint)
         AND (
           s.bot_id IS NULL
@@ -31,7 +32,7 @@ async function claimNextBot(pool, workerId, leaseSeconds = DEFAULT_LEASE_SECONDS
       return null;
     }
     const botId = String(candidate.rows[0].id);
-    await client.query(`
+    const ownership = await client.query(`
       INSERT INTO bot_runtime_status
         (bot_id, status, worker_id, last_heartbeat_at, updated_at)
       VALUES ($1, 'starting', $2, NOW(), NOW())
@@ -42,7 +43,16 @@ async function claimNextBot(pool, workerId, leaseSeconds = DEFAULT_LEASE_SECONDS
         last_error_code = NULL,
         last_error_message = NULL,
         updated_at = NOW()
-    `, [botId, workerId]);
+      WHERE bot_runtime_status.worker_id = EXCLUDED.worker_id
+        OR bot_runtime_status.status IN ('unknown', 'stopped', 'error')
+        OR bot_runtime_status.last_heartbeat_at IS NULL
+        OR bot_runtime_status.last_heartbeat_at < NOW() - ($3::int * INTERVAL '1 second')
+      RETURNING bot_id
+    `, [botId, workerId, leaseSeconds]);
+    if (!ownership.rowCount) {
+      await client.query('COMMIT');
+      return null;
+    }
     await client.query('COMMIT');
     return botId;
   } catch (error) {
@@ -145,8 +155,9 @@ function createCustomerBotWorker({
             UPDATE bot_runtime_commands
             SET claimed_at = NOW()
             WHERE id = $1 AND claimed_by = $2 AND status = 'processing'
+              AND claimed_at >= NOW() - ($3::int * INTERVAL '1 second')
             RETURNING id
-          `, [command.id, workerId]);
+          `, [command.id, workerId, leaseSeconds]);
           if (!renewed.rowCount) commandLeaseLost = true;
         } catch (error) {
           commandLeaseLost = true;
@@ -157,9 +168,13 @@ function createCustomerBotWorker({
       })();
     }, commandHeartbeatIntervalMs);
     if (typeof commandHeartbeat.unref === 'function') commandHeartbeat.unref();
+    const assertCommandLease = () => {
+      if (commandLeaseLost) throw new Error('Manager command lease was lost before completion');
+    };
     try {
       if (command.action === 'stop' || command.action === 'restart') {
         await runtime.stopBotById(botId);
+        assertCommandLease();
         await pool.query(`
           UPDATE bot_runtime_status
           SET status = 'stopped', worker_id = NULL,
@@ -167,20 +182,25 @@ function createCustomerBotWorker({
           WHERE bot_id = $1
             AND (worker_id = $2 OR worker_id = $3 OR last_heartbeat_at < NOW() - ($4::int * INTERVAL '1 second') OR worker_id IS NULL)
         `, [botId, workerId, command.target_worker_id, leaseSeconds]);
+        assertCommandLease();
       }
       if (command.action === 'start' || command.action === 'restart') {
         const claimedBotId = await claimNextBot(pool, workerId, leaseSeconds, botId);
+        assertCommandLease();
         if (claimedBotId) {
           await runtime.startBotById(claimedBotId);
+          assertCommandLease();
           if (command.auto_remediation_attempt_id) {
             const deadline = Date.now() + botReadyTimeoutMs;
             let healthy = false;
             while (Date.now() < deadline) {
+              assertCommandLease();
               const statusResult = await pool.query(`
                 SELECT status, worker_id, last_heartbeat_at
                 FROM bot_runtime_status
                 WHERE bot_id = $1
               `, [botId]);
+              assertCommandLease();
               const status = statusResult.rows[0];
               const heartbeatAt = status?.last_heartbeat_at
                 ? new Date(status.last_heartbeat_at).getTime()
@@ -202,12 +222,14 @@ function createCustomerBotWorker({
             'SELECT worker_id, last_heartbeat_at FROM bot_runtime_status WHERE bot_id = $1',
             [botId]
           );
+          assertCommandLease();
           const status = owner.rows[0];
           const ownedHere = status?.worker_id === workerId;
           const ownerFresh = status?.last_heartbeat_at &&
             Date.now() - new Date(status.last_heartbeat_at).getTime() < leaseSeconds * 1000;
           if (ownedHere && ownerFresh) {
             await runtime.startBotById(botId);
+            assertCommandLease();
           } else {
             throw new Error('تعذر حجز البوت بأمان؛ قد يكون عاملاً آخر يملكه حالياً.');
           }
@@ -215,13 +237,14 @@ function createCustomerBotWorker({
       }
       clearInterval(commandHeartbeat);
       await commandHeartbeatPromise;
-      if (commandLeaseLost) throw new Error('Manager command lease was lost before completion');
+      assertCommandLease();
       const completed = await pool.query(`
         UPDATE bot_runtime_commands
         SET status = 'completed', processed_at = NOW(), error_message = NULL
         WHERE id = $1 AND claimed_by = $2 AND status = 'processing'
+          AND claimed_at >= NOW() - ($3::int * INTERVAL '1 second')
         RETURNING auto_remediation_attempt_id
-      `, [command.id, workerId]);
+      `, [command.id, workerId, leaseSeconds]);
       if (!completed.rowCount) throw new Error('Manager command lease was lost before completion');
       if (completed.rows[0].auto_remediation_attempt_id) {
         await pool.query(`
@@ -234,12 +257,17 @@ function createCustomerBotWorker({
     } catch (error) {
       clearInterval(commandHeartbeat);
       await commandHeartbeatPromise;
+      if (commandLeaseLost && (command.action === 'start' || command.action === 'restart')) {
+        try { await runtime.stopBotById(botId); }
+        catch (stopError) { logger.error('Could not stop bot after manager command lease loss ' + botId + ': ' + stopError.message); }
+      }
       const failed = await pool.query(`
         UPDATE bot_runtime_commands
         SET status = 'failed', processed_at = NOW(), error_message = $3
         WHERE id = $1 AND claimed_by = $2 AND status = 'processing'
+          AND claimed_at >= NOW() - ($4::int * INTERVAL '1 second')
         RETURNING auto_remediation_attempt_id
-      `, [command.id, workerId, String(error.message || error).slice(0, 1000)]);
+      `, [command.id, workerId, String(error.message || error).slice(0, 1000), leaseSeconds]);
       if (failed.rowCount && failed.rows[0].auto_remediation_attempt_id) {
         await pool.query(`
           UPDATE bot_auto_remediation_attempts
@@ -354,14 +382,21 @@ async function main() {
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000
   });
-  const workerId = process.env.CUSTOMER_BOT_WORKER_ID || randomUUID();
+  const workerId = (process.env.CUSTOMER_BOT_WORKER_ID
+    ? process.env.CUSTOMER_BOT_WORKER_ID + ':'
+    : '') + randomUUID();
   let worker = null;
+  const leaseSeconds = Number(process.env.CUSTOMER_BOT_LEASE_SECONDS || DEFAULT_LEASE_SECONDS);
   const runtime = createBotRuntime({
     pool,
     decryptToken,
     createCustomerBot,
     workerId,
+    requireLease: true,
+    leaseSeconds,
+    heartbeatIntervalMs: Math.max(1000, Math.floor(leaseSeconds * 1000 / 3)),
     maxBots: Number(process.env.CUSTOMER_BOT_WORKER_CAPACITY || DEFAULT_CAPACITY),
+    onLeaseLost: botId => console.error('Customer bot lease lost; local bot stopped:', botId),
     onStatusPersistError: error => {
       console.error('WORKER LEASE HEARTBEAT LOST; stopping owned bots:', error.message);
       if (worker) void worker.stop();
@@ -373,7 +408,7 @@ async function main() {
     runtime,
     workerId,
     capacity: Number(process.env.CUSTOMER_BOT_WORKER_CAPACITY || DEFAULT_CAPACITY),
-    leaseSeconds: Number(process.env.CUSTOMER_BOT_LEASE_SECONDS || DEFAULT_LEASE_SECONDS),
+    leaseSeconds,
     pollIntervalMs: Number(process.env.CUSTOMER_BOT_WORKER_POLL_MS || 3000)
   });
   let stopping = false;

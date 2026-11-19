@@ -46,7 +46,13 @@ test('queue claims can be restricted to a validated set of registered job types'
   };
   assert.equal(await claimPlatformJob(pool, 'worker-preflight', ['deployment.preflight']), null);
   assert.match(call.sql, /job_type = ANY\(\$2::text\[\]\)/);
+  assert.match(call.sql, /NOT EXISTS/);
+  assert.match(call.sql, /earlier.update_id < \(platform_jobs.payload->>'updateId'\)::bigint/);
   assert.deepEqual(call.params, ['worker-preflight', ['deployment.preflight']]);
+
+  await claimPlatformJob(pool, 'worker-unfiltered');
+  assert.match(call.sql, /NOT EXISTS/);
+  assert.match(call.sql, /earlier.state <> 'processed'/);
   assert.deepEqual(normalizeJobTypes(['deployment.preflight', 'deployment.preflight']), ['deployment.preflight']);
   assert.throws(() => normalizeJobTypes([]), /1 to 50/);
   assert.throws(() => normalizeJobTypes(['invalid type']), /invalid job type/);

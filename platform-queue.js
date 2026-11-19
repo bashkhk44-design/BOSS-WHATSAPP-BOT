@@ -87,6 +87,21 @@ async function claimPlatformJob(pool, workerId, jobTypes) {
           WHERE status IN ('queued', 'retrying')
             AND available_at <= NOW()
             AND attempts < max_attempts
+            AND (
+              platform_jobs.job_type <> 'telegram.update'
+              OR NOT EXISTS (
+                SELECT 1
+                FROM bot_inbound_updates AS earlier
+                LEFT JOIN platform_jobs AS earlier_job
+                  ON earlier_job.job_type = 'telegram.update'
+                 AND earlier_job.idempotency_key =
+                   'telegram.update:' || earlier.bot_id::text || ':' || earlier.update_id::text
+                WHERE earlier.bot_id = platform_jobs.bot_id
+                  AND earlier.update_id < (platform_jobs.payload->>'updateId')::bigint
+                  AND earlier.state <> 'processed'
+                  AND COALESCE(earlier_job.status, 'queued') <> 'dead_letter'
+              )
+            )
             AND job_type = ANY($2::text[])
           ORDER BY priority DESC, available_at ASC, id ASC
           FOR UPDATE SKIP LOCKED
@@ -109,6 +124,21 @@ async function claimPlatformJob(pool, workerId, jobTypes) {
           WHERE status IN ('queued', 'retrying')
             AND available_at <= NOW()
             AND attempts < max_attempts
+            AND (
+              platform_jobs.job_type <> 'telegram.update'
+              OR NOT EXISTS (
+                SELECT 1
+                FROM bot_inbound_updates AS earlier
+                LEFT JOIN platform_jobs AS earlier_job
+                  ON earlier_job.job_type = 'telegram.update'
+                 AND earlier_job.idempotency_key =
+                   'telegram.update:' || earlier.bot_id::text || ':' || earlier.update_id::text
+                WHERE earlier.bot_id = platform_jobs.bot_id
+                  AND earlier.update_id < (platform_jobs.payload->>'updateId')::bigint
+                  AND earlier.state <> 'processed'
+                  AND COALESCE(earlier_job.status, 'queued') <> 'dead_letter'
+              )
+            )
           ORDER BY priority DESC, available_at ASC, id ASC
           FOR UPDATE SKIP LOCKED
           LIMIT 1
