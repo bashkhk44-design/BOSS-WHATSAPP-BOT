@@ -56,7 +56,7 @@ async function createPlatformBotWorker({
       throw new TypeError('Master runtime factory must expose createWebhookRuntime()');
     }
 
-    masterWebhook = masterRuntime.createWebhookRuntime();
+    masterWebhook = await masterRuntime.createWebhookRuntime();
     const intakeRuntime = intakeFactory();
     if (!intakeRuntime || typeof intakeRuntime.createWebhookRuntime !== 'function') {
       throw new TypeError('Intake runtime factory must expose createWebhookRuntime()');
