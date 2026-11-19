@@ -168,9 +168,13 @@ function createCustomerBotWorker({
       })();
     }, commandHeartbeatIntervalMs);
     if (typeof commandHeartbeat.unref === 'function') commandHeartbeat.unref();
+    const assertCommandLease = () => {
+      if (commandLeaseLost) throw new Error('Manager command lease was lost before completion');
+    };
     try {
       if (command.action === 'stop' || command.action === 'restart') {
         await runtime.stopBotById(botId);
+        assertCommandLease();
         await pool.query(`
           UPDATE bot_runtime_status
           SET status = 'stopped', worker_id = NULL,
@@ -178,11 +182,14 @@ function createCustomerBotWorker({
           WHERE bot_id = $1
             AND (worker_id = $2 OR worker_id = $3 OR last_heartbeat_at < NOW() - ($4::int * INTERVAL '1 second') OR worker_id IS NULL)
         `, [botId, workerId, command.target_worker_id, leaseSeconds]);
+        assertCommandLease();
       }
       if (command.action === 'start' || command.action === 'restart') {
         const claimedBotId = await claimNextBot(pool, workerId, leaseSeconds, botId);
+        assertCommandLease();
         if (claimedBotId) {
           await runtime.startBotById(claimedBotId);
+          assertCommandLease();
           if (command.auto_remediation_attempt_id) {
             const deadline = Date.now() + botReadyTimeoutMs;
             let healthy = false;
@@ -213,12 +220,14 @@ function createCustomerBotWorker({
             'SELECT worker_id, last_heartbeat_at FROM bot_runtime_status WHERE bot_id = $1',
             [botId]
           );
+          assertCommandLease();
           const status = owner.rows[0];
           const ownedHere = status?.worker_id === workerId;
           const ownerFresh = status?.last_heartbeat_at &&
             Date.now() - new Date(status.last_heartbeat_at).getTime() < leaseSeconds * 1000;
           if (ownedHere && ownerFresh) {
             await runtime.startBotById(botId);
+            assertCommandLease();
           } else {
             throw new Error('تعذر حجز البوت بأمان؛ قد يكون عاملاً آخر يملكه حالياً.');
           }
@@ -226,7 +235,7 @@ function createCustomerBotWorker({
       }
       clearInterval(commandHeartbeat);
       await commandHeartbeatPromise;
-      if (commandLeaseLost) throw new Error('Manager command lease was lost before completion');
+      assertCommandLease();
       const completed = await pool.query(`
         UPDATE bot_runtime_commands
         SET status = 'completed', processed_at = NOW(), error_message = NULL
