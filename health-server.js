@@ -18,6 +18,7 @@ function createHealthServer(getRuntimeState) {
       });
       return res.end(JSON.stringify({
         status: 'ok',
+        runtimeReady: ready,
         service: 'BOSS BOT MASTER'
       }));
     }
