@@ -9,7 +9,7 @@ test('Telegram update handler claims, dispatches, and marks an update processed'
   const pool = {
     async query(sql, params) {
       calls.push({ sql, params });
-      if (sql.includes('UPDATE bot_inbound_updates AS inbound')) {
+      if (sql.includes('UPDATE bot_inbound_updates AS inbound') && sql.includes("SET state = 'processing'")) {
         return {
           rowCount: 1,
           rows: [{
@@ -41,7 +41,7 @@ test('Telegram update handler claims, dispatches, and marks an update processed'
     })
   });
 
-  const result = await handler({ payload: { botId: 5, updateId: 77 } });
+  const result = await handler({ id: 1, locked_by: 'test-worker', payload: { botId: 5, updateId: 77 } }, { workerId: 'test-worker' });
   assert.equal(handled, true);
   assert.deepEqual(order, ['init', 'handle']);
   assert.deepEqual(result, { processed: true, botId: 5, updateId: 77 });
@@ -55,7 +55,7 @@ test('Telegram update handler leaves failed updates retryable', async () => {
   const pool = {
     async query(sql) {
       calls.push(sql);
-      if (sql.includes('UPDATE bot_inbound_updates AS inbound')) {
+      if (sql.includes('UPDATE bot_inbound_updates AS inbound') && sql.includes("SET state = 'processing'")) {
         return { rowCount: 1, rows: [{ payload: { update_id: 78 }, id: 6, name: 'Fail bot' }] };
       }
       if (sql.includes("SET state = 'failed'")) return { rowCount: 1, rows: [] };
@@ -69,7 +69,7 @@ test('Telegram update handler leaves failed updates retryable', async () => {
   });
 
   await assert.rejects(
-    handler({ payload: { botId: 6, updateId: 78 } }),
+    handler({ id: 1, locked_by: 'test-worker', payload: { botId: 6, updateId: 78 } }, { workerId: 'test-worker' }),
     /Telegram API unavailable/
   );
   assert.ok(calls.some(sql => sql.includes("SET state = 'failed'")));
@@ -82,7 +82,7 @@ test('Telegram update handler reuses one initialized bot instance for subsequent
   let handledUpdates = 0;
   const pool = {
     async query(sql) {
-      if (sql.includes('UPDATE bot_inbound_updates AS inbound')) {
+      if (sql.includes('UPDATE bot_inbound_updates AS inbound') && sql.includes("SET state = 'processing'")) {
         return {
           rowCount: 1,
           rows: [{
@@ -109,8 +109,8 @@ test('Telegram update handler reuses one initialized bot instance for subsequent
     }
   });
 
-  await handler({ payload: { botId: 12, updateId: 90 } });
-  await handler({ payload: { botId: 12, updateId: 91 } });
+  await handler({ id: 1, locked_by: 'test-worker', payload: { botId: 12, updateId: 90 } }, { workerId: 'test-worker' });
+  await handler({ id: 1, locked_by: 'test-worker', payload: { botId: 12, updateId: 91 } }, { workerId: 'test-worker' });
 
   assert.equal(factoryCalls, 1);
   assert.equal(initCalls, 1);
@@ -126,7 +126,7 @@ test('Telegram update handler shares one in-flight initialization across concurr
   const initGate = new Promise(resolve => { releaseInit = resolve; });
   const pool = {
     async query(sql, params) {
-      if (sql.includes('UPDATE bot_inbound_updates AS inbound')) {
+      if (sql.includes('UPDATE bot_inbound_updates AS inbound') && sql.includes("SET state = 'processing'")) {
         return {
           rowCount: 1,
           rows: [{
@@ -153,8 +153,8 @@ test('Telegram update handler shares one in-flight initialization across concurr
     }
   });
 
-  const first = handler({ payload: { botId: 21, updateId: 101 } });
-  const second = handler({ payload: { botId: 21, updateId: 102 } });
+  const first = handler({ id: 1, locked_by: 'test-worker', payload: { botId: 21, updateId: 101 } }, { workerId: 'test-worker' });
+  const second = handler({ id: 1, locked_by: 'test-worker', payload: { botId: 21, updateId: 102 } }, { workerId: 'test-worker' });
   await new Promise(resolve => setImmediate(resolve));
   releaseInit();
   await Promise.all([first, second]);
@@ -169,7 +169,7 @@ test('Telegram update handler evicts a bot whose initialization fails so a retry
   let initCalls = 0;
   const pool = {
     async query(sql, params) {
-      if (sql.includes('UPDATE bot_inbound_updates AS inbound')) {
+      if (sql.includes('UPDATE bot_inbound_updates AS inbound') && sql.includes("SET state = 'processing'")) {
         return {
           rowCount: 1,
           rows: [{
@@ -202,10 +202,10 @@ test('Telegram update handler evicts a bot whose initialization fails so a retry
   });
 
   await assert.rejects(
-    handler({ payload: { botId: 22, updateId: 201 } }),
+    handler({ id: 1, locked_by: 'test-worker', payload: { botId: 22, updateId: 201 } }, { workerId: 'test-worker' }),
     /temporary getMe failure/
   );
-  const recovered = await handler({ payload: { botId: 22, updateId: 202 } });
+  const recovered = await handler({ id: 1, locked_by: 'test-worker', payload: { botId: 22, updateId: 202 } }, { workerId: 'test-worker' });
 
   assert.deepEqual(recovered, { processed: true, botId: 22, updateId: 202 });
   assert.equal(factoryCalls, 2);
