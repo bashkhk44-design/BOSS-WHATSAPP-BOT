@@ -14,7 +14,8 @@ const env = {
   INTAKE_WEBHOOK_SECRET: 'intake_edge_secret_abcdefghijklmnopqrstuvwxyz123456',
   TELEGRAM_BOT_TOKEN: 'master-telegram-token-' + 'm'.repeat(40),
   INTAKE_BOT_TOKEN: 'intake-telegram-token-' + 'i'.repeat(40),
-  HYPERDRIVE: { connectionString: 'postgresql://staging-user:staging-password@staging.example.invalid/staging' }
+  HYPERDRIVE: { connectionString: 'postgresql://staging-user:staging-password@staging.example.invalid/staging' },
+  DB_CHECK_SECRET: 'staging_db_check_secret_abcdefghijklmnopqrstuvwxyz123456'
 };
 
 function makeRequest(pathname, {
@@ -46,6 +47,7 @@ function makeClientClass({ duplicate = false, failQuery = false } = {}) {
     async query(sql, params) {
       state.queries.push({ sql, params });
       if (failQuery) throw new Error('database unavailable');
+      if (sql === 'SELECT 1 AS db_check') return { rowCount: 1, rows: [{ db_check: 1 }] };
       return duplicate
         ? { rowCount: 0, rows: [] }
         : { rowCount: 1, rows: [{ id: 10, job_id: 20 }] };
@@ -161,6 +163,96 @@ test('Cloudflare Worker returns generic database errors and closes failed client
   const { FakeClient, state } = makeClientClass({ failQuery: true });
   const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
   const response = await handler(makeRequest('/telegram/platform/master'), env);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { ok: false, error: 'temporarily_unavailable' });
+  assert.equal(state.ended, 1);
+});
+
+test('Cloudflare Worker DB check authenticates and runs a read-only SELECT 1 probe', async () => {
+  const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
+  const { FakeClient, state } = makeClientClass();
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const request = new Request('https://edge.example.invalid/db-check', {
+    method: 'GET',
+    headers: { 'x-boss-db-check-token': env.DB_CHECK_SECRET }
+  });
+  const response = await handler(request, env);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, database: 'connected', probe: 1 });
+  assert.equal(state.constructed, 1);
+  assert.equal(state.connected, 1);
+  assert.equal(state.ended, 1);
+  assert.deepEqual(state.queries, [{ sql: 'SELECT 1 AS db_check', params: undefined }]);
+  assert.equal(state.config.connectionString, env.HYPERDRIVE.connectionString);
+});
+
+test('Cloudflare Worker table counts endpoint authenticates and runs only the fixed read-only count query', async () => {
+  const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
+  const state = { constructed: 0, connected: 0, ended: 0, queries: [] };
+  class FakeClient {
+    constructor(config) { state.constructed += 1; state.config = config; }
+    async connect() { state.connected += 1; }
+    async query(sql) {
+      state.queries.push(sql);
+      return { rows: [
+        { table_name: 'client_projects', rows_count: '2' },
+        { table_name: 'clients', rows_count: '1' },
+        { table_name: 'project_ai_jobs', rows_count: '3' },
+        { table_name: 'project_events', rows_count: '4' },
+        { table_name: 'telegram_bots', rows_count: '2' }
+      ] };
+    }
+    async end() { state.ended += 1; }
+  }
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const request = new Request('https://edge.example.invalid/db-table-counts', {
+    method: 'GET',
+    headers: { 'x-boss-db-check-token': env.DB_CHECK_SECRET }
+  });
+  const response = await handler(request, env);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    database: 'connected',
+    counts: [
+      { table_name: 'client_projects', rows_count: '2' },
+      { table_name: 'clients', rows_count: '1' },
+      { table_name: 'project_ai_jobs', rows_count: '3' },
+      { table_name: 'project_events', rows_count: '4' },
+      { table_name: 'telegram_bots', rows_count: '2' }
+    ]
+  });
+  assert.equal(state.constructed, 1);
+  assert.equal(state.connected, 1);
+  assert.equal(state.ended, 1);
+  assert.match(state.queries[0], /COUNT\(\*\).*FROM clients/s);
+  for (const table of ['client_projects', 'telegram_bots', 'project_ai_jobs', 'project_events']) {
+    assert.ok(state.queries[0].includes(table));
+  }
+  assert.doesNotMatch(state.queries[0], /\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE)\b/i);
+});
+
+test('Cloudflare Worker DB check rejects missing or wrong secrets without opening a client', async () => {
+  const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
+  const { FakeClient, state } = makeClientClass();
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const response = await handler(new Request('https://edge.example.invalid/db-check', {
+    method: 'GET',
+    headers: { 'x-boss-db-check-token': 'wrong-secret' }
+  }), env);
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { ok: false, error: 'unauthorized' });
+  assert.equal(state.constructed, 0);
+});
+
+test('Cloudflare Worker DB check fails closed and closes the client on database errors', async () => {
+  const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
+  const { FakeClient, state } = makeClientClass({ failQuery: true });
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const response = await handler(new Request('https://edge.example.invalid/db-check', {
+    method: 'GET',
+    headers: { 'x-boss-db-check-token': env.DB_CHECK_SECRET }
+  }), env);
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { ok: false, error: 'temporarily_unavailable' });
   assert.equal(state.ended, 1);
