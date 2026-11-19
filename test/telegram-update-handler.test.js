@@ -72,3 +72,45 @@ test('Telegram update handler leaves failed updates retryable', async () => {
   );
   assert.ok(calls.some(sql => sql.includes("SET state = 'failed'")));
 });
+
+
+test('Telegram update handler reuses one initialized bot instance for subsequent updates', async () => {
+  let initCalls = 0;
+  let factoryCalls = 0;
+  let handledUpdates = 0;
+  const pool = {
+    async query(sql) {
+      if (sql.includes('UPDATE bot_inbound_updates AS inbound')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            payload: { update_id: 90 + handledUpdates },
+            id: 12,
+            name: 'Reusable bot',
+            token_ciphertext: 'encrypted'
+          }]
+        };
+      }
+      if (sql.includes("SET state = 'processed'")) return { rowCount: 1, rows: [] };
+      throw new Error('unexpected SQL');
+    }
+  };
+  const handler = createTelegramUpdateHandler({
+    pool,
+    decryptToken: () => 'stable-test-token',
+    botFactory: () => {
+      factoryCalls += 1;
+      return {
+        async init() { initCalls += 1; },
+        async handleUpdate() { handledUpdates += 1; }
+      };
+    }
+  });
+
+  await handler({ payload: { botId: 12, updateId: 90 } });
+  await handler({ payload: { botId: 12, updateId: 91 } });
+
+  assert.equal(factoryCalls, 1);
+  assert.equal(initCalls, 1);
+  assert.equal(handledUpdates, 2);
+});
