@@ -58,12 +58,8 @@ jobs:
             '006_auto_remediation_audit.sql',
             '007_platform_bot_inbox.sql'
           ];
-          const baselineFiles = [
-            '000_staging_bootstrap.sql'
-          ];
-          const explicitlyExcludedFiles = [
-            '20261118_bot_runtime_status.sql'
-          ];
+          const baselineFiles = ['000_staging_bootstrap.sql'];
+          const explicitlyExcludedFiles = ['20261118_bot_runtime_status.sql'];
 
           async function main() {
             if (!process.env.DATABASE_URL) {
@@ -87,13 +83,14 @@ jobs:
             const missingBaseline = baselineFiles.filter(name => !actualFiles.includes(name));
             const { listMigrationFiles } = require('./migrations/runner');
             const runnerFiles = listMigrationFiles(path.join(process.cwd(), 'migrations'));
+
             if (unexpected.length || missing.length || missingBaseline.length ||
                 JSON.stringify(runnerFiles) !== JSON.stringify(expectedFiles)) {
               throw new Error(
                 'Migration set differs from reviewed allowlist. Unexpected: ' +
                 (unexpected.join(', ') || 'none') + '; missing: ' +
                 (missing.join(', ') || 'none') + '; missing baseline: ' +
-                (missingBaseline.join(', ') || 'none') + '; runner allowlist mismatch: '
+                (missingBaseline.join(', ') || 'none') + '; runner allowlist mismatch: ' +
                 (JSON.stringify(runnerFiles) !== JSON.stringify(expectedFiles) ? 'yes' : 'no')
               );
             }
