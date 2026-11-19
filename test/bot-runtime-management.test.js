@@ -17,8 +17,14 @@ function fixturePool(records) {
         const pollingRecords = records.filter(row => row.active && (row.update_transport || 'polling') === 'polling');
         return { rowCount: pollingRecords.length, rows: pollingRecords };
       }
+      if (sql.includes('UPDATE bot_runtime_status')) {
+        const current = statuses.get(String(params[0]));
+        if (!current || current.worker_id !== params[2]) return { rowCount: 0, rows: [] };
+        statuses.set(String(params[0]), { ...current, status: params[1], worker_id: params[2], error: params[4] });
+        return { rowCount: 1, rows: [{ bot_id: params[0] }] };
+      }
       if (sql.includes('INSERT INTO bot_runtime_status')) {
-        statuses.set(String(params[0]), { status: params[1], error: params[4] });
+        statuses.set(String(params[0]), { status: params[1], worker_id: params[2], error: params[4] });
         return { rowCount: 1, rows: [] };
       }
       throw new Error('Unexpected SQL in test: ' + sql.slice(0, 80));
@@ -154,5 +160,58 @@ test('default capacity accepts 100 bots and rejects the 101st', async () => {
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(bots.started.length, 100);
   await assert.rejects(runtime.startBotById(101), /Maximum active customer bots reached/);
+  await runtime.stopBotRuntime();
+});
+
+
+test('stops a customer bot when another worker takes its lease and never overwrites the new owner', async () => {
+  const records = [{ id: 7, name: 'Lease test', username: 'lease_test_bot', active: true, token_ciphertext: 'x' }];
+  const pool = fixturePool(records);
+  pool.statuses.set('7', { status: 'starting', worker_id: 'worker-a', error: null });
+  const bots = fixtureBotFactory();
+  const runtime = createBotRuntime({
+    pool,
+    decryptToken: () => 'token',
+    createCustomerBot: record => bots.create(record),
+    logger: { log() {}, error() {} },
+    workerId: 'worker-a',
+    requireLease: true,
+    leaseSeconds: 30,
+    heartbeatIntervalMs: 10
+  });
+
+  await runtime.startBotById(7);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(bots.started, ['7']);
+
+  // Simulate an expired lease being claimed by a different worker.
+  pool.statuses.set('7', { status: 'starting', worker_id: 'worker-b', error: null });
+  await new Promise(resolve => setTimeout(resolve, 40));
+
+  assert.deepEqual(bots.stopped, ['7']);
+  assert.equal(pool.statuses.get('7').worker_id, 'worker-b');
+  assert.equal(runtime.getRuntimeSnapshot()[0].leaseLost, true);
+  await runtime.stopBotRuntime();
+});
+
+test('fails closed when a lease-required runtime has no matching owner row', async () => {
+  const records = [{ id: 8, name: 'Unowned', username: 'unowned_bot', active: true, token_ciphertext: 'x' }];
+  const pool = fixturePool(records);
+  const bots = fixtureBotFactory();
+  const runtime = createBotRuntime({
+    pool,
+    decryptToken: () => 'token',
+    createCustomerBot: record => bots.create(record),
+    logger: { log() {}, error() {} },
+    workerId: 'worker-missing',
+    requireLease: true,
+    leaseSeconds: 30,
+    heartbeatIntervalMs: 100000
+  });
+
+  await runtime.startBotById(8);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(bots.started, []);
+  assert.equal(runtime.getRuntimeSnapshot()[0].leaseLost, true);
   await runtime.stopBotRuntime();
 });
