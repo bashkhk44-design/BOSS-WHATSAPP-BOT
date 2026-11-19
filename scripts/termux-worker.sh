@@ -56,7 +56,7 @@ const { Pool } = require('pg');
 (async () => {
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false },
+    ssl: process.env.DATABASE_SSL === 'disable' ? false : true,
     max: 1,
     connectionTimeoutMillis: 10000
   });
