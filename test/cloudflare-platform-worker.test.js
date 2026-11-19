@@ -46,6 +46,9 @@ function makeClientClass({ duplicate = false, failQuery = false } = {}) {
     async query(sql, params) {
       state.queries.push({ sql, params });
       if (failQuery) throw new Error('database unavailable');
+      if (/^\\s*SELECT\\s+1\\s+AS\\s+probe/i.test(sql)) {
+        return { rowCount: 1, rows: [{ probe: 1 }] };
+      }
       return duplicate
         ? { rowCount: 0, rows: [] }
         : { rowCount: 1, rows: [{ id: 10, job_id: 20 }] };
@@ -166,14 +169,22 @@ test('Cloudflare Worker returns generic database errors and closes failed client
   assert.equal(state.ended, 1);
 });
 
-test('Cloudflare Worker health check does not open Hyperdrive connections', async () => {
+test('Cloudflare Worker health check verifies PostgreSQL through Hyperdrive and closes the client', async () => {
   const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
   const { FakeClient, state } = makeClientClass();
   const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
   const response = await handler(new Request('https://edge.example.invalid/healthz'), env);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, service: 'platform-telegram-webhook-edge' });
-  assert.equal(state.constructed, 0);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    service: 'platform-telegram-webhook-edge',
+    database: 'reachable'
+  });
+  assert.equal(state.constructed, 1);
+  assert.equal(state.connected, 1);
+  assert.equal(state.ended, 1);
+  assert.equal(state.queries.length, 1);
+  assert.match(state.queries[0].sql, /SELECT 1 AS probe/);
 });
 
 test('Cloudflare Worker source boundary excludes Node hosts, bot runtimes, and pg pools', () => {
