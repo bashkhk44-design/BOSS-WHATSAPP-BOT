@@ -191,10 +191,10 @@ function createBotRuntime({
     const result = await pool.query(`
       SELECT id, name, username, token_ciphertext, token_iv, token_auth_tag
       FROM telegram_bots
-      WHERE id = $1 AND active = TRUE AND token_ciphertext IS NOT NULL
+      WHERE id = $1 AND active = TRUE AND update_transport = 'polling' AND token_ciphertext IS NOT NULL
       LIMIT 1
     `, [id]);
-    if (!result.rowCount) throw new Error('Bot not found, inactive, or missing encrypted token');
+    if (!result.rowCount) throw new Error('Bot not found, inactive, missing encrypted token, or not configured for polling');
     return startRecord(result.rows[0]);
   }
 
@@ -218,7 +218,7 @@ function createBotRuntime({
     const result = await pool.query(`
       SELECT id, name, username, token_ciphertext, token_iv, token_auth_tag
       FROM telegram_bots
-      WHERE active = TRUE AND token_ciphertext IS NOT NULL
+      WHERE active = TRUE AND update_transport = 'polling' AND token_ciphertext IS NOT NULL
       ORDER BY id ASC
     `);
     const records = result.rows;
