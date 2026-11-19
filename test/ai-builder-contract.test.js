@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { validateBuildDesignContract } = require('../ai-builder');
+const { validateBuildDesignContract, validateBundle } = require('../ai-builder');
 const { collectDesignElements } = require('../build-design-map');
 
 function fixture() {
@@ -72,4 +72,37 @@ test('AI Builder rejects design maps copied from a different spec version', () =
   map.specVersion = 1;
   mapFile.content = JSON.stringify(map);
   assert.throws(() => validateBuildDesignContract(input), /لا يطابق التصميم المعتمد/);
+});
+
+test('AI Builder rejects root and nested environment secret files', () => {
+  for (const path of [
+    '.env',
+    '.env.local',
+    '.env.production',
+    '.env-platform',
+    '.envrc',
+    'config/.env',
+    'config/.env.local'
+  ]) {
+    assert.throws(
+      () => validateBundle({
+        files: [
+          { path: 'package.json', content: '{}' },
+          { path, content: 'SECRET=value' }
+        ]
+      }),
+      /تم رفض مسار ملف حساس/
+    );
+  }
+});
+
+test('AI Builder still accepts ordinary source and documentation files', () => {
+  const result = validateBundle({
+    files: [
+      { path: 'package.json', content: '{}' },
+      { path: 'src/index.js', content: 'module.exports = true;' },
+      { path: 'docs/setup.md', content: 'Setup instructions' }
+    ]
+  });
+  assert.equal(result.files.length, 3);
 });

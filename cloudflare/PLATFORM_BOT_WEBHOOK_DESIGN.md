@@ -1,86 +1,54 @@
 # Telegram platform-bot webhook design (staging only)
 
-## Status
+## Current status — 2026-11-18
 
-Design/audit only. This document does not enable webhook delivery, change Telegram webhook configuration, alter production data, or deploy a Worker.
+The application-side webhook architecture and credential-free Cloudflare bundle validation are implemented on `audit-hardening`. The remaining blocker is external staging infrastructure: a newly created, empty Neon staging database and a newly created Hyperdrive binding verified to target only that database. No live Hyperdrive connection or Telegram staging end-to-end test has been performed.
 
-## Current verified architecture
+No production Render, Neon, Telegram, or Cloudflare resource has been changed.
 
-- `telegram-webhook-server.js` accepts only `POST /telegram/webhook/:botId`, validates Telegram's secret-token header, validates the JSON update and strict non-negative `update_id`, then calls `enqueueTelegramUpdate`.
-- `enqueueTelegramUpdate` stores updates in `bot_inbound_updates` and creates idempotent `telegram.update` platform jobs.
-- `migrations/001_foundation_database.sql` defines `bot_inbound_updates.bot_id` as a foreign key to `telegram_bots(id)`. This is a customer-bot identity model.
-- `worker.js` registers `telegram.update` with `createTelegramUpdateHandler`.
-- `telegram-update-handler.js` loads the encrypted customer bot record, decrypts its token and creates a customer bot through `createCustomerBot`; it does not dispatch master or intake bot updates.
-- `telegram-master.js` preserves its Node polling lifecycle but now accepts injected dependencies/environment and exposes `createWebhookRuntime().handleUpdate(update)` without starting polling.
-- `intake-bot.js` preserves its Node polling entry points and now exposes an injected `createWebhookRuntime()` that registers the same handlers without calling grammY `.start()`.
-- Customer bot updates already use `createCustomerBot(...).handleUpdate(update)` through the durable customer queue worker.
-- Migration `007_platform_bot_inbox` adds a dedicated inbox for `master` and `intake`; these identities remain separate from customer bot records.
-- The platform queue now has an atomic identity-scoped enqueue API and a lease-fenced handler factory; the production worker and ingress are not wired to these new job types yet.
+## Verified architecture
 
-## Non-negotiable design boundary
+- Customer Telegram webhooks remain on the customer identity path and use the customer bot inbox and ownership checks.
+- Master and intake are separate system identities. Migration `007_platform_bot_inbox` gives them a dedicated durable inbox; their update IDs are unique per identity.
+- The platform queue atomically creates identity-scoped inbox rows and jobs. Master and intake use distinct job types and lease-fenced dispatch.
+- `telegram-master.js` and `intake-bot.js` expose explicit webhook runtimes with `handleUpdate(update)`; their normal Node polling entry points remain separate.
+- The opt-in Node platform worker and Node ingress have separate master/intake routes and independent webhook secrets. The default mode remains disabled.
+- `cloudflare/worker.mjs` is an edge ingress for the master and intake platform routes. It validates bounded JSON requests, authenticates the identity-specific secret, and durably enqueues through Hyperdrive using a short-lived `pg.Client`. It does not execute bot handlers or AI/build/test jobs.
+- AI analysis, code generation, project builds, tests, deployment preflight, and Telegram update handling remain in durable Node workers.
 
-Do not route the master or intake bot through a customer `telegram_bots` row just to reuse the existing webhook endpoint. Those are distinct system identities with different authorization, lifecycle, and secret ownership. Do not put their tokens in customer bot records or weaken the existing customer ownership checks.
+## Security boundaries
 
-## Required implementation
+- Never represent master or intake as customer `telegram_bots` records.
+- Never put bot tokens or webhook secrets in queue payloads or logs.
+- Master and intake webhook secrets must be independent, URL-safe values and must not equal either bot API token.
+- The Worker must use a dedicated empty staging database through a newly created staging-only Hyperdrive binding. Do not reuse the old prototype Hyperdrive ID.
+- Do not put production tokens, production database credentials, or the production `BOTS_ENCRYPTION_KEY` in the Worker or staging environment.
+- The Worker must not import Node host startup modules, `db.js`, or process-scoped `pg.Pool` instances. Its bounded `pg.Client` use is limited to Hyperdrive ingress.
 
-### 1. Explicit bot identity and transport registry
+## Validation completed
 
-Introduce a typed internal identity for each Telegram endpoint:
-- `customer:<numeric-id>`
-- `master`
-- `intake`
+- PR 77: additive platform-bot inbox migration and disposable PostgreSQL identity/deduplication tests — merged.
+- PR 78: injectable intake runtime and no-polling `handleUpdate` adapter — merged.
+- PR 79: injectable master runtime and no-polling `handleUpdate` adapter — merged.
+- PR 80: atomic platform inbox + queue-job enqueue, distinct master/intake job types, and lease-fenced dispatch — merged.
+- PR 81: opt-in Node worker wiring for master and intake job types — merged; disabled by default.
+- PR 83: separate Node ingress routes and independent master/intake webhook secrets — merged.
+- PR 84: Cloudflare edge Worker for platform webhook ingress — merged.
+- PR 85: stale Cloudflare deployment workflow disabled until the current runtime is safely staged — merged.
+- PR 87: CI guards for Wrangler compatibility, `pg` minimum version, disabled staging config, placeholder Hyperdrive ID, and absence of committed webhook secrets — merged.
+- PR 89: bounded PostgreSQL connection/query operations and rejection of compressed request bodies — merged.
+- CI run `44211018849`: all four jobs passed. The Node 24 job completed `wrangler deploy --dry-run` using `cloudflare/wrangler.bundle-test.jsonc`; this proves the Worker bundles without deploying or connecting to a database.
+- Disposable PostgreSQL migration, inbox, queue, and worker integration suites passed in the same CI run.
 
-The webhook ingress must resolve a route to an explicitly registered identity and its secret resolver. Unknown identities must return 404; missing or incorrect secrets must return 401. The registry must not reveal whether a secret exists.
+## Remaining acceptance gates
 
-For platform bots, store only non-secret routing metadata in the database. Resolve token material from the dedicated runtime secret provider; never store plaintext tokens in the queue payload or logs. The webhook secret must be independently derived/managed per bot identity and must not be the bot token itself.
-
-### 2. Durable update inbox and idempotency
-
-The existing customer inbox has a customer foreign key and cannot represent master/intake identities safely. Add a separate platform-bot inbox (or a rigorously typed shared inbox with a constrained identity key) with:
-- identity type and stable identity key;
-- Telegram `update_id` uniqueness per identity;
-- JSON payload and bounded size;
-- explicit queued/processing/processed/failed/dead-letter states;
-- lease ownership and recovery fields;
-- a unique job idempotency key.
-
-Keep enqueue and job creation atomic. Duplicate delivery must be acknowledged without scheduling a second execution. Do not change or backfill customer inbox rows.
-
-### 3. Handler factories without polling side effects
-
-For master and intake bots, separate:
-- constructing the grammY Bot and registering handlers;
-- accepting one update via `bot.handleUpdate(update)`;
-- starting/stopping long polling (Node-only transport).
-
-Importing modules must not create a database pool, acquire the Telegram runtime lock, start timers, register process signal handlers, start polling, or make network requests.
-
-Factories must accept explicit dependencies (API token, persistence adapter, notification sender, logger). A Cloudflare adapter must not import `pg`, `db.js`, or Node-only host startup modules.
-
-### 4. Queue dispatch
-
-Use distinct registered job types, for example:
-- `telegram.customer.update`
-- `telegram.master.update`
-- `telegram.intake.update`
-
-Do not dispatch system-bot updates through `createCustomerBot`. Each handler must validate the job identity against the inbox row and its lease before processing and before marking completion. A stale worker must not complete or fail an update after losing its lease.
-
-### 5. Cloudflare boundary
-
-The Cloudflare Worker should perform only bounded HTTP validation, secret verification, and durable enqueue through a verified staging-only data path. Long-running AI analysis, code generation, builds, tests, deployment preflight, and all other heavy work remain in durable Node workers.
-
-The Worker must not receive production tokens, production database credentials, or the production encryption key. Use a dedicated empty staging Neon branch/database and a staging-only key. Verify the Hyperdrive binding points to that exact staging database before any connection test.
-
-## Acceptance gates
-
-1. Unit tests for identity parsing, secret isolation, unknown routes, invalid JSON, payload limits, and duplicate update IDs.
-2. Import tests prove master/intake modules have no polling, signal, lock, DB-pool, timer, or network side effects.
-3. Handler tests prove each identity dispatches only to its own handler and cannot cross-call customer bot creation.
-4. PostgreSQL integration tests use disposable staging/test databases only and prove atomic inbox+job enqueue, lease renewal, lease-loss fencing, retry, and dead-letter behavior.
-5. Cloudflare bundle test proves no unsupported Node server, `pg.Pool`, or production runtime modules are bundled into the edge Worker.
-6. End-to-end test uses separate staging master/intake bot tokens and a dedicated staging database. Never point test webhooks at production bots.
-7. Only after all gates pass may a staging-only deployment workflow be proposed. Workflow must target the GitHub `cloudflare-staging` environment and one explicitly named staging Worker.
+1. Create a new, empty Neon staging branch/database. This must be separate from production.
+2. Create a new Cloudflare Hyperdrive configuration pointing only to that exact staging database. Do not reuse the historical prototype ID.
+3. Verify the Hyperdrive target from the Cloudflare account before using its ID. Keep the ID and credentials out of Git.
+4. Add staging-only GitHub Environment values and staging-only master/intake Telegram bot tokens and webhook secrets. Do not reuse production credentials.
+5. Apply migrations only to the verified disposable staging database.
+6. Run a live Hyperdrive database health/identity check, then staging-only Telegram webhook end-to-end tests with the Node queue worker.
+7. Only after all gates pass, add a deployment workflow restricted to the GitHub `cloudflare-staging` environment and one explicitly named staging Worker.
 
 ## Explicitly out of scope
 
@@ -90,16 +58,8 @@ The Worker must not receive production tokens, production database credentials, 
 - No changes to `BOTS_ENCRYPTION_KEY`.
 - No Cloudflare production deployment.
 - No automatic promotion from staging to production.
+- No staging resource creation or deployment without explicit authorization.
 
-## Implementation progress
+## Next step
 
-- PR 77: additive platform-bot inbox migration and disposable PostgreSQL identity/deduplication tests — merged.
-- PR 78: injectable intake runtime and no-polling `handleUpdate` adapter — merged.
-- PR 79: injectable master runtime and no-polling `handleUpdate` adapter — merged.
-- PR 80: atomic platform inbox + queue-job enqueue, distinct master/intake job types, and worker-lease-fenced dispatch handler with unit and PostgreSQL integration tests — merged.
-- PR 81 (in progress): opt-in Node worker wiring for the two system job types. It requires `PLATFORM_BOT_WEBHOOK_MODE=enabled` plus distinct master/intake tokens and an admin ID; the default remains disabled.
-- None of these changes configures Telegram webhook delivery or changes production tokens.
-
-## Next coding slice
-
-Add a platform webhook ingress with separate `master` and `intake` route identities and independent secret resolvers. Prove secret isolation, request validation, durable enqueue, and end-to-end queue dispatch using staging-only tokens. Only after those gates should the Cloudflare Worker adapter and staging bundle test be added. Do not change production webhooks, tokens, databases, or deployments.
+The next meaningful step is staging infrastructure verification, not more application code. Until a dedicated empty Neon database and a new Hyperdrive binding exist and are verified, keep the Worker disabled and do not attempt a live connection.
