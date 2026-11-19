@@ -38,7 +38,7 @@ jobs:
         run: |
           node <<'NODE'
           const { Pool } = require('pg');
-          const EXPECTED_HOST = 'ep-sweet-breeze-bepbeuoj.c-9.us-east-2.aws.neon.tech';
+          const EXPECTED_HOST = 'ep-jolly-dust-bep7yrxv.c-9.us-east-2.aws.neon.tech';
           const EXPECTED_DB = 'neondb';
           const EXPECTED_ROLE = 'hyperdrive_user';
           (async () => {
