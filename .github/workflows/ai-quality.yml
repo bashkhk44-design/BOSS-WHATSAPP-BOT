@@ -45,6 +45,9 @@ jobs:
       - name: Bundle Cloudflare Worker without deploying
         if: matrix.node-version == 24
         run: npx --yes wrangler@4 deploy --dry-run --config cloudflare/wrangler.bundle-test.jsonc --outdir /tmp/boss-platform-worker-bundle
+      - name: Validate isolated staging Worker config without deploying
+        if: matrix.node-version == 24
+        run: npx --yes wrangler@4 deploy --dry-run --config cloudflare/wrangler.staging.jsonc --outdir /tmp/boss-platform-worker-staging-bundle
 
   database-migration:
     runs-on: ubuntu-latest
