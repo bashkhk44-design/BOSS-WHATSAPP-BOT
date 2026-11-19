@@ -108,3 +108,44 @@ test('platform bot worker wires both system identities to no-polling runtimes an
   assert.ok(events.some(event => event.type === 'master-stopped'));
   assert.ok(events.some(event => event.type === 'master-resources-closed'));
 });
+
+
+test('platform bot worker closes every runtime even when one stop operation fails', async () => {
+  const events = [];
+  const worker = await createPlatformBotWorker({
+    pool: { query() {} },
+    env: enabledEnv(),
+    createMasterRuntime() {
+      return {
+        bot: { api: { async sendMessage() {} } },
+        createWebhookRuntime() {
+          return {
+            async handleUpdate() {},
+            async stop() { events.push('master-stopped'); }
+          };
+        },
+        async closeWebhookResources() { events.push('master-resources-closed'); }
+      };
+    },
+    createIntakeRuntime() {
+      return {
+        async createWebhookRuntime() {
+          return {
+            async handleUpdate() {},
+            async stop() {
+              events.push('intake-stop-attempted');
+              throw new Error('intake stop failed');
+            }
+          };
+        }
+      };
+    }
+  });
+
+  await assert.rejects(worker.close(), /One or more platform bot resources failed to close/);
+  assert.deepEqual(events, [
+    'intake-stop-attempted',
+    'master-stopped',
+    'master-resources-closed'
+  ]);
+});
