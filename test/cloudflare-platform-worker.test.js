@@ -186,6 +186,52 @@ test('Cloudflare Worker DB check authenticates and runs a read-only SELECT 1 pro
   assert.equal(state.config.connectionString, env.HYPERDRIVE.connectionString);
 });
 
+test('Cloudflare Worker table counts endpoint authenticates and runs only the fixed read-only count query', async () => {
+  const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
+  const state = { constructed: 0, connected: 0, ended: 0, queries: [] };
+  class FakeClient {
+    constructor(config) { state.constructed += 1; state.config = config; }
+    async connect() { state.connected += 1; }
+    async query(sql) {
+      state.queries.push(sql);
+      return { rows: [
+        { table_name: 'client_projects', rows_count: '2' },
+        { table_name: 'clients', rows_count: '1' },
+        { table_name: 'project_ai_jobs', rows_count: '3' },
+        { table_name: 'project_events', rows_count: '4' },
+        { table_name: 'telegram_bots', rows_count: '2' }
+      ] };
+    }
+    async end() { state.ended += 1; }
+  }
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const request = new Request('https://edge.example.invalid/db-table-counts', {
+    method: 'GET',
+    headers: { 'x-boss-db-check-token': env.DB_CHECK_SECRET }
+  });
+  const response = await handler(request, env);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    database: 'connected',
+    counts: [
+      { table_name: 'client_projects', rows_count: '2' },
+      { table_name: 'clients', rows_count: '1' },
+      { table_name: 'project_ai_jobs', rows_count: '3' },
+      { table_name: 'project_events', rows_count: '4' },
+      { table_name: 'telegram_bots', rows_count: '2' }
+    ]
+  });
+  assert.equal(state.constructed, 1);
+  assert.equal(state.connected, 1);
+  assert.equal(state.ended, 1);
+  assert.match(state.queries[0], /COUNT\(\*\).*FROM clients/s);
+  for (const table of ['client_projects', 'telegram_bots', 'project_ai_jobs', 'project_events']) {
+    assert.ok(state.queries[0].includes(table));
+  }
+  assert.doesNotMatch(state.queries[0], /\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE)\b/i);
+});
+
 test('Cloudflare Worker DB check rejects missing or wrong secrets without opening a client', async () => {
   const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
   const { FakeClient, state } = makeClientClass();
