@@ -1,0 +1,53 @@
+name: Deploy BOSS BOT Platform Cloudflare Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DEPLOY-BOSS-STAGING to deploy the isolated staging ingress Worker
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boss-bot-platform-cloudflare-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy-staging:
+    if: ${{ inputs.confirmation == 'DEPLOY-BOSS-STAGING' }}
+    runs-on: ubuntu-latest
+    environment: boss-platform-staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify isolated staging configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          CONFIG="cloudflare/wrangler.staging.jsonc"
+          grep -Fq '"name": "boss-bot-platform-ingress-staging"' "$CONFIG"
+          grep -Fq '"id": "a10f6fde0bc345a286a25de4789382db"' "$CONFIG"
+          grep -Fq '"PLATFORM_BOT_WEBHOOK_MODE": "disabled"' "$CONFIG"
+          grep -Fq '"workers_dev": false' "$CONFIG"
+          if grep -Eq 'REPLACE_WITH|production|prod-' "$CONFIG"; then
+            echo "Unsafe or unresolved staging configuration detected."
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Deploy only the isolated staging Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          npx --yes wrangler@4 deploy --config cloudflare/wrangler.staging.jsonc
