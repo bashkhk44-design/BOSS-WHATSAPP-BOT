@@ -19,8 +19,6 @@ CREATE TABLE IF NOT EXISTS bot_runtime_commands (
 CREATE INDEX IF NOT EXISTS bot_runtime_commands_claim_idx
   ON bot_runtime_commands(status, target_worker_id, id);
 
-INSERT INTO schema_migrations(version, description)
-VALUES ('003_bot_runtime_commands', 'Queue manager start/stop/restart commands for distributed customer bot workers')
-ON CONFLICT (version) DO NOTHING;
+
 
 COMMIT;

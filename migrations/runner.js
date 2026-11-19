@@ -12,6 +12,25 @@ function listMigrationFiles(directory, fsApi = fs) {
     .sort((a, b) => a.localeCompare(b, 'en'));
 }
 
+function extractMigrationBody(sql, filename) {
+  const start = sql.match(/^\s*(?:--[^\r\n]*(?:\r?\n|$)\s*)*BEGIN\s*;/i);
+  const end = /\bCOMMIT\s*;\s*$/i;
+
+  if (!start || !end.test(sql)) {
+    throw new Error(
+      `Migration ${filename} must contain a transaction beginning with BEGIN and ending with COMMIT`
+    );
+  }
+
+  const body = sql.slice(start[0].length).replace(end, '').trim();
+
+  if (!body) {
+    throw new Error(`Migration ${filename} has an empty body`);
+  }
+
+  return body;
+}
+
 function createMigrationRunner({
   pool,
   migrationsDir = __dirname,
@@ -36,6 +55,7 @@ function createMigrationRunner({
         );
 
         lockAcquired = lock.rows[0]?.locked === true;
+
         if (!lockAcquired) {
           throw new Error('Another migration runner is already active');
         }
@@ -50,6 +70,7 @@ function createMigrationRunner({
 
         for (const filename of listMigrationFiles(migrationsDir, fsApi)) {
           const version = filename.replace(/\.sql$/i, '');
+
           const existing = await client.query(
             'SELECT version FROM schema_migrations WHERE version = $1',
             [version]
@@ -60,26 +81,35 @@ function createMigrationRunner({
             continue;
           }
 
-          const sql = fsApi.readFileSync(path.join(migrationsDir, filename), 'utf8');
-          if (!/^\s*(?:--[^\r\n]*(?:\r?\n|$)\s*)*BEGIN\s*;/i.test(sql) || !/\bCOMMIT\s*;\s*$/i.test(sql)) {
-            throw new Error(`Migration ${filename} must contain a transaction ending in COMMIT;`);
-          }
+          const sql = fsApi.readFileSync(
+            path.join(migrationsDir, filename),
+            'utf8'
+          );
+          const body = extractMigrationBody(sql, filename);
 
           try {
-            await client.query(sql);
+            await client.query('BEGIN');
+            await client.query(body);
+
             await client.query(
               `INSERT INTO schema_migrations(version, description)
-               VALUES ($1, $2)
-               ON CONFLICT (version) DO NOTHING`,
+               VALUES ($1, $2)`,
               [version, `Applied migration file ${filename}`]
             );
+
+            await client.query('COMMIT');
+
             applied.push(version);
             logger.log(`Migration applied: ${version}`);
           } catch (error) {
             try {
               await client.query('ROLLBACK');
             } catch (_) {}
-            throw new Error(`Migration ${version} failed: ${error.message}`, { cause: error });
+
+            throw new Error(
+              `Migration ${version} failed: ${error.message}`,
+              { cause: error }
+            );
           }
         }
 
@@ -87,11 +117,18 @@ function createMigrationRunner({
       } finally {
         if (lockAcquired) {
           try {
-            await client.query('SELECT pg_advisory_unlock($1, $2)', [LOCK_KEY_1, LOCK_KEY_2]);
+            await client.query(
+              'SELECT pg_advisory_unlock($1, $2)',
+              [LOCK_KEY_1, LOCK_KEY_2]
+            );
           } catch (error) {
-            logger.error('Could not release migration advisory lock:', error.message);
+            logger.error(
+              'Could not release migration advisory lock:',
+              error.message
+            );
           }
         }
+
         client.release();
       }
     }
@@ -104,9 +141,12 @@ async function main() {
   }
 
   const { Pool } = require('pg');
+
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: false },
+    ssl: process.env.DATABASE_SSL === 'disable'
+      ? false
+      : { rejectUnauthorized: false },
     max: 1,
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 10000
@@ -130,5 +170,6 @@ if (require.main === module) {
 
 module.exports = {
   createMigrationRunner,
-  listMigrationFiles
+  listMigrationFiles,
+  extractMigrationBody
 };

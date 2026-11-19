@@ -27,11 +27,6 @@ CREATE INDEX IF NOT EXISTS platform_bot_inbound_claim_idx
 CREATE INDEX IF NOT EXISTS platform_bot_inbound_identity_received_idx
   ON platform_bot_inbound_updates(bot_identity, received_at DESC);
 
-INSERT INTO schema_migrations(version, description)
-VALUES (
-  '007_platform_bot_inbox',
-  'Add isolated durable inbox and update deduplication for master and intake Telegram bots'
-)
-ON CONFLICT (version) DO NOTHING;
+
 
 COMMIT;

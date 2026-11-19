@@ -11,7 +11,5 @@ CREATE TABLE IF NOT EXISTS bot_worker_status (
 );
 CREATE INDEX IF NOT EXISTS bot_worker_status_heartbeat_idx
   ON bot_worker_status(status, last_heartbeat_at);
-INSERT INTO schema_migrations(version, description)
-VALUES ('005_worker_health_heartbeats', 'Track independent worker heartbeats and lifecycle')
-ON CONFLICT (version) DO NOTHING;
+
 COMMIT;

@@ -25,8 +25,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS bot_auto_remediation_one_pending_idx
 CREATE INDEX IF NOT EXISTS bot_auto_remediation_history_idx
   ON bot_auto_remediation_attempts(bot_id, requested_at DESC);
 
-INSERT INTO schema_migrations(version, description)
-VALUES ('006_auto_remediation_audit', 'Durable audit and idempotency for automatic bot recovery')
-ON CONFLICT (version) DO NOTHING;
+
 
 COMMIT;

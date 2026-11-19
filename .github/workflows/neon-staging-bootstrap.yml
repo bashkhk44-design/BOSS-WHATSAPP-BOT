@@ -163,7 +163,10 @@ jobs:
                 '004_manager_command_recovery',
                 '005_worker_health_heartbeats',
                 '006_auto_remediation_audit',
-                '007_platform_bot_inbox'
+                '007_platform_bot_inbox',
+                '20261118_bot_runtime_status',
+                '20261119_bot_inbound_update_lease_owner',
+                '20261119_bot_update_transport',
               ];
 
               const migrations = await pool.query(
@@ -190,10 +193,16 @@ jobs:
                 'project_release_approvals',
                 'project_deployment_authorizations',
                 'telegram_bots',
+                'schema_migrations',
                 'bot_runtime_status',
-                'platform_jobs',
+                'bot_worker_status',
                 'bot_inbound_updates',
-                'platform_bot_inbound_updates'
+                'platform_jobs',
+                'ai_usage',
+                'platform_audit_logs',
+                'bot_runtime_commands',
+                'bot_auto_remediation_attempts',
+                'platform_bot_inbound_updates',
               ];
 
               const tables = await pool.query(
@@ -213,6 +222,34 @@ jobs:
                 .map(row => row.table_name);
               if (missingTables.length) throw new Error('Missing required tables: ' + missingTables.join(', '));
               if (deniedTables.length) throw new Error('Application permissions missing on: ' + deniedTables.join(', '));
+
+              const requiredColumns = [
+                ['bot_inbound_updates', 'locked_by'],
+                ['telegram_bots', 'update_transport']
+              ];
+              const columnResult = await pool.query(
+                `SELECT expected.table_name, expected.column_name
+                 FROM unnest($1::text[], $2::text[])
+                   AS expected(table_name, column_name)
+                 WHERE NOT EXISTS (
+                   SELECT 1
+                   FROM information_schema.columns c
+                   WHERE c.table_schema = 'public'
+                     AND c.table_name = expected.table_name
+                     AND c.column_name = expected.column_name
+                 )`,
+                [
+                  requiredColumns.map(x => x[0]),
+                  requiredColumns.map(x => x[1])
+                ]
+              );
+              if (columnResult.rows.length) {
+                throw new Error(
+                  'Missing required columns: ' +
+                  columnResult.rows.map(x => x.table_name + '.' + x.column_name).join(', ')
+                );
+              }
+
 
               console.log('Verified migrations:', expectedMigrations.length);
               console.log('Verified application tables and CRUD permissions:', tables.rows.length);

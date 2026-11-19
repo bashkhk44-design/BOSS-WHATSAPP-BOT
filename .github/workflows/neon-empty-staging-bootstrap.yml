@@ -92,13 +92,31 @@ jobs:
           const { Pool } = require('pg');
           const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 1 });
           const expectedTables = [
-            'telegram_bots','clients','client_projects','client_conversations','project_specs','project_events',
-            'client_intake_sessions','project_secrets','project_ai_jobs','project_ai_job_attempts',
-            'project_build_approvals','project_release_candidates','project_release_approvals',
-            'project_deployment_authorizations','schema_migrations','bot_runtime_status','bot_worker_status',
-            'bot_inbound_updates','platform_jobs','ai_usage','platform_audit_logs','bot_runtime_commands',
-            'bot_auto_remediation_attempts','platform_bot_inbound_updates'
-          ];
+                'clients',
+                'client_projects',
+                'client_conversations',
+                'project_specs',
+                'project_events',
+                'client_intake_sessions',
+                'project_secrets',
+                'project_ai_jobs',
+                'project_ai_job_attempts',
+                'project_build_approvals',
+                'project_release_candidates',
+                'project_release_approvals',
+                'project_deployment_authorizations',
+                'telegram_bots',
+                'schema_migrations',
+                'bot_runtime_status',
+                'bot_worker_status',
+                'bot_inbound_updates',
+                'platform_jobs',
+                'ai_usage',
+                'platform_audit_logs',
+                'bot_runtime_commands',
+                'bot_auto_remediation_attempts',
+                'platform_bot_inbound_updates',
+              ];
           (async () => {
             try {
               const identity = await pool.query('SELECT current_database() db, current_user role');
@@ -111,9 +129,48 @@ jobs:
               if (missing.length) throw new Error('Missing tables: ' + missing.join(', '));
               const migrations = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
               const applied = new Set(migrations.rows.map(x => x.version));
-              const required = ['001_foundation_database','002_distributed_bot_worker_indexes','003_bot_runtime_commands','004_manager_command_recovery','005_worker_health_heartbeats','006_auto_remediation_audit','007_platform_bot_inbox','20261118_bot_runtime_status'];
+              const required = [
+                '001_foundation_database',
+                '002_distributed_bot_worker_indexes',
+                '003_bot_runtime_commands',
+                '004_manager_command_recovery',
+                '005_worker_health_heartbeats',
+                '006_auto_remediation_audit',
+                '007_platform_bot_inbox',
+                '20261118_bot_runtime_status',
+                '20261119_bot_inbound_update_lease_owner',
+                '20261119_bot_update_transport',
+              ];
               const missingMigrations = required.filter(x => !applied.has(x));
               if (missingMigrations.length) throw new Error('Missing migrations: ' + missingMigrations.join(', '));
+
+              const requiredColumns = [
+                ['bot_inbound_updates', 'locked_by'],
+                ['telegram_bots', 'update_transport']
+              ];
+              const columnResult = await pool.query(
+                `SELECT expected.table_name, expected.column_name
+                 FROM unnest($1::text[], $2::text[])
+                   AS expected(table_name, column_name)
+                 WHERE NOT EXISTS (
+                   SELECT 1
+                   FROM information_schema.columns c
+                   WHERE c.table_schema = 'public'
+                     AND c.table_name = expected.table_name
+                     AND c.column_name = expected.column_name
+                 )`,
+                [
+                  requiredColumns.map(x => x[0]),
+                  requiredColumns.map(x => x[1])
+                ]
+              );
+              if (columnResult.rows.length) {
+                throw new Error(
+                  'Missing required columns: ' +
+                  columnResult.rows.map(x => x.table_name + '.' + x.column_name).join(', ')
+                );
+              }
+
               const grants = await pool.query("SELECT has_table_privilege('hyperdrive_user', 'public.telegram_bots', 'SELECT') AS can_read, has_table_privilege('hyperdrive_user', 'public.telegram_bots', 'INSERT') AS can_insert, has_sequence_privilege('hyperdrive_user', pg_get_serial_sequence('public.telegram_bots','id'), 'USAGE') AS can_use_sequence, has_schema_privilege('hyperdrive_user','public','CREATE') AS can_create");
               const g = grants.rows[0];
               if (!g.can_read || !g.can_insert || !g.can_use_sequence || g.can_create) throw new Error('Runtime grants are not least-privilege or incomplete.');

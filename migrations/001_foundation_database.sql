@@ -206,8 +206,6 @@ BEGIN
   END IF;
 END $$;
 
-INSERT INTO schema_migrations(version, description)
-VALUES ('001_foundation_database', 'Additive multi-bot ownership, runtime, queue, AI usage and audit tables')
-ON CONFLICT (version) DO NOTHING;
+
 
 COMMIT;
