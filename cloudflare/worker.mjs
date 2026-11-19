@@ -135,6 +135,54 @@ export function createPlatformWebhookHandler({
       }
     }
 
+    if (url.pathname === '/db-table-counts') {
+      if (request.method !== 'GET') {
+        return jsonResponse(405, { ok: false, error: 'method_not_allowed' });
+      }
+
+      const expectedSecret = env.DB_CHECK_SECRET;
+      const suppliedSecret = request.headers.get('x-boss-db-check-token');
+      if (!SECRET_PATTERN.test(expectedSecret || '') || !safeEqual(suppliedSecret, expectedSecret)) {
+        return jsonResponse(401, { ok: false, error: 'unauthorized' });
+      }
+
+      const connectionString = env.HYPERDRIVE?.connectionString;
+      if (typeof connectionString !== 'string' || !(connectionString.startsWith('postgres://') || connectionString.startsWith('postgresql://'))) {
+        return jsonResponse(503, { ok: false, error: 'temporarily_unavailable' });
+      }
+
+      let client;
+      try {
+        client = new ClientClass({
+          connectionString,
+          connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
+          query_timeout: DB_QUERY_TIMEOUT_MS,
+          statement_timeout: DB_QUERY_TIMEOUT_MS
+        });
+        await client.connect();
+        const result = await client.query(`
+          SELECT 'clients' AS table_name, COUNT(*) AS rows_count FROM clients
+          UNION ALL
+          SELECT 'client_projects', COUNT(*) FROM client_projects
+          UNION ALL
+          SELECT 'telegram_bots', COUNT(*) FROM telegram_bots
+          UNION ALL
+          SELECT 'project_ai_jobs', COUNT(*) FROM project_ai_jobs
+          UNION ALL
+          SELECT 'project_events', COUNT(*) FROM project_events
+          ORDER BY table_name
+        `);
+        return jsonResponse(200, { ok: true, database: 'connected', counts: result.rows });
+      } catch (error) {
+        console.error('PLATFORM DATABASE TABLE COUNT ERROR:', error?.message || 'unknown');
+        return jsonResponse(503, { ok: false, error: 'temporarily_unavailable' });
+      } finally {
+        if (client) {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+    }
+
     const match = url.pathname.match(/^\/telegram\/platform\/(master|intake)$/);
     if (!match || env.PLATFORM_BOT_WEBHOOK_MODE !== 'enabled') {
       return jsonResponse(404, { ok: false, error: 'not_found' });
