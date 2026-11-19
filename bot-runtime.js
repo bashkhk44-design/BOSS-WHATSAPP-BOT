@@ -149,7 +149,7 @@ function createBotRuntime({
     try {
       token = decryptToken(record);
     } catch (error) {
-      setStatus(state, 'error', error);
+      await setStatus(state, 'error', error);
       return;
     }
 
@@ -181,7 +181,7 @@ function createBotRuntime({
           if (runtimeStopping || state.stopRequested || state.leaseLost) break;
           const errorCode = Number(error.error_code || 0);
           if (errorCode === 409 || errorCode === 401) {
-            setStatus(state, errorCode === 409 ? 'conflict' : 'unauthorized', error);
+            await setStatus(state, errorCode === 409 ? 'conflict' : 'unauthorized', error);
             logger.error('CUSTOMER BOT ' + state.id + ' STOPPED:', errorCode, error.message || '');
             break;
           }
@@ -191,7 +191,7 @@ function createBotRuntime({
           const delay = retryAfter > 0
             ? retryAfter * 1000 + 1000
             : Math.min(60000, 2000 * Math.pow(2, Math.min(state.retryCount - 1, 5))) + Math.floor(Math.random() * 1000);
-          setStatus(state, 'retrying', error);
+          await setStatus(state, 'retrying', error);
           logger.error('CUSTOMER BOT ' + state.id + ' RETRY ' + state.retryCount + ' IN ' + Math.ceil(delay / 1000) + 's:', errorCode, error.message || '');
           await waitForRetry(delay, state);
         }
@@ -201,8 +201,8 @@ function createBotRuntime({
       state.heartbeatTimer = null;
       state.bot = null;
       if (!state.leaseLost) {
-        if (state.stopRequested || runtimeStopping) setStatus(state, 'stopped');
-        else if (!['conflict', 'unauthorized', 'error'].includes(state.status)) setStatus(state, 'stopped');
+        if (state.stopRequested || runtimeStopping) await setStatus(state, 'stopped');
+        else if (!['conflict', 'unauthorized', 'error'].includes(state.status)) await setStatus(state, 'stopped');
       }
       logger.log('CUSTOMER BOT ' + state.id + ' runtime ended: ' + state.status);
     }
@@ -276,7 +276,7 @@ function createBotRuntime({
       catch (error) { logger.error('CUSTOMER BOT STOP ERROR ' + id + ':', error.message); }
     }
     if (state.task) await state.task;
-    setStatus(state, 'stopped');
+    await setStatus(state, 'stopped');
     return { id, status: state.status, wasRunning: true };
   }
 
