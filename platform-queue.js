@@ -79,8 +79,7 @@ function normalizeJobTypes(jobTypes) {
 async function claimPlatformJob(pool, workerId, jobTypes) {
   if (!workerId || typeof workerId !== 'string') throw new TypeError('workerId is required');
   const allowedTypes = normalizeJobTypes(jobTypes);
-  const result = allowedTypes
-    ? await pool.query(`
+  const result = await pool.query(`
         WITH candidate AS (
           SELECT id
           FROM platform_jobs
@@ -116,43 +115,7 @@ async function claimPlatformJob(pool, workerId, jobTypes) {
         FROM candidate
         WHERE job.id = candidate.id
         RETURNING job.*
-      `, [workerId, allowedTypes])
-    : await pool.query(`
-        WITH candidate AS (
-          SELECT id
-          FROM platform_jobs
-          WHERE status IN ('queued', 'retrying')
-            AND available_at <= NOW()
-            AND attempts < max_attempts
-            AND (
-              platform_jobs.job_type <> 'telegram.update'
-              OR NOT EXISTS (
-                SELECT 1
-                FROM bot_inbound_updates AS earlier
-                LEFT JOIN platform_jobs AS earlier_job
-                  ON earlier_job.job_type = 'telegram.update'
-                 AND earlier_job.idempotency_key =
-                   'telegram.update:' || earlier.bot_id::text || ':' || earlier.update_id::text
-                WHERE earlier.bot_id = platform_jobs.bot_id
-                  AND earlier.update_id < (platform_jobs.payload->>'updateId')::bigint
-                  AND earlier.state <> 'processed'
-                  AND COALESCE(earlier_job.status, 'queued') <> 'dead_letter'
-              )
-            )
-          ORDER BY priority DESC, available_at ASC, id ASC
-          FOR UPDATE SKIP LOCKED
-          LIMIT 1
-        )
-        UPDATE platform_jobs AS job
-        SET status = 'processing',
-            attempts = job.attempts + 1,
-            locked_by = $1,
-            locked_at = NOW(),
-            updated_at = NOW()
-        FROM candidate
-        WHERE job.id = candidate.id
-        RETURNING job.*
-      `, [workerId]);
+      `, [workerId, allowedTypes]);
   return result.rows[0] || null;
 }
 async function renewPlatformJobLease(pool, { jobId, workerId }) {
@@ -212,8 +175,7 @@ async function recoverExpiredPlatformJobs(pool, leaseSeconds = 120, jobTypes) {
     throw new RangeError('leaseSeconds must be an integer of at least 10');
   }
   const allowedTypes = normalizeJobTypes(jobTypes);
-  const result = allowedTypes
-    ? await pool.query(`
+  const result = await pool.query(`
         UPDATE platform_jobs
         SET status = CASE WHEN attempts >= max_attempts THEN 'dead_letter' ELSE 'retrying' END,
             available_at = CASE
@@ -228,22 +190,7 @@ async function recoverExpiredPlatformJobs(pool, leaseSeconds = 120, jobTypes) {
           AND locked_at < NOW() - make_interval(secs => $1::int)
           AND job_type = ANY($2::text[])
         RETURNING id, status
-      `, [leaseSeconds, allowedTypes])
-    : await pool.query(`
-        UPDATE platform_jobs
-        SET status = CASE WHEN attempts >= max_attempts THEN 'dead_letter' ELSE 'retrying' END,
-            available_at = CASE
-              WHEN attempts >= max_attempts THEN available_at
-              ELSE NOW()
-            END,
-            locked_by = NULL,
-            locked_at = NULL,
-            last_error = LEFT(COALESCE(last_error, 'Worker lease expired'), 4000),
-            updated_at = NOW()
-        WHERE status = 'processing'
-          AND locked_at < NOW() - make_interval(secs => $1::int)
-        RETURNING id, status
-      `, [leaseSeconds]);
+      `, [leaseSeconds, allowedTypes]);
   return result.rows;
 }
 async function enqueueTelegramUpdate(pool, { botId, update }) {
