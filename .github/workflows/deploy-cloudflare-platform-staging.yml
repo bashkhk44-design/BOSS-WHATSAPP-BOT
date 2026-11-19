@@ -1,3 +1,4 @@
+
 name: Deploy BOSS BOT Platform Cloudflare Staging
 
 on:
@@ -20,6 +21,7 @@ jobs:
     if: ${{ inputs.confirmation == 'DEPLOY-BOSS-STAGING' }}
     runs-on: ubuntu-latest
     environment: boss-platform-staging
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,15 +30,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           CONFIG="cloudflare/wrangler.staging.jsonc"
+
           grep -Fq '"name": "boss-bot-platform-ingress-staging"' "$CONFIG"
-          grep -Fq '"id": "82180f393f7f41478ddcb93404eb5e05'" "$CONFIG"
+          grep -Fq '"id": "82180f393f7f41478ddcb93404eb5e05"' "$CONFIG"
           grep -Fq '"PLATFORM_BOT_WEBHOOK_MODE": "disabled"' "$CONFIG"
           grep -Fq '"workers_dev": false' "$CONFIG"
-          if grep -Eq 'REPLACE_WITH|production|prod-' "$CONFIG"; then
+
+          if grep -Eq "REPLACE_WITH|production|prod-" "$CONFIG"; then
             echo "Unsafe or unresolved staging configuration detected."
             exit 1
           fi
+
+          echo "Staging configuration verified successfully."
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -51,6 +58,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           npx --yes wrangler@4 deploy --config cloudflare/wrangler.staging.jsonc
