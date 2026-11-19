@@ -1,3 +1,4 @@
+
 {
   "name": "boss-bot-platform-ingress-staging",
   "main": "worker.mjs",
@@ -10,7 +11,7 @@
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",
-      "id": "a10f6fde0bc345a286a25de4789382db"
+      "id": "82180f393f7f41478ddcb93404eb5e05"
     }
   ]
 }
