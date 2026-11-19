@@ -303,7 +303,7 @@ test('Cloudflare Worker schema endpoint authenticates and reads metadata only fo
     assert.deepEqual(query.params, [[
       'clients', 'client_projects', 'telegram_bots', 'project_ai_jobs', 'project_events'
     ]]);
-    assert.doesNotMatch(query.sql, /\\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE)\\b/i);
+    assert.doesNotMatch(query.sql, /\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE)\b/i);
   }
 });
 
