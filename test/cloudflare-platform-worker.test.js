@@ -46,7 +46,7 @@ function makeClientClass({ duplicate = false, failQuery = false } = {}) {
     async query(sql, params) {
       state.queries.push({ sql, params });
       if (failQuery) throw new Error('database unavailable');
-      if (/^\\s*SELECT\\s+1\\s+AS\\s+probe/i.test(sql)) {
+      if (/^\s*SELECT\s+1\s+AS\s+probe/i.test(sql)) {
         return { rowCount: 1, rows: [{ probe: 1 }] };
       }
       return duplicate
