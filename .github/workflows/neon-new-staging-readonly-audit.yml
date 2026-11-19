@@ -76,6 +76,7 @@ jobs:
             });
 
             try {
+              await pool.query('BEGIN READ ONLY');
               const identity = await pool.query(
                 'SELECT current_database() AS database, current_user AS role, current_setting(\'transaction_read_only\') AS transaction_read_only'
               );
@@ -111,6 +112,8 @@ jobs:
                   row.name + ': exists=' + row.exists + ', select=' + row.can_select
                 );
               }
+
+              await pool.query('COMMIT');
 
               const missing = schema.rows.filter(row => !row.exists).map(row => row.name);
               const denied = schema.rows.filter(row => row.exists && !row.can_select).map(row => row.name);
