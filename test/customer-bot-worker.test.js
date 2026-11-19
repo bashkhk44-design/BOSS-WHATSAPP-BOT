@@ -69,3 +69,25 @@ test('worker capacity and lease settings are bounded', () => {
     pool: { connect() {} }, runtime, leaseSeconds: 10
   }), /leaseSeconds must be at least 30 seconds/);
 });
+
+
+test('does not steal a bot if its previous worker renews the lease after candidate selection', async () => {
+  const calls = [];
+  const client = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes('SELECT b.id')) return { rowCount: 1, rows: [{ id: 42 }] };
+      if (sql.includes('INSERT INTO bot_runtime_status')) return { rowCount: 0, rows: [] };
+      return { rowCount: 0, rows: [] };
+    },
+    release() { calls.push({ sql: 'RELEASE' }); }
+  };
+  const pool = { async connect() { return client; } };
+
+  const id = await claimNextBot(pool, 'worker-new', 90);
+  assert.equal(id, null);
+  assert.match(calls[2].sql, /bot_runtime_status\.last_heartbeat_at < NOW\(\)/);
+  assert.deepEqual(calls[2].params, ['42', 'worker-new', 90]);
+  assert.equal(calls[3].sql, 'COMMIT');
+  assert.equal(calls[4].sql, 'RELEASE');
+});
