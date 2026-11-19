@@ -215,3 +215,72 @@ test('Telegram update handler evicts a bot whose initialization fails so a retry
   assert.equal(factoryCalls, 2);
   assert.equal(initCalls, 2);
 });
+
+
+test('Telegram update handler renews the inbox lease using the queue worker lease duration', async () => {
+  const calls = [];
+  const pool = {
+    async query(sql) {
+      calls.push(sql);
+      if (sql.includes("SET state = 'processing'")) {
+        return { rowCount: 1, rows: [{ payload: { update_id: 301 }, id: 31, name: 'Heartbeat bot', token_ciphertext: 'encrypted' }] };
+      }
+      if (sql.includes('RETURNING inbound.id')) return { rowCount: 1, rows: [{ id: 31 }] };
+      if (sql.includes("SET state = 'processed'")) return { rowCount: 1, rows: [{ id: 31 }] };
+      throw new Error('unexpected SQL');
+    }
+  };
+  const handler = createTelegramUpdateHandler({
+    pool,
+    decryptToken: () => 'heartbeat-token',
+    botFactory: () => ({
+      async init() {},
+      async handleUpdate() { await new Promise(resolve => setTimeout(resolve, 3500)); }
+    })
+  });
+
+  const result = await handler(
+    { id: 31, locked_by: 'heartbeat-worker', payload: { botId: 31, updateId: 301 } },
+    { workerId: 'heartbeat-worker', leaseSeconds: 10 }
+  );
+
+  assert.deepEqual(result, { processed: true, botId: 31, updateId: 301 });
+  assert.ok(calls.some(sql => sql.includes('RETURNING inbound.id')));
+  assert.ok(calls.some(sql => sql.includes("SET state = 'processed'")));
+});
+
+test('Telegram update handler refuses completion after its inbox lease is lost', async () => {
+  const calls = [];
+  const pool = {
+    async query(sql) {
+      calls.push(sql);
+      if (sql.includes("SET state = 'processing'")) {
+        return { rowCount: 1, rows: [{ payload: { update_id: 302 }, id: 32, name: 'Lease loss bot', token_ciphertext: 'encrypted' }] };
+      }
+      if (sql.includes('RETURNING inbound.id')) return { rowCount: 0, rows: [] };
+      if (sql.includes("SET state = 'failed'")) return { rowCount: 1, rows: [] };
+      if (sql.includes("SET state = 'processed'")) return { rowCount: 1, rows: [{ id: 32 }] };
+      throw new Error('unexpected SQL');
+    }
+  };
+  const handler = createTelegramUpdateHandler({
+    pool,
+    decryptToken: () => 'lease-loss-token',
+    botFactory: () => ({
+      async init() {},
+      async handleUpdate() { await new Promise(resolve => setTimeout(resolve, 3500)); }
+    })
+  });
+
+  await assert.rejects(
+    handler(
+      { id: 32, locked_by: 'lease-loss-worker', payload: { botId: 32, updateId: 302 } },
+      { workerId: 'lease-loss-worker', leaseSeconds: 10 }
+    ),
+    /lease was lost/
+  );
+
+  assert.ok(calls.some(sql => sql.includes('RETURNING inbound.id')));
+  assert.equal(calls.some(sql => sql.includes("SET state = 'processed'")), false);
+  assert.equal(calls.some(sql => sql.includes("SET state = 'failed'")), false);
+});
