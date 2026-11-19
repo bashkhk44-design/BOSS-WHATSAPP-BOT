@@ -93,7 +93,7 @@ export function createPlatformWebhookHandler({
     const url = new URL(request.url);
     if (url.pathname === '/healthz' && request.method === 'GET') {
       const connectionString = env.HYPERDRIVE?.connectionString;
-      if (typeof connectionString !== 'string' || !/^postgres(?:ql)?:\\/\\//i.test(connectionString)) {
+      if (typeof connectionString !== 'string' || !/^postgres(?:ql)?:\/\//i.test(connectionString)) {
         return jsonResponse(503, { ok: false, error: 'database_unavailable' });
       }
 
