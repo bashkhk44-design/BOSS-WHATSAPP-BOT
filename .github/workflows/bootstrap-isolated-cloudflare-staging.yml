@@ -1,16 +1,6 @@
 name: Bootstrap Isolated Cloudflare Staging Database
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/bootstrap-isolated-cloudflare-staging.yml"
-      - "db.js"
-      - "project-db.js"
-      - "project-ai-jobs.js"
-      - "project-approvals.js"
-      - "project-release.js"
-      - "migrations/**"
   workflow_dispatch:
     inputs:
       confirm_target:
@@ -27,7 +17,7 @@ concurrency:
 
 jobs:
   bootstrap:
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.confirm_target == 'BOOTSTRAP-ISOLATED-STAGING') }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm_target == 'BOOTSTRAP-ISOLATED-STAGING' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: cloudflare-staging
@@ -102,7 +92,9 @@ jobs:
             '005_worker_health_heartbeats',
             '006_auto_remediation_audit',
             '007_platform_bot_inbox',
-            '20261118_bot_runtime_status'
+            '20261118_bot_runtime_status',
+            '20261119_bot_inbound_update_lease_owner',
+            '20261119_bot_update_transport'
           ];
           const expectedTables = [
             'telegram_bots','clients','client_projects','client_conversations',
@@ -126,11 +118,30 @@ jobs:
                  FROM unnest($1::text[]) AS t(name)`, [expectedTables]
               );
               const missingTables = tables.rows.filter(r => !r.exists).map(r => r.name);
+              const requiredColumns = [
+                ['bot_inbound_updates', 'locked_by'],
+                ['telegram_bots', 'update_transport']
+              ];
+              const columnChecks = await pool.query(
+                `SELECT table_name, column_name
+                 FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND (table_name, column_name) IN (
+                     SELECT * FROM unnest($1::text[], $2::text[])
+                   )`,
+                [requiredColumns.map(item => item[0]), requiredColumns.map(item => item[1])]
+              );
+              const presentColumns = new Set(columnChecks.rows.map(row => row.table_name + '.' + row.column_name));
+              const missingColumns = requiredColumns
+                .map(([table, column]) => table + '.' + column)
+                .filter(name => !presentColumns.has(name));
               console.log('Applied migrations:', [...applied].sort().join(', '));
               console.log('Verified tables:', expectedTables.length - missingTables.length, '/', expectedTables.length);
-              if (missingMigrations.length || missingTables.length) {
+              console.log('Verified required columns:', requiredColumns.length - missingColumns.length, '/', requiredColumns.length);
+              if (missingMigrations.length || missingTables.length || missingColumns.length) {
                 throw new Error('Incomplete schema. Missing migrations: ' + missingMigrations.join(', ') +
-                  '; missing tables: ' + missingTables.join(', '));
+                  '; missing tables: ' + missingTables.join(', ') +
+                  '; missing columns: ' + missingColumns.join(', '));
               }
               console.log('SUCCESS: isolated staging database schema is initialized.');
             } finally { await pool.end(); }
