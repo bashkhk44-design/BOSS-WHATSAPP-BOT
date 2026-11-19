@@ -155,8 +155,9 @@ function createCustomerBotWorker({
             UPDATE bot_runtime_commands
             SET claimed_at = NOW()
             WHERE id = $1 AND claimed_by = $2 AND status = 'processing'
+              AND claimed_at >= NOW() - ($3::int * INTERVAL '1 second')
             RETURNING id
-          `, [command.id, workerId]);
+          `, [command.id, workerId, leaseSeconds]);
           if (!renewed.rowCount) commandLeaseLost = true;
         } catch (error) {
           commandLeaseLost = true;
@@ -230,8 +231,9 @@ function createCustomerBotWorker({
         UPDATE bot_runtime_commands
         SET status = 'completed', processed_at = NOW(), error_message = NULL
         WHERE id = $1 AND claimed_by = $2 AND status = 'processing'
+          AND claimed_at >= NOW() - ($3::int * INTERVAL '1 second')
         RETURNING auto_remediation_attempt_id
-      `, [command.id, workerId]);
+      `, [command.id, workerId, leaseSeconds]);
       if (!completed.rowCount) throw new Error('Manager command lease was lost before completion');
       if (completed.rows[0].auto_remediation_attempt_id) {
         await pool.query(`
@@ -248,8 +250,9 @@ function createCustomerBotWorker({
         UPDATE bot_runtime_commands
         SET status = 'failed', processed_at = NOW(), error_message = $3
         WHERE id = $1 AND claimed_by = $2 AND status = 'processing'
+          AND claimed_at >= NOW() - ($4::int * INTERVAL '1 second')
         RETURNING auto_remediation_attempt_id
-      `, [command.id, workerId, String(error.message || error).slice(0, 1000)]);
+      `, [command.id, workerId, String(error.message || error).slice(0, 1000), leaseSeconds]);
       if (failed.rowCount && failed.rows[0].auto_remediation_attempt_id) {
         await pool.query(`
           UPDATE bot_auto_remediation_attempts
@@ -364,7 +367,9 @@ async function main() {
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000
   });
-  const workerId = process.env.CUSTOMER_BOT_WORKER_ID || randomUUID();
+  const workerId = (process.env.CUSTOMER_BOT_WORKER_ID
+    ? process.env.CUSTOMER_BOT_WORKER_ID + ':'
+    : '') + randomUUID();
   let worker = null;
   const leaseSeconds = Number(process.env.CUSTOMER_BOT_LEASE_SECONDS || DEFAULT_LEASE_SECONDS);
   const runtime = createBotRuntime({
