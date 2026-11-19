@@ -258,6 +258,72 @@ test('Cloudflare Worker DB check fails closed and closes the client on database 
   assert.equal(state.ended, 1);
 });
 
+test('Cloudflare Worker schema endpoint authenticates and reads metadata only for the five approved tables', async () => {
+  const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
+  const state = { constructed: 0, connected: 0, ended: 0, queries: [] };
+  class FakeClient {
+    constructor(config) { state.constructed += 1; state.config = config; }
+    async connect() { state.connected += 1; }
+    async query(sql, params) {
+      state.queries.push({ sql, params });
+      if (sql.includes('information_schema.columns')) {
+        return { rows: [{ table_name: 'clients', column_name: 'id', data_type: 'uuid' }] };
+      }
+      if (sql.includes('information_schema.table_constraints')) {
+        return { rows: [{ table_name: 'clients', constraint_name: 'clients_pkey', constraint_type: 'PRIMARY KEY', column_name: 'id' }] };
+      }
+      if (sql.includes('FROM pg_indexes')) {
+        return { rows: [{ table_name: 'clients', index_name: 'clients_pkey', definition: 'CREATE UNIQUE INDEX clients_pkey ON public.clients USING btree (id)' }] };
+      }
+      throw new Error('unexpected_schema_query');
+    }
+    async end() { state.ended += 1; }
+  }
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const request = new Request('https://edge.example.invalid/db-schema', {
+    method: 'GET',
+    headers: { 'x-boss-db-check-token': env.DB_CHECK_SECRET }
+  });
+  const response = await handler(request, env);
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.database, 'connected');
+  assert.deepEqual(body.tables, [
+    'clients', 'client_projects', 'telegram_bots', 'project_ai_jobs', 'project_events'
+  ]);
+  assert.equal(body.columns[0].column_name, 'id');
+  assert.equal(body.constraints[0].constraint_type, 'PRIMARY KEY');
+  assert.equal(body.indexes[0].index_name, 'clients_pkey');
+  assert.equal(state.constructed, 1);
+  assert.equal(state.connected, 1);
+  assert.equal(state.ended, 1);
+  assert.equal(state.queries.length, 3);
+  for (const query of state.queries) {
+    assert.deepEqual(query.params, [[
+      'clients', 'client_projects', 'telegram_bots', 'project_ai_jobs', 'project_events'
+    ]]);
+    assert.doesNotMatch(query.sql, /\\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE)\\b/i);
+  }
+});
+
+test('Cloudflare Worker schema endpoint rejects unauthorized and non-GET requests before database access', async () => {
+  const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
+  const { FakeClient, state } = makeClientClass();
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const wrongSecret = await handler(new Request('https://edge.example.invalid/db-schema', {
+    method: 'GET',
+    headers: { 'x-boss-db-check-token': 'wrong-secret' }
+  }), env);
+  assert.equal(wrongSecret.status, 401);
+  const wrongMethod = await handler(new Request('https://edge.example.invalid/db-schema', {
+    method: 'POST',
+    headers: { 'x-boss-db-check-token': env.DB_CHECK_SECRET }
+  }), env);
+  assert.equal(wrongMethod.status, 405);
+  assert.equal(state.constructed, 0);
+});
+
 test('Cloudflare Worker health check does not open Hyperdrive connections', async () => {
   const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
   const { FakeClient, state } = makeClientClass();
