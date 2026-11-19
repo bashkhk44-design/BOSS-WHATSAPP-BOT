@@ -10,11 +10,12 @@ function fixturePool(records) {
     statuses,
     async query(sql, params = []) {
       if (sql.includes('FROM telegram_bots') && sql.includes('WHERE id = $1')) {
-        const row = records.find(item => String(item.id) === String(params[0]) && item.active);
+        const row = records.find(item => String(item.id) === String(params[0]) && item.active && (item.update_transport || 'polling') === 'polling');
         return { rowCount: row ? 1 : 0, rows: row ? [row] : [] };
       }
       if (sql.includes('FROM telegram_bots') && sql.includes('WHERE active = TRUE')) {
-        return { rowCount: records.filter(row => row.active).length, rows: records.filter(row => row.active) };
+        const pollingRecords = records.filter(row => row.active && (row.update_transport || 'polling') === 'polling');
+        return { rowCount: pollingRecords.length, rows: pollingRecords };
       }
       if (sql.includes('INSERT INTO bot_runtime_status')) {
         statuses.set(String(params[0]), { status: params[1], error: params[4] });
@@ -92,6 +93,31 @@ test('enforces configured maximum active bot capacity', async () => {
   assert.deepEqual(result, { found: 2, started: 1, capacity: 1 });
   assert.deepEqual(bots.started, ['1']);
   await assert.rejects(runtime.startBotById(2), /Maximum active customer bots reached/);
+  await runtime.stopBotRuntime();
+});
+
+
+test('never starts webhook transport bots through polling runtime entry points', async () => {
+  const records = [
+    { id: 1, name: 'Polling', username: 'polling_bot', active: true, update_transport: 'polling', token_ciphertext: 'x' },
+    { id: 2, name: 'Webhook', username: 'webhook_bot', active: true, update_transport: 'webhook', token_ciphertext: 'y' }
+  ];
+  const pool = fixturePool(records);
+  const bots = fixtureBotFactory();
+  const runtime = createBotRuntime({
+    pool,
+    decryptToken: () => 'token',
+    createCustomerBot: record => bots.create(record),
+    logger: { log() {}, error() {} },
+    heartbeatIntervalMs: 100000
+  });
+
+  await assert.rejects(runtime.startBotById(2), /Bot not found, inactive, missing encrypted token, or not configured for polling/);
+  const result = await runtime.startBotRuntime();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(result, { found: 1, started: 1, capacity: 100 });
+  assert.deepEqual(bots.started, ['1']);
   await runtime.stopBotRuntime();
 });
 
