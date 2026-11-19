@@ -10,21 +10,22 @@ function createHealthServer(getRuntimeState) {
       : {};
     const ready = state.runtimeReady === true && state.runtimeStopping !== true;
 
-    // Liveness only answers whether the Node process can serve HTTP.
-    if (pathname === '/livez') {
+    // Liveness reports whether the HTTP process can answer, independent of Telegram startup.
+    // Render can safely use /healthz without restarting a healthy process during bot recovery.
+    if (pathname === '/livez' || pathname === '/healthz') {
       res.writeHead(200, {
         'Content-Type': 'application/json; charset=utf-8',
         'Cache-Control': 'no-store'
       });
       return res.end(JSON.stringify({
         status: 'ok',
+        runtimeReady: ready,
         service: 'BOSS BOT MASTER'
       }));
     }
 
-    // Render should use /healthz: an HTTP 503 tells it the Telegram runtime
-    // has not started (or is shutting down), instead of falsely reporting healthy.
-    if (pathname === '/healthz' || pathname === '/health' || pathname === '/readyz') {
+    // Readiness is separate: callers can detect startup/recovery or graceful shutdown.
+    if (pathname === '/health' || pathname === '/readyz') {
       res.writeHead(ready ? 200 : 503, {
         'Content-Type': 'application/json; charset=utf-8',
         'Cache-Control': 'no-store'
