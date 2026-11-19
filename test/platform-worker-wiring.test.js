@@ -12,7 +12,8 @@ const validEnv = {
   BOTS_ENCRYPTION_KEY: 'a'.repeat(64),
   TELEGRAM_BOT_TOKEN: 'master-test-token',
   TELEGRAM_ADMIN_ID: '10001',
-  INTAKE_BOT_TOKEN: 'intake-test-token'
+  INTAKE_BOT_TOKEN: 'intake-test-token',
+  PLATFORM_BOT_WEBHOOK_MODE: 'enabled'
 };
 
 test('platform worker requires both system bot tokens and a master administrator ID', () => {
@@ -23,6 +24,21 @@ test('platform worker requires both system bot tokens and a master administrator
     delete env[name];
     assert.throws(() => validatePlatformWorkerEnvironment(env), new RegExp(name));
   }
+});
+
+test('platform worker refuses missing or disabled webhook mode', () => {
+  assert.throws(
+    () => validatePlatformWorkerEnvironment({ ...validEnv, PLATFORM_BOT_WEBHOOK_MODE: undefined }),
+    /PLATFORM_BOT_WEBHOOK_MODE=enabled/
+  );
+  assert.throws(
+    () => validatePlatformWorkerEnvironment({ ...validEnv, PLATFORM_BOT_WEBHOOK_MODE: 'disabled' }),
+    /PLATFORM_BOT_WEBHOOK_MODE=enabled/
+  );
+  assert.throws(
+    () => validatePlatformWorkerEnvironment({ ...validEnv, INTAKE_BOT_TOKEN: 'master-test-token' }),
+    /different tokens/
+  );
 });
 
 test('platform worker claims only master and intake update job types', async () => {

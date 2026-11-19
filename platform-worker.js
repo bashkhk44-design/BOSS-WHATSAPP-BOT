@@ -17,6 +17,10 @@ function validatePlatformWorkerEnvironment(env = process.env) {
   if (!/^\d+$/.test(env.TELEGRAM_ADMIN_ID)) {
     throw new Error('TELEGRAM_ADMIN_ID must be a numeric Telegram user ID');
   }
+  const { validatePlatformBotWorkerEnvironment } = require('./platform-bot-worker');
+  if (!validatePlatformBotWorkerEnvironment(env)) {
+    throw new Error('PLATFORM_BOT_WEBHOOK_MODE=enabled is required to start the platform worker');
+  }
   return true;
 }
 
