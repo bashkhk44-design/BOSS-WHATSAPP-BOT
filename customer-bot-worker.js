@@ -357,12 +357,17 @@ async function main() {
   });
   const workerId = process.env.CUSTOMER_BOT_WORKER_ID || randomUUID();
   let worker = null;
+  const leaseSeconds = Number(process.env.CUSTOMER_BOT_LEASE_SECONDS || DEFAULT_LEASE_SECONDS);
   const runtime = createBotRuntime({
     pool,
     decryptToken,
     createCustomerBot,
     workerId,
+    requireLease: true,
+    leaseSeconds,
+    heartbeatIntervalMs: Math.max(1000, Math.floor(leaseSeconds * 1000 / 3)),
     maxBots: Number(process.env.CUSTOMER_BOT_WORKER_CAPACITY || DEFAULT_CAPACITY),
+    onLeaseLost: botId => console.error('Customer bot lease lost; local bot stopped:', botId),
     onStatusPersistError: error => {
       console.error('WORKER LEASE HEARTBEAT LOST; stopping owned bots:', error.message);
       if (worker) void worker.stop();
@@ -374,7 +379,7 @@ async function main() {
     runtime,
     workerId,
     capacity: Number(process.env.CUSTOMER_BOT_WORKER_CAPACITY || DEFAULT_CAPACITY),
-    leaseSeconds: Number(process.env.CUSTOMER_BOT_LEASE_SECONDS || DEFAULT_LEASE_SECONDS),
+    leaseSeconds,
     pollIntervalMs: Number(process.env.CUSTOMER_BOT_WORKER_POLL_MS || 3000)
   });
   let stopping = false;
