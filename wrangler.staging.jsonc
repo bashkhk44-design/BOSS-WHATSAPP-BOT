@@ -1,0 +1,16 @@
+{
+  "name": "boss-bot-master-staging",
+  "main": "cloudflare/worker.mjs",
+  "compatibility_date": "2026-11-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": {
+    "PLATFORM_BOT_WEBHOOK_MODE": "disabled"
+  },
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "82180f393f7f41478ddcb93404eb5e05"
+    }
+  ]
+}
