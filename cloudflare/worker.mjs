@@ -183,6 +183,95 @@ export function createPlatformWebhookHandler({
       }
     }
 
+    if (url.pathname === '/db-schema') {
+      if (request.method !== 'GET') {
+        return jsonResponse(405, { ok: false, error: 'method_not_allowed' });
+      }
+
+      const expectedSecret = env.DB_CHECK_SECRET;
+      const suppliedSecret = request.headers.get('x-boss-db-check-token');
+      if (!SECRET_PATTERN.test(expectedSecret || '') || !safeEqual(suppliedSecret, expectedSecret)) {
+        return jsonResponse(401, { ok: false, error: 'unauthorized' });
+      }
+
+      const connectionString = env.HYPERDRIVE?.connectionString;
+      if (typeof connectionString !== 'string' || !(connectionString.startsWith('postgres://') || connectionString.startsWith('postgresql://'))) {
+        return jsonResponse(503, { ok: false, error: 'temporarily_unavailable' });
+      }
+
+      const schemaTables = [
+        'clients',
+        'client_projects',
+        'telegram_bots',
+        'project_ai_jobs',
+        'project_events'
+      ];
+      let client;
+      try {
+        client = new ClientClass({
+          connectionString,
+          connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
+          query_timeout: DB_QUERY_TIMEOUT_MS,
+          statement_timeout: DB_QUERY_TIMEOUT_MS
+        });
+        await client.connect();
+
+        const columns = await client.query(
+          `SELECT table_name, column_name, ordinal_position, data_type, udt_name,
+                  is_nullable, column_default
+           FROM information_schema.columns
+           WHERE table_schema = current_schema()
+             AND table_name = ANY($1::text[])
+           ORDER BY table_name, ordinal_position`,
+          [schemaTables]
+        );
+        const constraints = await client.query(
+          `SELECT tc.table_name, tc.constraint_name, tc.constraint_type,
+                  kcu.column_name,
+                  ccu.table_name AS foreign_table_name,
+                  ccu.column_name AS foreign_column_name
+           FROM information_schema.table_constraints tc
+           LEFT JOIN information_schema.key_column_usage kcu
+             ON tc.constraint_catalog = kcu.constraint_catalog
+            AND tc.constraint_schema = kcu.constraint_schema
+            AND tc.constraint_name = kcu.constraint_name
+            AND tc.table_name = kcu.table_name
+           LEFT JOIN information_schema.constraint_column_usage ccu
+             ON tc.constraint_catalog = ccu.constraint_catalog
+            AND tc.constraint_schema = ccu.constraint_schema
+            AND tc.constraint_name = ccu.constraint_name
+           WHERE tc.table_schema = current_schema()
+             AND tc.table_name = ANY($1::text[])
+           ORDER BY tc.table_name, tc.constraint_name, kcu.ordinal_position`,
+          [schemaTables]
+        );
+        const indexes = await client.query(
+          `SELECT tablename AS table_name, indexname AS index_name, indexdef AS definition
+           FROM pg_indexes
+           WHERE schemaname = current_schema()
+             AND tablename = ANY($1::text[])
+           ORDER BY tablename, indexname`,
+          [schemaTables]
+        );
+
+        return jsonResponse(200, {
+          ok: true,
+          database: 'connected',
+          tables: schemaTables,
+          columns: columns.rows,
+          constraints: constraints.rows,
+          indexes: indexes.rows
+        });
+      } catch (error) {
+        console.error('PLATFORM DATABASE SCHEMA CHECK ERROR:', error?.message || 'unknown');
+        return jsonResponse(503, { ok: false, error: 'temporarily_unavailable' });
+      } finally {
+        if (client) {
+          try { await client.end(); } catch (_) {}
+        }
+      }
+    }
+
     const match = url.pathname.match(/^\/telegram\/platform\/(master|intake)$/);
     if (!match || env.PLATFORM_BOT_WEBHOOK_MODE !== 'enabled') {
       return jsonResponse(404, { ok: false, error: 'not_found' });
