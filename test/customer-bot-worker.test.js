@@ -20,6 +20,7 @@ test('claims the next eligible bot transactionally with SKIP LOCKED', async () =
   assert.equal(id, '42');
   assert.equal(calls[0].sql, 'BEGIN');
   assert.match(calls[1].sql, /FOR UPDATE OF b SKIP LOCKED/);
+  assert.match(calls[1].sql, /b\.update_transport = 'polling'/);
   assert.match(calls[2].sql, /ON CONFLICT \(bot_id\) DO UPDATE/);
   assert.deepEqual(calls[2].params, ['42', 'worker-test']);
   assert.equal(calls[3].sql, 'COMMIT');
