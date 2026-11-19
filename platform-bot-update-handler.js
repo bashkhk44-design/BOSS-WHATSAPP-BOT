@@ -78,12 +78,60 @@ function createPlatformBotUpdateHandler({
       throw new Error('Platform Telegram update is already leased or unavailable');
     }
 
+    let inboxLeaseLost = false;
+    let inboxHeartbeatInFlight = null;
+    let inboxHeartbeatTimer = null;
+    const heartbeatIntervalMs = context.leaseRenewalIntervalMs === undefined
+      ? Math.max(1000, Math.floor(activeLeaseSeconds * 1000 / 3))
+      : context.leaseRenewalIntervalMs;
+    if (!Number.isInteger(heartbeatIntervalMs) || heartbeatIntervalMs < 100) {
+      throw new RangeError('leaseRenewalIntervalMs must be at least 100ms');
+    }
+    const isLeaseLost = () => inboxLeaseLost ||
+      (typeof context.isLeaseLost === 'function' && context.isLeaseLost());
+
+    async function renewInboxLease() {
+      const renewed = await pool.query(`
+        UPDATE platform_bot_inbound_updates AS inbox
+        SET locked_at = NOW()
+        WHERE inbox.bot_identity = $1
+          AND inbox.update_id = $2
+          AND inbox.state = 'processing'
+          AND inbox.locked_by = $3
+          AND EXISTS (
+            SELECT 1 FROM platform_jobs AS job
+            WHERE job.id = $4
+              AND job.job_type = $5
+              AND job.status = 'processing'
+              AND job.locked_by = $3
+              AND job.locked_at >= NOW() - make_interval(secs => $6::int)
+          )
+        RETURNING inbox.id
+      `, [identity, updateId, workerId, job.id, expectedJobType, activeLeaseSeconds]);
+      if (!renewed.rowCount) inboxLeaseLost = true;
+    }
+
     try {
-      if (typeof context.isLeaseLost === 'function' && context.isLeaseLost()) {
+      if (isLeaseLost()) {
         throw new Error('Platform Telegram update queue lease was lost');
       }
 
+      inboxHeartbeatTimer = setInterval(() => {
+        if (inboxHeartbeatInFlight || isLeaseLost()) return;
+        inboxHeartbeatInFlight = renewInboxLease()
+          .catch(() => { inboxLeaseLost = true; })
+          .finally(() => { inboxHeartbeatInFlight = null; });
+      }, heartbeatIntervalMs);
+      if (typeof inboxHeartbeatTimer.unref === 'function') inboxHeartbeatTimer.unref();
+
       await runtime.handleUpdate(claimed.rows[0].payload);
+
+      clearInterval(inboxHeartbeatTimer);
+      inboxHeartbeatTimer = null;
+      if (inboxHeartbeatInFlight) await inboxHeartbeatInFlight;
+      if (isLeaseLost()) {
+        throw new Error('Platform Telegram update lease was lost during execution');
+      }
 
       const saved = await pool.query(`
         UPDATE platform_bot_inbound_updates AS inbox
@@ -113,7 +161,9 @@ function createPlatformBotUpdateHandler({
 
       return { processed: true, identity, updateId };
     } catch (error) {
-      if (!(typeof context.isLeaseLost === 'function' && context.isLeaseLost())) {
+      if (inboxHeartbeatTimer) clearInterval(inboxHeartbeatTimer);
+      if (inboxHeartbeatInFlight) await inboxHeartbeatInFlight;
+      if (!isLeaseLost()) {
         try {
           await pool.query(`
             UPDATE platform_bot_inbound_updates AS inbox
