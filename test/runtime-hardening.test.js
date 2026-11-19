@@ -42,7 +42,7 @@ test('Render liveness remains healthy while Telegram runtime is recovering', asy
   t.after(() => new Promise(resolve => server.close(resolve)));
   const port = server.address().port;
 
-  const live = await getJson(port, '/healthz');
+  const live = await getJson(port, '/livez');
   assert.equal(live.status, 200);
   assert.equal(live.body.status, 'ok');
   assert.equal(live.body.runtimeReady, false);

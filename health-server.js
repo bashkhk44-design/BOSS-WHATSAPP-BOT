@@ -18,12 +18,12 @@ function createHealthServer(getRuntimeState) {
       });
       return res.end(JSON.stringify({
         status: 'ok',
+        runtimeReady: ready,
         service: 'BOSS BOT MASTER'
       }));
     }
 
-    // Render should use /healthz: an HTTP 503 tells it the Telegram runtime
-    // has not started (or is shutting down), instead of falsely reporting healthy.
+    // Readiness reports whether the Telegram runtime has started and is not shutting down.
     if (pathname === '/healthz' || pathname === '/health' || pathname === '/readyz') {
       res.writeHead(ready ? 200 : 503, {
         'Content-Type': 'application/json; charset=utf-8',
