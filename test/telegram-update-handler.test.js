@@ -25,11 +25,14 @@ test('Telegram update handler claims, dispatches, and marks an update processed'
     }
   };
   let handled = false;
+  const order = [];
   const handler = createTelegramUpdateHandler({
     pool,
     decryptToken: record => record.token_ciphertext === 'encrypted' ? 'test-token' : '',
     botFactory: (record, token) => ({
+      async init() { order.push('init'); },
       async handleUpdate(update) {
+        order.push('handle');
         assert.equal(record.name, 'Test bot');
         assert.equal(token, 'test-token');
         assert.equal(update.update_id, 77);
@@ -40,6 +43,7 @@ test('Telegram update handler claims, dispatches, and marks an update processed'
 
   const result = await handler({ payload: { botId: 5, updateId: 77 } });
   assert.equal(handled, true);
+  assert.deepEqual(order, ['init', 'handle']);
   assert.deepEqual(result, { processed: true, botId: 5, updateId: 77 });
   assert.equal(calls.length, 2);
 });
@@ -59,7 +63,7 @@ test('Telegram update handler leaves failed updates retryable', async () => {
   const handler = createTelegramUpdateHandler({
     pool,
     decryptToken: () => 'test-token',
-    botFactory: () => ({ async handleUpdate() { throw new Error('Telegram API unavailable'); } })
+    botFactory: () => ({ async init() {}, async handleUpdate() { throw new Error('Telegram API unavailable'); } })
   });
 
   await assert.rejects(
