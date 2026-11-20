@@ -15,7 +15,8 @@
     "start:monitor": "node runtime-monitor.js",
     "start:deployment-preflight-worker": "node deployment-preflight-worker.js",
     "start:platform-worker": "node platform-worker.js",
-    "start:platform-webhook": "node platform-webhook.js"
+    "start:platform-webhook": "node platform-webhook.js",
+    "db:bootstrap": "node scripts/bootstrap-database.js"
   },
   "keywords": [],
   "type": "commonjs",
