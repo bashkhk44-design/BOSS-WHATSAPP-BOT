@@ -249,9 +249,6 @@ async function enqueueTelegramUpdate(pool, { botId, update }) {
 
 
 async function enqueuePlatformBotUpdate(pool, { botIdentity, update }) {
-  if (!pool || typeof pool.connect !== 'function') {
-    throw new TypeError('PostgreSQL pool with connect() is required');
-  }
   if (!['master', 'intake'].includes(botIdentity)) {
     throw new TypeError('botIdentity must be master or intake');
   }
@@ -260,9 +257,13 @@ async function enqueuePlatformBotUpdate(pool, { botIdentity, update }) {
     throw new TypeError('Telegram update_id is required');
   }
 
+  const ownsClient = typeof pool?.connect === 'function';
+  if (!ownsClient && typeof pool?.query !== 'function') {
+    throw new TypeError('A PostgreSQL pool or connected client is required');
+  }
   const jobType = 'telegram.' + botIdentity + '.update';
   const idempotencyKey = jobType + ':' + update.update_id;
-  const client = await pool.connect();
+  const client = ownsClient ? await pool.connect() : pool;
   let transactionOpen = false;
 
   try {
@@ -341,7 +342,7 @@ async function enqueuePlatformBotUpdate(pool, { botIdentity, update }) {
     }
     throw error;
   } finally {
-    client.release();
+    if (ownsClient) client.release();
   }
 }
 
