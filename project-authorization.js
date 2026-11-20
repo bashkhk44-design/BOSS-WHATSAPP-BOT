@@ -13,7 +13,7 @@ function assertAuthorizedManager(telegramUserId, managerId = configuredManagerId
   if (!/^\d+$/.test(String(telegramUserId || ''))) {
     throw new Error('معرّف المدير غير صالح.');
   }
-  if (!configuredManagerId || String(telegramUserId) !== String(configuredManagerId)) {
+  if (!managerId || String(telegramUserId) !== String(managerId)) {
     throw new Error('غير مصرح: هذه العملية متاحة للمدير الرئيسي فقط.');
   }
   return true;
