@@ -197,6 +197,24 @@ async function verifyDatabaseSchema() {
     );
   }
 
+  const ownershipColumns = await pool.query(
+    `SELECT column_name
+     FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'telegram_bots'
+       AND column_name = ANY($1::text[])`,
+    [['client_id', 'project_id']]
+  );
+  const presentOwnershipColumns = new Set(ownershipColumns.rows.map(row => row.column_name));
+  const missingOwnershipColumns = ['client_id', 'project_id']
+    .filter(column => !presentOwnershipColumns.has(column));
+  if (missingOwnershipColumns.length) {
+    throw new Error(
+      'ربط البوتات بالعملاء غير مهيأ. طبّق migration 001_foundation_database.sql بعد مراجعتها. الأعمدة الناقصة: ' +
+      missingOwnershipColumns.join(', ')
+    );
+  }
+
   return true;
 }
 
@@ -222,6 +240,21 @@ async function insertTelegramBot({ name, username, token }) {
   return result.rows[0];
 }
 
+
+const { createBotOwnershipService } = require('./bot-ownership');
+const botOwnership = createBotOwnershipService(pool);
+
+async function getBotAssignmentClients(options) {
+  return botOwnership.listClients(options);
+}
+
+async function getBotAssignmentProjects(options) {
+  return botOwnership.listProjects(options);
+}
+
+async function assignTelegramBotToProject(options) {
+  return botOwnership.assignBotToProject(options);
+}
 
 async function getActiveTelegramBots() {
   const result = await pool.query(`
@@ -400,6 +433,9 @@ module.exports = {
   verifyDatabaseSchema,
   insertTelegramBot,
   getActiveTelegramBots,
+  getBotAssignmentClients,
+  getBotAssignmentProjects,
+  assignTelegramBotToProject,
   decryptToken,
   encryptSecret,
   decryptSecret,
