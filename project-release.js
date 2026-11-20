@@ -261,6 +261,7 @@ async function initProjectReleaseDatabase() {
 }
 
 async function createReleaseCandidate({ project, designJobId, adminTelegramId, report, bundle }) {
+  assertAuthorizedManager(adminTelegramId);
   const snapshot = createImmutableReleaseArtifact({ report, bundle });
   const client = await getPool().connect();
   try {
