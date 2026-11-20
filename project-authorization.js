@@ -3,10 +3,10 @@
 let configuredManagerId = process.env.TELEGRAM_ADMIN_ID;
 
 function configureManagerIdentity(managerTelegramId) {
-  if (!/^\\d+$/.test(String(managerTelegramId || ''))) {
+  if (managerTelegramId && !/^\d+$/.test(String(managerTelegramId))) {
     throw new Error('إعداد معرّف المدير الرئيسي غير صالح.');
   }
-  configuredManagerId = String(managerTelegramId);
+  if (managerTelegramId) configuredManagerId = String(managerTelegramId);
 }
 
 function assertAuthorizedManager(telegramUserId, managerId = configuredManagerId || process.env.TELEGRAM_ADMIN_ID) {
