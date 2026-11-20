@@ -164,3 +164,26 @@ test('platform bot update handler renews its inbox lease during long-running dis
   assert.match(renewals[0].sql, /job\.locked_by = \$3/);
   assert.match(renewals[0].sql, /job\.status = 'processing'/);
 });
+
+test('platform bot update handler validates heartbeat settings before claiming an inbox row', async () => {
+  let queries = 0;
+  const pool = {
+    async query() {
+      queries += 1;
+      throw new Error('database must not be touched for invalid heartbeat settings');
+    }
+  };
+  const handler = createPlatformBotUpdateHandler({
+    pool,
+    runtimes: { master: { async handleUpdate() {} } }
+  });
+
+  await assert.rejects(
+    handler(makeJob(), {
+      workerId: 'invalid-heartbeat-worker',
+      leaseRenewalIntervalMs: 50
+    }),
+    /leaseRenewalIntervalMs must be at least 100ms/
+  );
+  assert.equal(queries, 0);
+});
