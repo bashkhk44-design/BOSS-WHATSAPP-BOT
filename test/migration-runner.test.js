@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
+  APPROVED_MIGRATION_FILES,
   createMigrationRunner,
   listMigrationFiles,
   extractMigrationBody
@@ -68,6 +69,7 @@ test('migration runner applies pending files once and skips recorded versions', 
   const runner = createMigrationRunner({
     pool: mock.pool,
     migrationsDir: directory,
+    approvedMigrationFiles: ['001_test_foundation.sql'],
     logger: { log() {}, error() {} }
   });
 
@@ -115,6 +117,7 @@ test('migration runner rolls back when ledger registration fails', async (t) => 
   const runner = createMigrationRunner({
     pool: mock.pool,
     migrationsDir: directory,
+    approvedMigrationFiles: ['001_test_failure.sql'],
     logger: { log() {}, error() {} }
   });
 
@@ -144,6 +147,7 @@ test('migration runner refuses to proceed when another runner owns the lock', as
   const runner = createMigrationRunner({
     pool: mock.pool,
     migrationsDir: os.tmpdir(),
+    approvedMigrationFiles: [],
     logger: { log() {}, error() {} }
   });
 
@@ -151,20 +155,58 @@ test('migration runner refuses to proceed when another runner owns the lock', as
   assert.equal(mock.calls.filter((call) => call.released).length, 1);
 });
 
-test('migration discovery is ordered and ignores non-migration files', (t) => {
+test('migration discovery executes only the explicit reviewed allowlist in its declared order', (t) => {
   const directory = fs.mkdtempSync(
     path.join(os.tmpdir(), 'boss-migration-list-')
   );
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
 
-  for (const name of ['002_second.sql', 'notes.txt', '001_first.sql']) {
+  const approved = [
+    '001_foundation_database.sql',
+    '002_distributed_bot_worker_indexes.sql',
+    '20261119_bot_update_transport.sql'
+  ];
+  for (const name of [
+    '20261118_bot_runtime_status.sql',
+    '20261119_bot_update_transport.sql',
+    '009_future_unreviewed.sql',
+    '001_foundation_database.sql',
+    '002_distributed_bot_worker_indexes.sql',
+    '000_staging_bootstrap.sql',
+    'notes.txt'
+  ]) {
     fs.writeFileSync(path.join(directory, name), '');
   }
 
+  assert.deepEqual(listMigrationFiles(directory, fs, approved), approved);
   assert.deepEqual(
-    listMigrationFiles(directory),
-    ['001_first.sql', '002_second.sql']
+    listMigrationFiles(directory, fs, ['20261119_bot_update_transport.sql', '001_foundation_database.sql']),
+    ['20261119_bot_update_transport.sql', '001_foundation_database.sql']
   );
+});
+
+test('migration discovery fails closed when an approved migration file is missing', (t) => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'boss-migration-missing-')
+  );
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(directory, '001_foundation_database.sql'), '');
+
+  assert.throws(
+    () => listMigrationFiles(directory, fs, [
+      '001_foundation_database.sql',
+      '002_distributed_bot_worker_indexes.sql'
+    ]),
+    /Missing approved database migration files: 002_distributed_bot_worker_indexes\.sql/
+  );
+});
+
+test('default migration allowlist contains all currently reviewed migrations', () => {
+  assert.equal(APPROVED_MIGRATION_FILES.length, 10);
+  assert.ok(APPROVED_MIGRATION_FILES.includes('20261118_bot_runtime_status.sql'));
+  assert.ok(APPROVED_MIGRATION_FILES.includes('20261119_bot_inbound_update_lease_owner.sql'));
+  assert.ok(APPROVED_MIGRATION_FILES.includes('20261119_bot_update_transport.sql'));
+  assert.equal(APPROVED_MIGRATION_FILES.includes('000_staging_bootstrap.sql'), false);
 });
 
 test('migration SQL wrapper is extracted without nested transaction commands', () => {
