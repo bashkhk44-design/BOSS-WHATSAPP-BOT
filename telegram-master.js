@@ -935,7 +935,7 @@ bot.callbackQuery(/^project:deploy:readiness:(\d+)$/, async (ctx) => {
 bot.callbackQuery(/^project:deploy:preflight:(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   try {
-    const release = await getReleaseCandidate(ctx.match[1]);
+    const release = await getReleaseCandidate(ctx.match[1], { role: 'manager', telegramUserId: ctx.from.id });
     if (!release) throw new Error('الإصدار غير موجود.');
 
     const authorizationResult = await pool.query(
