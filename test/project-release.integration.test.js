@@ -10,6 +10,8 @@ test('PostgreSQL release handoff enforces customer then manager approval and imm
   let projectId;
   const customerTelegramId = String(900000000 + Math.floor(Math.random() * 90000000));
   const managerTelegramId = '10001';
+  const previousManagerId = process.env.TELEGRAM_ADMIN_ID;
+  process.env.TELEGRAM_ADMIN_ID = managerTelegramId;
 
   try {
     pool = require('../db').pool;
@@ -192,5 +194,7 @@ test('PostgreSQL release handoff enforces customer then manager approval and imm
     if (projectId) await pool.query('DELETE FROM client_projects WHERE id = $1', [projectId]);
     if (clientId) await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
     await pool.end();
+    if (previousManagerId === undefined) delete process.env.TELEGRAM_ADMIN_ID;
+    else process.env.TELEGRAM_ADMIN_ID = previousManagerId;
   }
 });
