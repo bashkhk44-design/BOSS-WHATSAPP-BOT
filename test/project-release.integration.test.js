@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 let pool;
-const { buildReleaseReport, createReleaseCandidate, decideRelease, authorizeDeployment, initProjectReleaseDatabase } = require('../project-release');
+const { buildReleaseReport, createReleaseCandidate, getReleaseCandidate, decideRelease, authorizeDeployment, initProjectReleaseDatabase } = require('../project-release');
 
 test('PostgreSQL release handoff enforces customer then manager approval and immutable artifact', { skip: !process.env.DATABASE_URL }, async () => {
   let clientId;
@@ -117,6 +117,28 @@ test('PostgreSQL release handoff enforces customer then manager approval and imm
     });
 
     assert.equal(candidate.status, 'awaiting_customer');
+    const customerRelease = await getReleaseCandidate(candidate.id, {
+      role: 'customer',
+      telegramUserId: customerTelegramId
+    });
+    assert.equal(customerRelease.id, candidate.id);
+    assert.equal(await getReleaseCandidate(candidate.id, {
+      role: 'customer',
+      telegramUserId: '999999999'
+    }), null);
+    await assert.rejects(
+      getReleaseCandidate(candidate.id, { role: 'manager', telegramUserId: '999999999' }),
+      /غير مصرح/
+    );
+    await assert.rejects(
+      decideRelease({
+        releaseId: candidate.id,
+        role: 'manager',
+        telegramUserId: '999999999',
+        decision: 'approved'
+      }),
+      /غير مصرح/
+    );
     const duplicateCandidate = await createReleaseCandidate({
       project: releaseProject,
       designJobId,
