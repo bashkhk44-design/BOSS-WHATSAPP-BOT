@@ -632,7 +632,7 @@ bot.callbackQuery(/^project:design:(\d+)$/, async (ctx) => {
       return ctx.reply('⏳ تصميم هذا المشروع قيد التنفيذ بالفعل.');
     }
 
-    const claimed = await markProjectAiJobRunning(job.id);
+    const claimed = await markProjectAiJobRunning(job.id, { adminTelegramId: ctx.from.id });
     if (!claimed) {
       return ctx.reply('المهمة قيد المعالجة أو تغيرت حالتها. حاول التحقق لاحقاً.');
     }
@@ -652,7 +652,7 @@ bot.callbackQuery(/^project:design:(\d+)$/, async (ctx) => {
       }
     } catch (error) {
       try {
-        await failProjectAiJob(job.id, error.message);
+        await failProjectAiJob(job.id, error.message, { adminTelegramId: ctx.from.id });
       } catch (dbError) {
         console.error('DESIGN JOB FAILURE SAVE ERROR:', dbError.message);
       }
