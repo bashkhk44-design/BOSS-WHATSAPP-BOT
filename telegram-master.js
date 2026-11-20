@@ -172,12 +172,22 @@ function menu() {
 }
 
 async function getBots() {
+  // to_jsonb keeps the legacy bot list usable before ownership migration 001
+  // adds client_id/project_id to telegram_bots.
   const result = await pool.query(`
-    SELECT b.id,b.name,b.username,b.active,b.client_id,b.project_id,
-           c.first_name AS client_first_name,c.telegram_username AS client_username,p.name AS project_name
+    SELECT b.id,b.name,b.username,b.active,
+           (to_jsonb(b) ? 'client_id') AS assignment_schema_ready,
+           NULLIF(to_jsonb(b)->>'client_id','')::bigint AS client_id,
+           NULLIF(to_jsonb(b)->>'project_id','')::bigint AS project_id,
+           c.first_name AS client_first_name,
+           c.telegram_username AS client_username,
+           p.name AS project_name
     FROM telegram_bots b
-    LEFT JOIN clients c ON c.id=b.client_id
-    LEFT JOIN client_projects p ON p.id=b.project_id AND p.client_id=b.client_id
+    LEFT JOIN clients c
+      ON c.id = NULLIF(to_jsonb(b)->>'client_id','')::bigint
+    LEFT JOIN client_projects p
+      ON p.id = NULLIF(to_jsonb(b)->>'project_id','')::bigint
+     AND p.client_id = NULLIF(to_jsonb(b)->>'client_id','')::bigint
     ORDER BY b.id DESC
   `);
   return result.rows;
@@ -286,7 +296,9 @@ async function showBots(ctx, requestedPage = 0) {
       '\\nالعميل: ' + (b.client_id ? (b.client_first_name || b.client_username || ('#'+b.client_id)) : 'غير مربوط') +
       ' | المشروع: ' + (b.project_name || 'غير محدد')
     );
-    keyboard.text('🔗 ربط بعميل/مشروع','bot:assign:'+b.id).row();
+    if (b.assignment_schema_ready) {
+      keyboard.text('🔗 ربط بعميل/مشروع','bot:assign:'+b.id).row();
+    }
     if (b.active) {
       keyboard.text('⏹ #' + b.id, 'bot:stop:' + b.id)
         .text('🔄', 'bot:restart:' + b.id).row();
