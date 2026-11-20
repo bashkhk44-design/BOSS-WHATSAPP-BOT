@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { assertAuthorizedManager, assertTelegramUserId } = require('./project-authorization');
 function getPool() { return require('./db').pool; }
 
 const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024;
@@ -358,7 +359,8 @@ async function getReleaseCandidate(releaseId) {
     JOIN client_projects p ON p.id = r.project_id
     JOIN clients c ON c.id = p.client_id
     WHERE r.id = $1
-  `, [releaseId]);
+      AND ($2::text = 'manager' OR c.telegram_user_id = $3)
+  `, [releaseId, role, String(telegramUserId)]);
   return result.rows[0] || null;
 }
 
@@ -369,6 +371,9 @@ async function decideRelease({ releaseId, role, telegramUserId, decision }) {
       !/^\d+$/.test(String(releaseId || ''))) {
     throw new Error('بيانات قرار الإصدار غير صالحة.');
   }
+
+  if (role === 'manager') assertAuthorizedManager(telegramUserId);
+  else assertTelegramUserId(telegramUserId);
 
   const client = await getPool().connect();
   try {
