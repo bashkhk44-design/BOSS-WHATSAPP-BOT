@@ -23,7 +23,9 @@ const runtimeDependencies = options.dependencies || (() => {
 
 const {
   Bot, Keyboard, InlineKeyboard, isPrivateAdmin,
-  pool, verifyDatabaseSchema, insertTelegramBot, acquireTelegramRuntimeLock,
+  pool, verifyDatabaseSchema, insertTelegramBot,
+  getBotAssignmentClients, getBotAssignmentProjects, assignTelegramBotToProject,
+  acquireTelegramRuntimeLock,
   isTelegramRuntimeLockHeld, releaseTelegramRuntimeLock, setRuntimeLockFailureHandler,
   startBotRuntime, stopBotRuntime, startBotById, stopBotById,
   getRunningBotCount, getBotRuntimeStatus,
@@ -170,10 +172,35 @@ function menu() {
 }
 
 async function getBots() {
-  const result = await pool.query(
-    'SELECT id, name, username, active FROM telegram_bots ORDER BY id DESC'
-  );
+  const result = await pool.query(`
+    SELECT b.id,b.name,b.username,b.active,b.client_id,b.project_id,
+           c.first_name AS client_first_name,c.telegram_username AS client_username,p.name AS project_name
+    FROM telegram_bots b
+    LEFT JOIN clients c ON c.id=b.client_id
+    LEFT JOIN client_projects p ON p.id=b.project_id AND p.client_id=b.client_id
+    ORDER BY b.id DESC
+  `);
   return result.rows;
+}
+async function showBotAssignmentClients(ctx,botId,page=0) {
+  const rows=await getBotAssignmentClients({limit:8,offset:page*8});
+  if(!rows.length)return ctx.editMessageText(page?'لا توجد نتائج إضافية.':'لا يوجد عملاء مسجلون.');
+  const kb=new InlineKeyboard();
+  for(const c of rows)kb.text(String(c.display_name||('عميل #'+c.id)).slice(0,50),'bot:assign-client:'+botId+':'+c.id).row();
+  if(page>0)kb.text('السابق','bot:assign-clients:'+botId+':'+(page-1));
+  if(rows.length===8)kb.text('التالي','bot:assign-clients:'+botId+':'+(page+1));
+  kb.row().text('إلغاء','bots:page:0');
+  return ctx.editMessageText('اختر العميل لربطه بالبوت #'+botId,{reply_markup:kb});
+}
+async function showBotAssignmentProjects(ctx,botId,clientId,page=0) {
+  const rows=await getBotAssignmentProjects({clientId,limit:8,offset:page*8});
+  if(!rows.length)return ctx.editMessageText(page?'لا توجد نتائج إضافية.':'هذا العميل لا يملك مشاريع.');
+  const kb=new InlineKeyboard();
+  for(const p of rows)kb.text(String(p.name||('مشروع #'+p.id)).slice(0,48),'bot:assign-project:'+botId+':'+clientId+':'+p.id).row();
+  if(page>0)kb.text('السابق','bot:assign-projects:'+botId+':'+clientId+':'+(page-1));
+  if(rows.length===8)kb.text('التالي','bot:assign-projects:'+botId+':'+clientId+':'+(page+1));
+  kb.row().text('رجوع للعملاء','bot:assign:'+botId);
+  return ctx.editMessageText('اختر مشروع العميل #'+clientId+' للبوت #'+botId,{reply_markup:kb});
 }
 
 async function getExternalBotRuntimeStatuses(botIds) {
@@ -255,8 +282,11 @@ async function showBots(ctx, requestedPage = 0) {
       (b.username ? ' (@' + b.username + ')' : '') +
       '\n' + (statusLabels[runtimeStatus] || runtimeStatus) +
       (CUSTOMER_BOT_WORKER_MODE && external?.worker_id ? ' | العامل: ' + external.worker_id.slice(0, 8) : '') +
-      ' | ' + (b.active ? 'مفعّل' : 'معطّل')
+      ' | ' + (b.active ? 'مفعّل' : 'معطّل') +
+      '\\nالعميل: ' + (b.client_id ? (b.client_first_name || b.client_username || ('#'+b.client_id)) : 'غير مربوط') +
+      ' | المشروع: ' + (b.project_name || 'غير محدد')
     );
+    keyboard.text('🔗 ربط بعميل/مشروع','bot:assign:'+b.id).row();
     if (b.active) {
       keyboard.text('⏹ #' + b.id, 'bot:stop:' + b.id)
         .text('🔄', 'bot:restart:' + b.id).row();
@@ -330,6 +360,20 @@ bot.callbackQuery(/^bots:page:(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   await ctx.answerCallbackQuery();
   return showBots(ctx, Number(ctx.match[1]));
+});
+
+bot.callbackQuery(/^bot:assign:(\d+)$/,async(ctx)=>{if(!isAdmin(ctx))return ctx.answerCallbackQuery({text:'غير مصرح لك.'});await ctx.answerCallbackQuery();return showBotAssignmentClients(ctx,Number(ctx.match[1]));});
+bot.callbackQuery(/^bot:assign-clients:(\d+):(\d+)$/,async(ctx)=>{if(!isAdmin(ctx))return ctx.answerCallbackQuery({text:'غير مصرح لك.'});await ctx.answerCallbackQuery();return showBotAssignmentClients(ctx,Number(ctx.match[1]),Number(ctx.match[2]));});
+bot.callbackQuery(/^bot:assign-client:(\d+):(\d+)$/,async(ctx)=>{if(!isAdmin(ctx))return ctx.answerCallbackQuery({text:'غير مصرح لك.'});await ctx.answerCallbackQuery();return showBotAssignmentProjects(ctx,Number(ctx.match[1]),Number(ctx.match[2]));});
+bot.callbackQuery(/^bot:assign-projects:(\d+):(\d+):(\d+)$/,async(ctx)=>{if(!isAdmin(ctx))return ctx.answerCallbackQuery({text:'غير مصرح لك.'});await ctx.answerCallbackQuery();return showBotAssignmentProjects(ctx,Number(ctx.match[1]),Number(ctx.match[2]),Number(ctx.match[3]));});
+bot.callbackQuery(/^bot:assign-project:(\d+):(\d+):(\d+)$/,async(ctx)=>{
+ if(!isAdmin(ctx))return ctx.answerCallbackQuery({text:'غير مصرح لك.'});
+ const [botId,clientId,projectId]=ctx.match.slice(1).map(Number);
+ await ctx.answerCallbackQuery({text:'جارٍ التحقق والحفظ...'});
+ try { const a=await assignTelegramBotToProject({botId,clientId,projectId});
+ return ctx.editMessageText('تم ربط البوت #'+a.id+' بالعميل #'+a.client_id+' والمشروع #'+a.project_id,{reply_markup:new InlineKeyboard().text('العودة للبوتات','bots:page:0')});}
+ catch(e){const msg=e.code==='PROJECT_NOT_OWNED_BY_CLIENT'?'المشروع لا يتبع العميل المختار؛ لم يتم الحفظ.':e.code==='BOT_NOT_FOUND'?'البوت غير موجود.':'تعذر إتمام الربط؛ لم يتم الحفظ.';
+ return ctx.editMessageText('❌ '+msg,{reply_markup:new InlineKeyboard().text('إعادة المحاولة','bot:assign:'+botId)});}
 });
 
 bot.callbackQuery(/^bot:(start|stop|restart):(\d+)$/, async (ctx) => {
