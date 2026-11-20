@@ -29,6 +29,12 @@ function createPlatformBotUpdateHandler({
     if (!Number.isInteger(activeLeaseSeconds) || activeLeaseSeconds < 10) {
       throw new RangeError('worker leaseSeconds must be at least 10');
     }
+    const heartbeatIntervalMs = context.leaseRenewalIntervalMs === undefined
+      ? Math.max(1000, Math.floor(activeLeaseSeconds * 1000 / 3))
+      : context.leaseRenewalIntervalMs;
+    if (!Number.isInteger(heartbeatIntervalMs) || heartbeatIntervalMs < 100) {
+      throw new RangeError('leaseRenewalIntervalMs must be at least 100ms');
+    }
 
     if (!expectedJobType || job.job_type !== expectedJobType ||
         !Number.isSafeInteger(updateId) || updateId < 0 ||
@@ -81,12 +87,6 @@ function createPlatformBotUpdateHandler({
     let inboxLeaseLost = false;
     let inboxHeartbeatInFlight = null;
     let inboxHeartbeatTimer = null;
-    const heartbeatIntervalMs = context.leaseRenewalIntervalMs === undefined
-      ? Math.max(1000, Math.floor(activeLeaseSeconds * 1000 / 3))
-      : context.leaseRenewalIntervalMs;
-    if (!Number.isInteger(heartbeatIntervalMs) || heartbeatIntervalMs < 100) {
-      throw new RangeError('leaseRenewalIntervalMs must be at least 100ms');
-    }
     const isLeaseLost = () => inboxLeaseLost ||
       (typeof context.isLeaseLost === 'function' && context.isLeaseLost());
 
