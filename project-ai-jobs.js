@@ -104,8 +104,10 @@ async function createProjectAiJob({
 
 async function getLatestCompletedProjectAiJob({
   projectId,
-  jobType = 'analysis'
+  jobType = 'analysis',
+  adminTelegramId
 }) {
+  assertAuthorizedManager(adminTelegramId);
   const result = await pool.query(`
     SELECT j.*
     FROM project_ai_jobs j
@@ -130,7 +132,8 @@ async function getLatestCompletedProjectAiJob({
   return result.rows[0] || null;
 }
 
-async function getProjectAiJobAttempts(jobId) {
+async function getProjectAiJobAttempts(jobId, { adminTelegramId } = {}) {
+  assertAuthorizedManager(adminTelegramId);
   const result = await pool.query(`
     SELECT *
     FROM project_ai_job_attempts
@@ -141,7 +144,8 @@ async function getProjectAiJobAttempts(jobId) {
   return result.rows;
 }
 
-async function startProjectAiJobAttempt(jobId, { allowCompleted = false } = {}) {
+async function startProjectAiJobAttempt(jobId, { allowCompleted = false, adminTelegramId } = {}) {
+  assertAuthorizedManager(adminTelegramId);
   const client = await pool.connect();
 
   try {
@@ -204,7 +208,8 @@ async function startProjectAiJobAttempt(jobId, { allowCompleted = false } = {}) 
   }
 }
 
-async function completeProjectAiJobAttempt(attemptId, jobId, result) {
+async function completeProjectAiJobAttempt(attemptId, jobId, result, { adminTelegramId } = {}) {
+  assertAuthorizedManager(adminTelegramId);
   const client = await pool.connect();
 
   try {
@@ -249,7 +254,8 @@ async function completeProjectAiJobAttempt(attemptId, jobId, result) {
   }
 }
 
-async function failProjectAiJobAttempt(attemptId, jobId, error) {
+async function failProjectAiJobAttempt(attemptId, jobId, error, { adminTelegramId } = {}) {
+  assertAuthorizedManager(adminTelegramId);
   const message = String(error || 'خطأ غير معروف').slice(0, 3000);
   const client = await pool.connect();
 
@@ -293,7 +299,8 @@ async function failProjectAiJobAttempt(attemptId, jobId, error) {
 }
 
 /* الوظائف القديمة محفوظة للتوافق مع الأجزاء الأخرى من النظام. */
-async function markProjectAiJobRunning(jobId) {
+async function markProjectAiJobRunning(jobId, { adminTelegramId } = {}) {
+  assertAuthorizedManager(adminTelegramId);
   const result = await pool.query(`
     UPDATE project_ai_jobs
     SET status = 'running',
@@ -308,7 +315,8 @@ async function markProjectAiJobRunning(jobId) {
   return result.rows[0] || null;
 }
 
-async function completeProjectAiJob(jobId, analysis) {
+async function completeProjectAiJob(jobId, analysis, { adminTelegramId } = {}) {
+  assertAuthorizedManager(adminTelegramId);
   const result = await pool.query(`
     UPDATE project_ai_jobs
     SET status = 'completed',
@@ -323,7 +331,8 @@ async function completeProjectAiJob(jobId, analysis) {
   return result.rows[0] || null;
 }
 
-async function failProjectAiJob(jobId, error) {
+async function failProjectAiJob(jobId, error, { adminTelegramId } = {}) {
+  assertAuthorizedManager(adminTelegramId);
   const result = await pool.query(`
     UPDATE project_ai_jobs
     SET status = 'failed',
@@ -336,7 +345,8 @@ async function failProjectAiJob(jobId, error) {
   return result.rows[0] || null;
 }
 
-async function recoverInterruptedProjectAiJobs() {
+async function recoverInterruptedProjectAiJobs({ adminTelegramId } = {}) {
+  assertAuthorizedManager(adminTelegramId);
   const client = await pool.connect();
 
   try {
