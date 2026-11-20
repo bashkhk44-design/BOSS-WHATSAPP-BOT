@@ -471,7 +471,7 @@ test('platform bot enqueue rolls back a new inbox row when its matching job is a
     },
     release() {}
   };
-  const result = await enqueuePlatformBotUpdate({ connect: async () => client }, {
+  const result = await enqueuePlatformBotUpdate({ totalCount: 0, connect: async () => client }, {
     botIdentity: 'master',
     update: { update_id: 890, message: { text: '/already-done' } }
   });
