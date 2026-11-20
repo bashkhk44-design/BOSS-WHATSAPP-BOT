@@ -46,12 +46,19 @@ function makeClientClass({ duplicate = false, failQuery = false } = {}) {
     async query(sql, params) {
       state.queries.push({ sql, params });
       if (failQuery) throw new Error('database unavailable');
+      if (/^\s*(BEGIN|COMMIT|ROLLBACK)\s*$/i.test(sql)) return { rowCount: 0, rows: [] };
       if (/^\s*SELECT\s+1\s+AS\s+probe/i.test(sql)) {
         return { rowCount: 1, rows: [{ probe: 1 }] };
       }
-      return duplicate
-        ? { rowCount: 0, rows: [] }
-        : { rowCount: 1, rows: [{ id: 10, job_id: 20 }] };
+      if (sql.includes('INSERT INTO platform_bot_inbound_updates')) {
+        return duplicate
+          ? { rowCount: 0, rows: [] }
+          : { rowCount: 1, rows: [{ id: 10 }] };
+      }
+      if (sql.includes('INSERT INTO platform_jobs')) {
+        return { rowCount: 1, rows: [{ id: 20 }] };
+      }
+      throw new Error('unexpected SQL: ' + sql);
     }
     async end() { state.ended += 1; }
   }
@@ -73,16 +80,20 @@ test('Cloudflare Worker authenticates platform identities and atomically enqueue
   assert.equal(state.config.connectionTimeoutMillis, 5000);
   assert.equal(state.config.query_timeout, 10000);
   assert.equal(state.config.statement_timeout, 10000);
-  assert.equal(state.queries[0].params[0], 'master');
-  assert.match(state.queries[0].sql, /platform_bot_inbound_updates/);
-  assert.match(state.queries[0].sql, /INSERT INTO platform_jobs/);
+  assert.equal(state.queries[0].sql, 'BEGIN');
+  assert.equal(state.queries[1].params[0], 'master');
+  assert.match(state.queries[1].sql, /platform_bot_inbound_updates/);
+  assert.match(state.queries[2].sql, /INSERT INTO platform_jobs/);
+  assert.equal(state.queries[3].sql, 'COMMIT');
 
   const intake = await handler(makeRequest('/telegram/platform/intake', {
     secret: env.INTAKE_WEBHOOK_SECRET,
     body: JSON.stringify({ update_id: 78 })
   }), env);
   assert.equal(intake.status, 200);
-  assert.equal(state.queries[1].params[0], 'intake');
+  assert.equal(state.queries[5].params[0], 'intake');
+  assert.equal(state.queries[4].sql, 'BEGIN');
+  assert.equal(state.queries[7].sql, 'COMMIT');
   assert.equal(state.constructed, 2);
   assert.equal(state.ended, 2);
 });

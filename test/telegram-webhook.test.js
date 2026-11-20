@@ -216,8 +216,10 @@ test('platform webhook routes authenticate master and intake with independent se
   });
   assert.equal(master.status, 200);
   assert.equal(master.body.queued, true);
-  assert.equal(queries[0].params[0], 'master');
-  assert.match(queries[0].sql, /platform_bot_inbound_updates/);
+  assert.equal(queries.length, 4);
+  assert.equal(queries[1].params[0], 'master');
+  assert.match(queries[1].sql, /platform_bot_inbound_updates/);
+  assert.match(queries[2].sql, /INSERT INTO platform_jobs/);
 
   const intake = await request(port, {
     path: '/telegram/platform/intake',
@@ -225,7 +227,8 @@ test('platform webhook routes authenticate master and intake with independent se
     body: update
   });
   assert.equal(intake.status, 200);
-  assert.equal(queries[1].params[0], 'intake');
+  assert.equal(queries.length, 8);
+  assert.equal(queries[5].params[0], 'intake');
   assert.deepEqual(resolved, ['master', 'master', 'intake']);
 });
 

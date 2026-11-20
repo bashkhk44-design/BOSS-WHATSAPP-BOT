@@ -386,23 +386,28 @@ test('Telegram update queue rejects coerced or malformed update identifiers befo
 });
 
 
-test('platform bot update enqueue creates identity-scoped durable jobs and deduplicates retries', async () => {
+test('platform bot update enqueue creates inbox and durable job in one transaction and deduplicates retries', async () => {
   const calls = [];
-  let duplicate = false;
-  const pool = {
+  let inboxDuplicate = false;
+  const client = {
     async query(sql, params) {
       calls.push({ sql, params });
-      return duplicate
-        ? { rowCount: 0, rows: [] }
-        : { rowCount: 1, rows: [{ id: 51, job_id: 61 }] };
-    }
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rowCount: 0, rows: [] };
+      if (sql.includes('INSERT INTO platform_bot_inbound_updates')) {
+        return inboxDuplicate ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ id: 51 }] };
+      }
+      if (sql.includes('INSERT INTO platform_jobs')) return { rowCount: 1, rows: [{ id: 61 }] };
+      assert.fail('unexpected SQL: ' + sql);
+    },
+    release() {}
   };
+  const pool = { totalCount: 0, async connect() { return client; } };
 
   const first = await enqueuePlatformBotUpdate(pool, {
     botIdentity: 'master',
     update: { update_id: 888, message: { text: '/start' } }
   });
-  duplicate = true;
+  inboxDuplicate = true;
   const repeated = await enqueuePlatformBotUpdate(pool, {
     botIdentity: 'master',
     update: { update_id: 888, message: { text: '/start' } }
@@ -410,11 +415,68 @@ test('platform bot update enqueue creates identity-scoped durable jobs and dedup
 
   assert.deepEqual(first, { accepted: true, duplicate: false, id: 51, jobId: 61 });
   assert.deepEqual(repeated, { accepted: true, duplicate: true, id: null, jobId: null });
-  assert.match(calls[0].sql, /INSERT INTO platform_bot_inbound_updates/);
-  assert.match(calls[0].sql, /INSERT INTO platform_jobs/);
-  assert.match(calls[0].sql, /ON CONFLICT \(bot_identity, update_id\) DO NOTHING/);
-  assert.deepEqual(calls[0].params.slice(0, 2), ['master', 888]);
-  assert.equal(calls[0].params[3], 'telegram.master.update');
+  assert.equal(calls[0].sql, 'BEGIN');
+  assert.match(calls[1].sql, /INSERT INTO platform_bot_inbound_updates/);
+  assert.match(calls[2].sql, /INSERT INTO platform_jobs/);
+  assert.equal(calls[3].sql, 'COMMIT');
+  assert.match(calls[1].sql, /ON CONFLICT \(bot_identity, update_id\) DO NOTHING/);
+  assert.deepEqual(calls[1].params.slice(0, 2), ['master', 888]);
+  assert.equal(calls[2].params[0], 'telegram.master.update');
+  assert.equal(calls[4].sql, 'BEGIN');
+  assert.equal(calls[6].sql, 'COMMIT');
+});
+
+test('platform bot enqueue links a new inbox row to an existing active idempotent queue job', async () => {
+  const calls = [];
+  const client = {
+    async query(sql) {
+      calls.push(sql);
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rowCount: 0, rows: [] };
+      if (sql.includes('INSERT INTO platform_bot_inbound_updates')) return { rowCount: 1, rows: [{ id: 52 }] };
+      if (sql.includes('INSERT INTO platform_jobs')) return { rowCount: 0, rows: [] };
+      if (sql.includes('SELECT id, status, payload')) {
+        return { rowCount: 1, rows: [{
+          id: 62, status: 'queued',
+          payload: { botIdentity: 'intake', updateId: 889 }
+        }] };
+      }
+      assert.fail('unexpected SQL: ' + sql);
+    },
+    release() {}
+  };
+  const result = await enqueuePlatformBotUpdate({ totalCount: 0, connect: async () => client }, {
+    botIdentity: 'intake',
+    update: { update_id: 889, message: { text: '/start' } }
+  });
+  assert.deepEqual(result, { accepted: true, duplicate: false, id: 52, jobId: 62 });
+  assert.deepEqual(calls, ['BEGIN', calls[1], calls[2], calls[3], 'COMMIT']);
+  assert.match(calls[3], /FOR UPDATE/);
+});
+
+test('platform bot enqueue rolls back a new inbox row when its matching job is already terminal', async () => {
+  const calls = [];
+  const client = {
+    async query(sql) {
+      calls.push(sql);
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rowCount: 0, rows: [] };
+      if (sql.includes('INSERT INTO platform_bot_inbound_updates')) return { rowCount: 1, rows: [{ id: 53 }] };
+      if (sql.includes('INSERT INTO platform_jobs')) return { rowCount: 0, rows: [] };
+      if (sql.includes('SELECT id, status, payload')) {
+        return { rowCount: 1, rows: [{
+          id: 63, status: 'completed',
+          payload: { botIdentity: 'master', updateId: 890 }
+        }] };
+      }
+      assert.fail('unexpected SQL: ' + sql);
+    },
+    release() {}
+  };
+  const result = await enqueuePlatformBotUpdate({ totalCount: 0, connect: async () => client }, {
+    botIdentity: 'master',
+    update: { update_id: 890, message: { text: '/already-done' } }
+  });
+  assert.deepEqual(result, { accepted: true, duplicate: true, id: null, jobId: 63 });
+  assert.equal(calls.at(-1), 'ROLLBACK');
 });
 
 test('platform bot update enqueue rejects customer identities and malformed Telegram updates', async () => {
