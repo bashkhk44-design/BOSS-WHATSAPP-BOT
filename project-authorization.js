@@ -1,6 +1,15 @@
 'use strict';
 
-function assertAuthorizedManager(telegramUserId, configuredManagerId = process.env.TELEGRAM_ADMIN_ID) {
+let configuredManagerId = process.env.TELEGRAM_ADMIN_ID;
+
+function configureManagerIdentity(managerTelegramId) {
+  if (!/^\\d+$/.test(String(managerTelegramId || ''))) {
+    throw new Error('إعداد معرّف المدير الرئيسي غير صالح.');
+  }
+  configuredManagerId = String(managerTelegramId);
+}
+
+function assertAuthorizedManager(telegramUserId, managerId = configuredManagerId || process.env.TELEGRAM_ADMIN_ID) {
   if (!/^\d+$/.test(String(telegramUserId || ''))) {
     throw new Error('معرّف المدير غير صالح.');
   }
@@ -17,4 +26,4 @@ function assertTelegramUserId(telegramUserId) {
   return true;
 }
 
-module.exports = { assertAuthorizedManager, assertTelegramUserId };
+module.exports = { configureManagerIdentity, assertAuthorizedManager, assertTelegramUserId };
