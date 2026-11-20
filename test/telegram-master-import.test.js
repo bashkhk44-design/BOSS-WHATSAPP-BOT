@@ -103,3 +103,31 @@ test('injected master webhook runtime handles updates without starting polling o
   assert.throws(() => webhook.handleUpdate({ update_id: 457 }), /stopped/);
   assert.equal(startCalls, 0);
 });
+
+
+test('bot assignment schema readiness follows the active PostgreSQL search path', async () => {
+  const { hasBotAssignmentSchema } = require('../telegram-master');
+  let statement = '';
+  const ready = await hasBotAssignmentSchema({
+    async query(sql) {
+      statement = sql;
+      return { rows: [{ ready: true }] };
+    }
+  });
+
+  assert.equal(ready, true);
+  assert.match(statement, /to_regclass\('telegram_bots'\)/);
+  assert.match(statement, /pg_attribute/);
+  assert.doesNotMatch(statement, /table_schema\s*=\s*'public'/);
+});
+
+test('bot assignment schema readiness is false when the active relation lacks required columns', async () => {
+  const { hasBotAssignmentSchema } = require('../telegram-master');
+  const ready = await hasBotAssignmentSchema({
+    async query() {
+      return { rows: [{ ready: false }] };
+    }
+  });
+
+  assert.equal(ready, false);
+});

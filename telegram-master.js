@@ -1,3 +1,20 @@
+async function hasBotAssignmentSchema(pool) {
+  if (!pool || typeof pool.query !== 'function') {
+    throw new TypeError('PostgreSQL pool is required');
+  }
+
+  const result = await pool.query(`
+    SELECT COALESCE(bool_and(attribute.attname IS NOT NULL), FALSE) AS ready
+    FROM (VALUES ('client_id'::name), ('project_id'::name)) AS required(column_name)
+    LEFT JOIN pg_attribute AS attribute
+      ON attribute.attrelid = to_regclass('telegram_bots')
+     AND attribute.attname = required.column_name
+     AND attribute.attnum > 0
+     AND NOT attribute.attisdropped
+  `);
+  return result.rows[0]?.ready === true;
+}
+
 function createMasterRuntime(options = {}) {
 const env = options.env || (typeof process !== 'undefined' ? process.env : {});
 const runtimeDependencies = options.dependencies || (() => {
@@ -192,19 +209,10 @@ async function getBots() {
   `);
   return result.rows;
 }
-async function hasBotAssignmentSchema() {
-  const result = await pool.query(`
-    SELECT COUNT(*)::int AS count
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'telegram_bots'
-      AND column_name IN ('client_id','project_id')
-  `);
-  return result.rows[0]?.count === 2;
-}
+
 
 async function showBotAssignmentClients(ctx,botId,page=0) {
-  if (!(await hasBotAssignmentSchema())) {
+  if (!(await hasBotAssignmentSchema(pool))) {
     return ctx.editMessageText('ميزة ربط البوتات غير مفعّلة بعد؛ يلزم تطبيق ترحيلة الملكية المعتمدة أولاً.');
   }
   const rows=await getBotAssignmentClients({limit:8,offset:page*8});
@@ -217,7 +225,7 @@ async function showBotAssignmentClients(ctx,botId,page=0) {
   return ctx.editMessageText('اختر العميل لربطه بالبوت #'+botId,{reply_markup:kb});
 }
 async function showBotAssignmentProjects(ctx,botId,clientId,page=0) {
-  if (!(await hasBotAssignmentSchema())) {
+  if (!(await hasBotAssignmentSchema(pool))) {
     return ctx.editMessageText('ميزة ربط البوتات غير مفعّلة بعد؛ يلزم تطبيق ترحيلة الملكية المعتمدة أولاً.');
   }
   const rows=await getBotAssignmentProjects({clientId,limit:8,offset:page*8});
@@ -397,7 +405,7 @@ bot.callbackQuery(/^bot:assign-client:(\d+):(\d+)$/,async(ctx)=>{if(!isAdmin(ctx
 bot.callbackQuery(/^bot:assign-projects:(\d+):(\d+):(\d+)$/,async(ctx)=>{if(!isAdmin(ctx))return ctx.answerCallbackQuery({text:'غير مصرح لك.'});await ctx.answerCallbackQuery();return showBotAssignmentProjects(ctx,Number(ctx.match[1]),Number(ctx.match[2]),Number(ctx.match[3]));});
 bot.callbackQuery(/^bot:assign-project:(\d+):(\d+):(\d+)$/,async(ctx)=>{
  if(!isAdmin(ctx))return ctx.answerCallbackQuery({text:'غير مصرح لك.'});
- if (!(await hasBotAssignmentSchema())) return ctx.answerCallbackQuery({text:'ميزة الربط غير مفعّلة قبل ترحيلة قاعدة البيانات.'});
+ if (!(await hasBotAssignmentSchema(pool))) return ctx.answerCallbackQuery({text:'ميزة الربط غير مفعّلة قبل ترحيلة قاعدة البيانات.'});
  const [botId,clientId,projectId]=ctx.match.slice(1).map(Number);
  await ctx.answerCallbackQuery({text:'جارٍ التحقق والحفظ...'});
  try { const a=await assignTelegramBotToProject({botId,clientId,projectId});
@@ -1689,7 +1697,7 @@ async function closeWebhookResources() {
 return { bot, start: startRuntime, shutdown, createWebhookRuntime, closeWebhookResources };
 }
 
-module.exports = { createMasterRuntime };
+module.exports = { createMasterRuntime, hasBotAssignmentSchema };
 
 if (require.main === module) {
   const runtime = createMasterRuntime();
