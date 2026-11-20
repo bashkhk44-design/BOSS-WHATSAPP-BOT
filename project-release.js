@@ -352,6 +352,9 @@ async function createReleaseCandidate({ project, designJobId, adminTelegramId, r
 
 async function getReleaseCandidate(releaseId, { role = 'manager', telegramUserId } = {}) {
   if (!/^\d+$/.test(String(releaseId || ''))) throw new Error('رقم الإصدار غير صالح.');
+  if (role === 'manager') assertAuthorizedManager(telegramUserId);
+  else if (role === 'customer') assertTelegramUserId(telegramUserId);
+  else throw new Error('صفة الوصول إلى الإصدار غير صالحة.');
   const result = await getPool().query(`
     SELECT r.*, p.name AS project_name,
            c.telegram_user_id AS customer_telegram_id
