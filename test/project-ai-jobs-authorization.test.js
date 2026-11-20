@@ -2,6 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+// The service module constructs a lazy PostgreSQL pool at import time.
+// A local placeholder is enough for authorization tests; no connection is opened.
+process.env.DATABASE_URL ||= 'postgres://test:test@127.0.0.1:5432/boss_test';
+
 const { configureManagerIdentity } = require('../project-authorization');
 const jobs = require('../project-ai-jobs');
 
