@@ -172,17 +172,41 @@ function menu() {
 }
 
 async function getBots() {
+  // to_jsonb keeps the legacy bot list usable before ownership migration 001
+  // adds client_id/project_id to telegram_bots.
   const result = await pool.query(`
-    SELECT b.id,b.name,b.username,b.active,b.client_id,b.project_id,
-           c.first_name AS client_first_name,c.telegram_username AS client_username,p.name AS project_name
+    SELECT b.id,b.name,b.username,b.active,
+           (to_jsonb(b) ? 'client_id') AS assignment_schema_ready,
+           NULLIF(to_jsonb(b)->>'client_id','')::bigint AS client_id,
+           NULLIF(to_jsonb(b)->>'project_id','')::bigint AS project_id,
+           c.first_name AS client_first_name,
+           c.telegram_username AS client_username,
+           p.name AS project_name
     FROM telegram_bots b
-    LEFT JOIN clients c ON c.id=b.client_id
-    LEFT JOIN client_projects p ON p.id=b.project_id AND p.client_id=b.client_id
+    LEFT JOIN clients c
+      ON c.id = NULLIF(to_jsonb(b)->>'client_id','')::bigint
+    LEFT JOIN client_projects p
+      ON p.id = NULLIF(to_jsonb(b)->>'project_id','')::bigint
+     AND p.client_id = NULLIF(to_jsonb(b)->>'client_id','')::bigint
     ORDER BY b.id DESC
   `);
   return result.rows;
 }
+async function hasBotAssignmentSchema() {
+  const result = await pool.query(`
+    SELECT COUNT(*)::int AS count
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'telegram_bots'
+      AND column_name IN ('client_id','project_id')
+  `);
+  return result.rows[0]?.count === 2;
+}
+
 async function showBotAssignmentClients(ctx,botId,page=0) {
+  if (!(await hasBotAssignmentSchema())) {
+    return ctx.editMessageText('ميزة ربط البوتات غير مفعّلة بعد؛ يلزم تطبيق ترحيلة الملكية المعتمدة أولاً.');
+  }
   const rows=await getBotAssignmentClients({limit:8,offset:page*8});
   if(!rows.length)return ctx.editMessageText(page?'لا توجد نتائج إضافية.':'لا يوجد عملاء مسجلون.');
   const kb=new InlineKeyboard();
@@ -193,6 +217,9 @@ async function showBotAssignmentClients(ctx,botId,page=0) {
   return ctx.editMessageText('اختر العميل لربطه بالبوت #'+botId,{reply_markup:kb});
 }
 async function showBotAssignmentProjects(ctx,botId,clientId,page=0) {
+  if (!(await hasBotAssignmentSchema())) {
+    return ctx.editMessageText('ميزة ربط البوتات غير مفعّلة بعد؛ يلزم تطبيق ترحيلة الملكية المعتمدة أولاً.');
+  }
   const rows=await getBotAssignmentProjects({clientId,limit:8,offset:page*8});
   if(!rows.length)return ctx.editMessageText(page?'لا توجد نتائج إضافية.':'هذا العميل لا يملك مشاريع.');
   const kb=new InlineKeyboard();
@@ -286,7 +313,9 @@ async function showBots(ctx, requestedPage = 0) {
       '\\nالعميل: ' + (b.client_id ? (b.client_first_name || b.client_username || ('#'+b.client_id)) : 'غير مربوط') +
       ' | المشروع: ' + (b.project_name || 'غير محدد')
     );
-    keyboard.text('🔗 ربط بعميل/مشروع','bot:assign:'+b.id).row();
+    if (b.assignment_schema_ready) {
+      keyboard.text('🔗 ربط بعميل/مشروع','bot:assign:'+b.id).row();
+    }
     if (b.active) {
       keyboard.text('⏹ #' + b.id, 'bot:stop:' + b.id)
         .text('🔄', 'bot:restart:' + b.id).row();
@@ -368,6 +397,7 @@ bot.callbackQuery(/^bot:assign-client:(\d+):(\d+)$/,async(ctx)=>{if(!isAdmin(ctx
 bot.callbackQuery(/^bot:assign-projects:(\d+):(\d+):(\d+)$/,async(ctx)=>{if(!isAdmin(ctx))return ctx.answerCallbackQuery({text:'غير مصرح لك.'});await ctx.answerCallbackQuery();return showBotAssignmentProjects(ctx,Number(ctx.match[1]),Number(ctx.match[2]),Number(ctx.match[3]));});
 bot.callbackQuery(/^bot:assign-project:(\d+):(\d+):(\d+)$/,async(ctx)=>{
  if(!isAdmin(ctx))return ctx.answerCallbackQuery({text:'غير مصرح لك.'});
+ if (!(await hasBotAssignmentSchema())) return ctx.answerCallbackQuery({text:'ميزة الربط غير مفعّلة قبل ترحيلة قاعدة البيانات.'});
  const [botId,clientId,projectId]=ctx.match.slice(1).map(Number);
  await ctx.answerCallbackQuery({text:'جارٍ التحقق والحفظ...'});
  try { const a=await assignTelegramBotToProject({botId,clientId,projectId});
