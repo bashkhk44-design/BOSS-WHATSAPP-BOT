@@ -192,7 +192,21 @@ async function getBots() {
   `);
   return result.rows;
 }
+async function hasBotAssignmentSchema() {
+  const result = await pool.query(`
+    SELECT COUNT(*)::int AS count
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'telegram_bots'
+      AND column_name IN ('client_id','project_id')
+  `);
+  return result.rows[0]?.count === 2;
+}
+
 async function showBotAssignmentClients(ctx,botId,page=0) {
+  if (!(await hasBotAssignmentSchema())) {
+    return ctx.editMessageText('ميزة ربط البوتات غير مفعّلة بعد؛ يلزم تطبيق ترحيلة الملكية المعتمدة أولاً.');
+  }
   const rows=await getBotAssignmentClients({limit:8,offset:page*8});
   if(!rows.length)return ctx.editMessageText(page?'لا توجد نتائج إضافية.':'لا يوجد عملاء مسجلون.');
   const kb=new InlineKeyboard();
@@ -203,6 +217,9 @@ async function showBotAssignmentClients(ctx,botId,page=0) {
   return ctx.editMessageText('اختر العميل لربطه بالبوت #'+botId,{reply_markup:kb});
 }
 async function showBotAssignmentProjects(ctx,botId,clientId,page=0) {
+  if (!(await hasBotAssignmentSchema())) {
+    return ctx.editMessageText('ميزة ربط البوتات غير مفعّلة بعد؛ يلزم تطبيق ترحيلة الملكية المعتمدة أولاً.');
+  }
   const rows=await getBotAssignmentProjects({clientId,limit:8,offset:page*8});
   if(!rows.length)return ctx.editMessageText(page?'لا توجد نتائج إضافية.':'هذا العميل لا يملك مشاريع.');
   const kb=new InlineKeyboard();
@@ -380,6 +397,7 @@ bot.callbackQuery(/^bot:assign-client:(\d+):(\d+)$/,async(ctx)=>{if(!isAdmin(ctx
 bot.callbackQuery(/^bot:assign-projects:(\d+):(\d+):(\d+)$/,async(ctx)=>{if(!isAdmin(ctx))return ctx.answerCallbackQuery({text:'غير مصرح لك.'});await ctx.answerCallbackQuery();return showBotAssignmentProjects(ctx,Number(ctx.match[1]),Number(ctx.match[2]),Number(ctx.match[3]));});
 bot.callbackQuery(/^bot:assign-project:(\d+):(\d+):(\d+)$/,async(ctx)=>{
  if(!isAdmin(ctx))return ctx.answerCallbackQuery({text:'غير مصرح لك.'});
+ if (!(await hasBotAssignmentSchema())) return ctx.answerCallbackQuery({text:'ميزة الربط غير مفعّلة قبل ترحيلة قاعدة البيانات.'});
  const [botId,clientId,projectId]=ctx.match.slice(1).map(Number);
  await ctx.answerCallbackQuery({text:'جارٍ التحقق والحفظ...'});
  try { const a=await assignTelegramBotToProject({botId,clientId,projectId});
