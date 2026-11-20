@@ -249,7 +249,9 @@ async function enqueueTelegramUpdate(pool, { botId, update }) {
 
 
 async function enqueuePlatformBotUpdate(pool, { botIdentity, update }) {
-  if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required');
+  if (!pool || typeof pool.connect !== 'function') {
+    throw new TypeError('PostgreSQL pool with connect() is required');
+  }
   if (!['master', 'intake'].includes(botIdentity)) {
     throw new TypeError('botIdentity must be master or intake');
   }
@@ -260,44 +262,87 @@ async function enqueuePlatformBotUpdate(pool, { botIdentity, update }) {
 
   const jobType = 'telegram.' + botIdentity + '.update';
   const idempotencyKey = jobType + ':' + update.update_id;
-  const result = await pool.query(`
-    WITH inserted AS (
+  const client = await pool.connect();
+  let transactionOpen = false;
+
+  try {
+    await client.query('BEGIN');
+    transactionOpen = true;
+
+    const inserted = await client.query(`
       INSERT INTO platform_bot_inbound_updates (bot_identity, update_id, payload)
       VALUES ($1, $2, $3::jsonb)
       ON CONFLICT (bot_identity, update_id) DO NOTHING
       RETURNING id
-    ),
-    queued AS (
+    `, [botIdentity, update.update_id, jsonValue(update, 'update')]);
+
+    if (!inserted.rowCount) {
+      await client.query('COMMIT');
+      transactionOpen = false;
+      return { accepted: true, duplicate: true, id: null, jobId: null };
+    }
+
+    const queued = await client.query(`
       INSERT INTO platform_jobs (job_type, idempotency_key, payload)
-      SELECT $4, $5,
-        jsonb_build_object('botIdentity', $1, 'updateId', $2)
-      FROM inserted
+      VALUES ($1, $2, jsonb_build_object('botIdentity', $3, 'updateId', $4))
       ON CONFLICT (job_type, idempotency_key) DO NOTHING
       RETURNING id
-    )
-    SELECT inserted.id, queued.id AS job_id
-    FROM inserted
-    LEFT JOIN queued ON TRUE
-  `, [
-    botIdentity,
-    update.update_id,
-    jsonValue(update, 'update'),
-    jobType,
-    idempotencyKey
-  ]);
+    `, [jobType, idempotencyKey, botIdentity, update.update_id]);
 
-  if (result.rowCount === 0) {
-    return { accepted: true, duplicate: true, id: null, jobId: null };
+    let jobId = queued.rows[0]?.id;
+    if (!queued.rowCount) {
+      const existing = await client.query(`
+        SELECT id, status, payload
+        FROM platform_jobs
+        WHERE job_type = $1 AND idempotency_key = $2
+        FOR UPDATE
+      `, [jobType, idempotencyKey]);
+
+      if (!existing.rowCount) {
+        throw new Error('Platform queue idempotency conflict could not be resolved');
+      }
+
+      const prior = existing.rows[0];
+      const priorPayload = typeof prior.payload === 'string'
+        ? JSON.parse(prior.payload)
+        : prior.payload;
+      if (priorPayload?.botIdentity !== botIdentity ||
+          priorPayload?.updateId !== update.update_id) {
+        throw new Error('Existing platform queue job payload does not match its idempotency key');
+      }
+
+      if (!['queued', 'retrying', 'processing'].includes(prior.status)) {
+        await client.query('ROLLBACK');
+        transactionOpen = false;
+        return { accepted: true, duplicate: true, id: null, jobId: prior.id };
+      }
+      jobId = prior.id;
+    }
+
+    if (jobId === undefined || jobId === null) {
+      throw new Error('Platform inbox row was inserted without its durable queue job');
+    }
+
+    await client.query('COMMIT');
+    transactionOpen = false;
+    return {
+      accepted: true,
+      duplicate: false,
+      id: inserted.rows[0].id,
+      jobId
+    };
+  } catch (error) {
+    if (transactionOpen) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        error.rollbackError = rollbackError;
+      }
+    }
+    throw error;
+  } finally {
+    client.release();
   }
-  if (!result.rows[0]?.job_id) {
-    throw new Error('Platform inbox row was inserted without its durable queue job');
-  }
-  return {
-    accepted: true,
-    duplicate: false,
-    id: result.rows[0].id,
-    jobId: result.rows[0].job_id
-  };
 }
 
 module.exports = {
