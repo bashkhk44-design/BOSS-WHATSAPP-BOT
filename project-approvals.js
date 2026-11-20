@@ -1,6 +1,7 @@
 'use strict';
 
 const { pool } = require('./db');
+const { assertAuthorizedManager } = require('./project-authorization');
 
 const { buildConstructionPoints } = require('./project-construction-points');
 
@@ -31,7 +32,8 @@ async function initProjectApprovalsDatabase() {
   `);
 }
 
-async function getProjectApprovalState({ projectId, specVersion, designJobId }) {
+async function getProjectApprovalState({ projectId, specVersion, designJobId, adminTelegramId }) {
+  assertAuthorizedManager(adminTelegramId);
   const result = await pool.query(`
     SELECT *
     FROM project_build_approvals
@@ -50,6 +52,8 @@ async function approveProjectMilestone({
   approvalType,
   adminTelegramId
 }) {
+  assertAuthorizedManager(adminTelegramId);
+
   if (!['construction_points', 'design'].includes(approvalType)) {
     throw new Error('نوع الاعتماد غير صالح.');
   }
