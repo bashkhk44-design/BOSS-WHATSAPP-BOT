@@ -43,6 +43,7 @@ const CUSTOMER_BOT_WORKER_MODE = env.CUSTOMER_BOT_WORKER_MODE === 'external';
 
 const token = options.token || env.TELEGRAM_BOT_TOKEN;
 const adminId = options.adminId || env.TELEGRAM_ADMIN_ID;
+require('./project-authorization').configureManagerIdentity(adminId);
 
 if (!token || !adminId) {
   console.error('إعدادات Telegram ناقصة');
