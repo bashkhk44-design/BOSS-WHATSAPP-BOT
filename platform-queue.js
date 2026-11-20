@@ -257,7 +257,7 @@ async function enqueuePlatformBotUpdate(pool, { botIdentity, update }) {
     throw new TypeError('Telegram update_id is required');
   }
 
-  const ownsClient = typeof pool?.connect === 'function';
+  const ownsClient = typeof pool?.connect === 'function' && typeof pool.totalCount === 'number';
   if (!ownsClient && typeof pool?.query !== 'function') {
     throw new TypeError('A PostgreSQL pool or connected client is required');
   }
