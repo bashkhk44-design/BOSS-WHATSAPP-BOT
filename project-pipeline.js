@@ -114,7 +114,8 @@ async function runProjectPipeline({
   const approvals = await getProjectApprovalState({
     projectId,
     specVersion: project.spec_version,
-    designJobId: designJob.id
+    designJobId: designJob.id,
+    adminTelegramId
   });
 
   if (!approvals?.construction_points_approved || !approvals?.design_approved) {
