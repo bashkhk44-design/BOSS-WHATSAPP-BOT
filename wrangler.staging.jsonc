@@ -6,6 +6,7 @@
     "nodejs_compat"
   ],
   "workers_dev": true,
+  "previews": {},
   "vars": {
     "PLATFORM_BOT_WEBHOOK_MODE": "disabled"
   },
