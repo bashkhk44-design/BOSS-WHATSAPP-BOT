@@ -94,3 +94,73 @@ test('platform bot updates enqueue atomically, deduplicate per identity, and dis
     await pool.end();
   }
 });
+
+
+test('platform bot queue preserves update order even when a newer update has higher priority', {
+  skip: !process.env.DATABASE_URL ? 'DATABASE_URL is required for the disposable PostgreSQL integration test' : false
+}, async () => {
+  const { Pool } = require('pg');
+  const { enqueuePlatformBotUpdate, claimPlatformJob, completePlatformJob } = require('../platform-queue');
+  const databaseUrl = process.env.DATABASE_URL;
+  const pool = new Pool({
+    connectionString: databaseUrl,
+    ssl: databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1')
+      ? false
+      : { rejectUnauthorized: false },
+    max: 5
+  });
+  const suffix = randomUUID();
+  const firstUpdateId = Number(BigInt(Date.now()) * 1000n);
+  const secondUpdateId = firstUpdateId + 1;
+  const workerId = 'platform-ordering-ci-' + suffix;
+  const keys = [
+    'telegram.master.update:' + firstUpdateId,
+    'telegram.master.update:' + secondUpdateId
+  ];
+  const inboxIds = [];
+
+  try {
+    const first = await enqueuePlatformBotUpdate(pool, {
+      botIdentity: 'master',
+      update: { update_id: firstUpdateId, message: { text: 'first', marker: suffix } }
+    });
+    const second = await enqueuePlatformBotUpdate(pool, {
+      botIdentity: 'master',
+      update: { update_id: secondUpdateId, message: { text: 'second', marker: suffix } }
+    });
+    inboxIds.push(first.id, second.id);
+
+    await pool.query(
+      "UPDATE platform_jobs SET priority = 32767 WHERE idempotency_key = $1",
+      [keys[1]]
+    );
+
+    const claimedFirst = await claimPlatformJob(pool, workerId, ['telegram.master.update']);
+    assert.ok(claimedFirst, 'the earliest update should be claimable');
+    assert.equal(claimedFirst.payload.updateId, firstUpdateId);
+
+    await completePlatformJob(pool, {
+      jobId: claimedFirst.id,
+      workerId,
+      result: { test: true }
+    });
+
+    const blockedSecond = await claimPlatformJob(pool, workerId + '-parallel', ['telegram.master.update']);
+    assert.equal(blockedSecond, null, 'newer update must wait until earlier inbox row is processed');
+
+    await pool.query(
+      "UPDATE platform_bot_inbound_updates SET state = 'processed', processed_at = NOW() WHERE id = $1",
+      [first.id]
+    );
+
+    const claimedSecond = await claimPlatformJob(pool, workerId + '-next', ['telegram.master.update']);
+    assert.ok(claimedSecond, 'newer update becomes claimable after earlier inbox row is processed');
+    assert.equal(claimedSecond.payload.updateId, secondUpdateId);
+  } finally {
+    await pool.query('DELETE FROM platform_jobs WHERE idempotency_key = ANY($1::text[])', [keys]);
+    if (inboxIds.length) {
+      await pool.query('DELETE FROM platform_bot_inbound_updates WHERE id = ANY($1::bigint[])', [inboxIds]);
+    }
+    await pool.end();
+  }
+});
