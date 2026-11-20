@@ -285,7 +285,7 @@ async function enqueuePlatformBotUpdate(pool, { botIdentity, update }) {
 
     const queued = await client.query(`
       INSERT INTO platform_jobs (job_type, idempotency_key, payload)
-      VALUES ($1, $2, jsonb_build_object('botIdentity', $3, 'updateId', $4))
+      VALUES ($1, $2, jsonb_build_object('botIdentity', $3::text, 'updateId', $4::bigint))
       ON CONFLICT (job_type, idempotency_key) DO NOTHING
       RETURNING id
     `, [jobType, idempotencyKey, botIdentity, update.update_id]);
