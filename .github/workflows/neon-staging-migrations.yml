@@ -93,7 +93,7 @@ jobs:
                 'Migration set differs from reviewed allowlist. Unexpected: ' +
                 (unexpected.join(', ') || 'none') + '; missing: ' +
                 (missing.join(', ') || 'none') + '; missing baseline: ' +
-                (missingBaseline.join(', ') || 'none') + '; runner allowlist mismatch: '
+                (missingBaseline.join(', ') || 'none') + '; runner allowlist mismatch: ' +
                 (JSON.stringify(runnerFiles) !== JSON.stringify(expectedFiles) ? 'yes' : 'no')
               );
             }
