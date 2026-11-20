@@ -2,7 +2,9 @@
   "name": "boss-bot-platform-ingress-staging",
   "main": "worker.mjs",
   "compatibility_date": "2026-11-17",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": true,
   "vars": {
     "PLATFORM_BOT_WEBHOOK_MODE": "disabled"
@@ -12,5 +14,6 @@
       "binding": "HYPERDRIVE",
       "id": "82180f393f7f41478ddcb93404eb5e05"
     }
-  ]
+  ],
+  "previews": {}
 }
