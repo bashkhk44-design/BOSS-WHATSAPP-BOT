@@ -518,7 +518,7 @@ bot.callbackQuery(/^project:ai:(\d+)$/, async (ctx) => {
       return ctx.reply('⏳ تحليل هذا المشروع قيد التنفيذ بالفعل.');
     }
 
-    const claimed = await markProjectAiJobRunning(job.id);
+    const claimed = await markProjectAiJobRunning(job.id, { adminTelegramId: ctx.from.id });
 
     if (!claimed) {
       return ctx.reply('⏳ المهمة قيد المعالجة أو تغيرت حالتها. تحقق من قائمة المهام.');
@@ -534,14 +534,14 @@ bot.callbackQuery(/^project:ai:(\d+)$/, async (ctx) => {
     try {
       analysis = await analyzeProject({ project });
 
-      const saved = await completeProjectAiJob(job.id, analysis);
+      const saved = await completeProjectAiJob(job.id, analysis, { adminTelegramId: ctx.from.id });
 
       if (!saved) {
         throw new Error('تعذر حفظ نتيجة التحليل في قاعدة البيانات.');
       }
     } catch (error) {
       try {
-        await failProjectAiJob(job.id, error.message);
+        await failProjectAiJob(job.id, error.message, { adminTelegramId: ctx.from.id });
       } catch (dbError) {
         console.error('AI JOB FAILURE SAVE ERROR:', dbError.message);
       }
@@ -605,7 +605,8 @@ bot.callbackQuery(/^project:design:(\d+)$/, async (ctx) => {
 
     const analysisJob = await getLatestCompletedProjectAiJob({
       projectId,
-      jobType: 'analysis'
+      jobType: 'analysis',
+      adminTelegramId: ctx.from.id
     });
 
     if (!analysisJob || !analysisJob.analysis || !analysisJob.analysis.text) {
@@ -631,7 +632,7 @@ bot.callbackQuery(/^project:design:(\d+)$/, async (ctx) => {
       return ctx.reply('⏳ تصميم هذا المشروع قيد التنفيذ بالفعل.');
     }
 
-    const claimed = await markProjectAiJobRunning(job.id);
+    const claimed = await markProjectAiJobRunning(job.id, { adminTelegramId: ctx.from.id });
     if (!claimed) {
       return ctx.reply('المهمة قيد المعالجة أو تغيرت حالتها. حاول التحقق لاحقاً.');
     }
@@ -645,13 +646,13 @@ bot.callbackQuery(/^project:design:(\d+)$/, async (ctx) => {
         analysis: analysisJob.analysis
       });
 
-      const saved = await completeProjectAiJob(job.id, design);
+      const saved = await completeProjectAiJob(job.id, design, { adminTelegramId: ctx.from.id });
       if (!saved) {
         throw new Error('تعذر حفظ وثيقة التصميم في قاعدة البيانات.');
       }
     } catch (error) {
       try {
-        await failProjectAiJob(job.id, error.message);
+        await failProjectAiJob(job.id, error.message, { adminTelegramId: ctx.from.id });
       } catch (dbError) {
         console.error('DESIGN JOB FAILURE SAVE ERROR:', dbError.message);
       }
@@ -1473,7 +1474,7 @@ async function recoverTelegramRuntime(err) {
           continue;
         }
 
-        const recoveredJobs = await recoverInterruptedProjectAiJobs();
+        const recoveredJobs = await recoverInterruptedProjectAiJobs({ adminTelegramId: adminId });
         console.log('Recovered ' + recoveredJobs + ' interrupted AI job(s) after lock loss');
 
         await startTelegramServices();
@@ -1551,7 +1552,7 @@ async function start() {
           continue;
         }
 
-        const recoveredJobs = await recoverInterruptedProjectAiJobs();
+        const recoveredJobs = await recoverInterruptedProjectAiJobs({ adminTelegramId: adminId });
         console.log('Recovered ' + recoveredJobs + ' interrupted AI job(s)');
 
         await startTelegramServices();

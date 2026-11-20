@@ -45,7 +45,8 @@ async function runStage({
   }
 
   const attempt = await startProjectAiJobAttempt(job.id, {
-    allowCompleted: forceRetry
+    allowCompleted: forceRetry,
+    adminTelegramId
   });
 
   if (!attempt) {
@@ -65,7 +66,8 @@ async function runStage({
     const saved = await completeProjectAiJobAttempt(
       attempt.id,
       job.id,
-      result
+      result,
+      { adminTelegramId }
     );
 
     if (!saved) {
@@ -78,7 +80,8 @@ async function runStage({
       await failProjectAiJobAttempt(
         attempt.id,
         job.id,
-        error.message
+        error.message,
+        { adminTelegramId }
       );
     } catch (saveError) {
       console.error(
@@ -104,7 +107,8 @@ async function runProjectPipeline({
 
   const designJob = await getLatestCompletedProjectAiJob({
     projectId,
-    jobType: 'design'
+    jobType: 'design',
+    adminTelegramId
   });
 
   if (!designJob || Number(designJob.spec_version) !== Number(project.spec_version)) {
@@ -169,13 +173,15 @@ async function runProjectPipeline({
     if (!test.passed && canAttemptFix(test)) {
       const previousFix = await getLatestCompletedProjectAiJob({
         projectId,
-        jobType: 'fix'
+        jobType: 'fix',
+        adminTelegramId
       });
 
       const previousPostFixTest =
         await getLatestCompletedProjectAiJob({
           projectId,
-          jobType: 'test_after_fix'
+          jobType: 'test_after_fix',
+          adminTelegramId
         });
 
       const previousFixResult = previousFix?.analysis || null;
