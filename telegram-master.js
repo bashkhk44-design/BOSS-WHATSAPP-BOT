@@ -1552,7 +1552,7 @@ async function start() {
           continue;
         }
 
-        const recoveredJobs = await recoverInterruptedProjectAiJobs();
+        const recoveredJobs = await recoverInterruptedProjectAiJobs({ adminTelegramId: adminId });
         console.log('Recovered ' + recoveredJobs + ' interrupted AI job(s)');
 
         await startTelegramServices();
