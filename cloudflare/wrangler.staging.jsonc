@@ -15,5 +15,9 @@
       "id": "82180f393f7f41478ddcb93404eb5e05"
     }
   ],
-  "previews": {}
+  "previews": {
+    "vars": {
+      "PLATFORM_BOT_WEBHOOK_MODE": "disabled"
+    }
+  }
 }
