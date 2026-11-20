@@ -6,10 +6,33 @@ const path = require('node:path');
 const LOCK_KEY_1 = 20261117;
 const LOCK_KEY_2 = 1;
 
-function listMigrationFiles(directory, fsApi = fs) {
-  return fsApi.readdirSync(directory)
-    .filter((name) => /^\d+_[a-z0-9_-]+\.sql$/i.test(name))
-    .sort((a, b) => a.localeCompare(b, 'en'));
+// Only reviewed migrations are executable. Add a new migration here only
+// after reviewing its SQL and updating the migration tests.
+const APPROVED_MIGRATION_FILES = Object.freeze([
+  '001_foundation_database.sql',
+  '002_distributed_bot_worker_indexes.sql',
+  '003_bot_runtime_commands.sql',
+  '004_manager_command_recovery.sql',
+  '005_worker_health_heartbeats.sql',
+  '006_auto_remediation_audit.sql',
+  '007_platform_bot_inbox.sql',
+  '20261118_bot_runtime_status.sql',
+  '20261119_bot_inbound_update_lease_owner.sql',
+  '20261119_bot_update_transport.sql'
+]);
+
+function listMigrationFiles(directory, fsApi = fs, approvedFiles = APPROVED_MIGRATION_FILES) {
+  if (!Array.isArray(approvedFiles) || approvedFiles.some(name => typeof name !== 'string' || !/^\d+_[a-z0-9_-]+\.sql$/i.test(name))) {
+    throw new TypeError('Approved migration files must be an array of numbered SQL filenames');
+  }
+
+  const available = new Set(fsApi.readdirSync(directory));
+  const missing = approvedFiles.filter(name => !available.has(name));
+  if (missing.length) {
+    throw new Error('Missing approved database migration files: ' + missing.join(', '));
+  }
+
+  return [...approvedFiles];
 }
 
 function extractMigrationBody(sql, filename) {
@@ -35,7 +58,8 @@ function createMigrationRunner({
   pool,
   migrationsDir = __dirname,
   fsApi = fs,
-  logger = console
+  logger = console,
+  approvedMigrationFiles = APPROVED_MIGRATION_FILES
 }) {
   if (!pool || typeof pool.connect !== 'function') {
     throw new TypeError('A PostgreSQL pool is required');
@@ -68,7 +92,7 @@ function createMigrationRunner({
           )
         `);
 
-        for (const filename of listMigrationFiles(migrationsDir, fsApi)) {
+        for (const filename of listMigrationFiles(migrationsDir, fsApi, approvedMigrationFiles)) {
           const version = filename.replace(/\.sql$/i, '');
 
           const existing = await client.query(
@@ -169,6 +193,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  APPROVED_MIGRATION_FILES,
   createMigrationRunner,
   listMigrationFiles,
   extractMigrationBody
