@@ -4,7 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   validatePlatformWorkerEnvironment,
-  createPlatformWorker
+  createPlatformWorker,
+  closePlatformWorkerResources
 } = require('../platform-worker');
 
 const validEnv = {
@@ -62,4 +63,43 @@ test('platform worker claims only master and intake update job types', async () 
     assert.deepEqual(types.sort(), ['telegram.intake.update', 'telegram.master.update']);
     assert.equal(types.includes('telegram.update'), false);
   }
+});
+
+
+test('platform worker cleanup stops the worker and runtimes before closing the shared master database pool', async () => {
+  const events = [];
+  await closePlatformWorkerResources({
+    worker: { async stop() { events.push('worker'); } },
+    master: { async closeWebhookResources() { events.push('master-resources'); } },
+    masterWebhook: { async stop() { events.push('master-webhook'); } },
+    intakeWebhook: { async stop() { events.push('intake-webhook'); } },
+    pool: { async end() { events.push('pool'); } }
+  });
+
+  assert.deepEqual(events, [
+    'worker',
+    'master-webhook',
+    'intake-webhook',
+    'master-resources'
+  ]);
+});
+
+test('platform worker cleanup attempts every resource even when one stop operation fails', async () => {
+  const events = [];
+  await assert.rejects(
+    closePlatformWorkerResources({
+      worker: { async stop() { events.push('worker'); throw new Error('worker stop failed'); } },
+      master: { async closeWebhookResources() { events.push('master-resources'); } },
+      masterWebhook: { async stop() { events.push('master-webhook'); throw new Error('master stop failed'); } },
+      intakeWebhook: { async stop() { events.push('intake-webhook'); } }
+    }),
+    /One or more platform worker resources failed to close/
+  );
+
+  assert.deepEqual(events, [
+    'worker',
+    'master-webhook',
+    'intake-webhook',
+    'master-resources'
+  ]);
 });
