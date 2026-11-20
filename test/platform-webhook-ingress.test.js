@@ -61,10 +61,9 @@ test('platform webhook authenticates identity and enqueues the exact update', as
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { ok: true, duplicate: false, queued: true });
     assert.equal(calls.length, 4);
-    assert.equal(calls[0][0], undefined);
     assert.equal(calls[1][0], 'master');
     assert.equal(calls[1][1], 123);
-    assert.match(calls[2][0], /INSERT INTO platform_jobs/);
+    assert.equal(calls[2][0], 'telegram.master.update');
   });
 });
 
