@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { assertAuthorizedManager, assertTelegramUserId } = require('./project-authorization');
 function getPool() { return require('./db').pool; }
 
 const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024;
@@ -260,6 +261,7 @@ async function initProjectReleaseDatabase() {
 }
 
 async function createReleaseCandidate({ project, designJobId, adminTelegramId, report, bundle }) {
+  assertAuthorizedManager(adminTelegramId);
   const snapshot = createImmutableReleaseArtifact({ report, bundle });
   const client = await getPool().connect();
   try {
@@ -349,8 +351,11 @@ async function createReleaseCandidate({ project, designJobId, adminTelegramId, r
   }
 }
 
-async function getReleaseCandidate(releaseId) {
+async function getReleaseCandidate(releaseId, { role = 'manager', telegramUserId } = {}) {
   if (!/^\d+$/.test(String(releaseId || ''))) throw new Error('رقم الإصدار غير صالح.');
+  if (role === 'manager') assertAuthorizedManager(telegramUserId);
+  else if (role === 'customer') assertTelegramUserId(telegramUserId);
+  else throw new Error('صفة الوصول إلى الإصدار غير صالحة.');
   const result = await getPool().query(`
     SELECT r.*, p.name AS project_name,
            c.telegram_user_id AS customer_telegram_id
@@ -358,7 +363,8 @@ async function getReleaseCandidate(releaseId) {
     JOIN client_projects p ON p.id = r.project_id
     JOIN clients c ON c.id = p.client_id
     WHERE r.id = $1
-  `, [releaseId]);
+      AND ($2::text = 'manager' OR c.telegram_user_id = $3)
+  `, [releaseId, role, String(telegramUserId)]);
   return result.rows[0] || null;
 }
 
@@ -369,6 +375,9 @@ async function decideRelease({ releaseId, role, telegramUserId, decision }) {
       !/^\d+$/.test(String(releaseId || ''))) {
     throw new Error('بيانات قرار الإصدار غير صالحة.');
   }
+
+  if (role === 'manager') assertAuthorizedManager(telegramUserId);
+  else assertTelegramUserId(telegramUserId);
 
   const client = await getPool().connect();
   try {
@@ -431,6 +440,8 @@ async function authorizeDeployment({ releaseId, telegramUserId }) {
       !/^\d+$/.test(String(telegramUserId || ''))) {
     throw new Error('بيانات تصريح النشر غير صالحة.');
   }
+
+  assertAuthorizedManager(telegramUserId);
 
   const client = await getPool().connect();
   try {

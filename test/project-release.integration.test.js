@@ -3,13 +3,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 let pool;
-const { buildReleaseReport, createReleaseCandidate, decideRelease, authorizeDeployment, initProjectReleaseDatabase } = require('../project-release');
+const { buildReleaseReport, createReleaseCandidate, getReleaseCandidate, decideRelease, authorizeDeployment, initProjectReleaseDatabase } = require('../project-release');
 
 test('PostgreSQL release handoff enforces customer then manager approval and immutable artifact', { skip: !process.env.DATABASE_URL }, async () => {
   let clientId;
   let projectId;
   const customerTelegramId = String(900000000 + Math.floor(Math.random() * 90000000));
   const managerTelegramId = '10001';
+  const previousManagerId = process.env.TELEGRAM_ADMIN_ID;
+  process.env.TELEGRAM_ADMIN_ID = managerTelegramId;
 
   try {
     pool = require('../db').pool;
@@ -115,6 +117,28 @@ test('PostgreSQL release handoff enforces customer then manager approval and imm
     });
 
     assert.equal(candidate.status, 'awaiting_customer');
+    const customerRelease = await getReleaseCandidate(candidate.id, {
+      role: 'customer',
+      telegramUserId: customerTelegramId
+    });
+    assert.equal(customerRelease.id, candidate.id);
+    assert.equal(await getReleaseCandidate(candidate.id, {
+      role: 'customer',
+      telegramUserId: '999999999'
+    }), null);
+    await assert.rejects(
+      getReleaseCandidate(candidate.id, { role: 'manager', telegramUserId: '999999999' }),
+      /غير مصرح/
+    );
+    await assert.rejects(
+      decideRelease({
+        releaseId: candidate.id,
+        role: 'manager',
+        telegramUserId: '999999999',
+        decision: 'approved'
+      }),
+      /غير مصرح/
+    );
     const duplicateCandidate = await createReleaseCandidate({
       project: releaseProject,
       designJobId,
@@ -192,5 +216,7 @@ test('PostgreSQL release handoff enforces customer then manager approval and imm
     if (projectId) await pool.query('DELETE FROM client_projects WHERE id = $1', [projectId]);
     if (clientId) await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
     await pool.end();
+    if (previousManagerId === undefined) delete process.env.TELEGRAM_ADMIN_ID;
+    else process.env.TELEGRAM_ADMIN_ID = previousManagerId;
   }
 });

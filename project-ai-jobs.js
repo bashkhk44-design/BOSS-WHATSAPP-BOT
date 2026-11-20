@@ -1,6 +1,7 @@
 'use strict';
 
 const { pool } = require('./db');
+const { assertAuthorizedManager } = require('./project-authorization');
 
 async function initProjectAiJobsDatabase() {
   await pool.query(`
@@ -47,6 +48,7 @@ async function createProjectAiJob({
   adminTelegramId,
   jobType = 'analysis'
 }) {
+  assertAuthorizedManager(adminTelegramId);
   const result = await pool.query(`
     INSERT INTO project_ai_jobs
       (project_id, spec_version, job_type, status, requested_by_admin)

@@ -43,6 +43,7 @@ const CUSTOMER_BOT_WORKER_MODE = env.CUSTOMER_BOT_WORKER_MODE === 'external';
 
 const token = options.token || env.TELEGRAM_BOT_TOKEN;
 const adminId = options.adminId || env.TELEGRAM_ADMIN_ID;
+require('./project-authorization').configureManagerIdentity(adminId);
 
 if (!token || !adminId) {
   console.error('إعدادات Telegram ناقصة');
@@ -78,7 +79,8 @@ async function sendProjectApprovalPanel(ctx, projectId, designJob) {
   const approvals = await getProjectApprovalState({
     projectId,
     specVersion: designJob.spec_version,
-    designJobId: designJob.id
+    designJobId: designJob.id,
+    adminTelegramId: ctx.from.id
   });
 
   const specResult = await pool.query(`
@@ -807,7 +809,7 @@ bot.callbackQuery(/^project:release:customer:(approved|rejected):(\d+)$/, async 
     );
     if (decision.status === 'awaiting_manager') {
       try {
-        const approvedRelease = await getReleaseCandidate(decision.id);
+        const approvedRelease = await getReleaseCandidate(decision.id, { role: 'customer', telegramUserId: ctx.from.id });
         await ctx.api.sendMessage(
           adminId,
           '📋 موافقة العميل وصلت للإصدار R' + decision.release_version +
@@ -837,7 +839,7 @@ bot.callbackQuery(/^project:release:customer:(approved|rejected):(\d+)$/, async 
 bot.callbackQuery(/^project:release:manager:(approved|rejected):(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   try {
-    const current = await getReleaseCandidate(ctx.match[2]);
+    const current = await getReleaseCandidate(ctx.match[2], { role: 'manager', telegramUserId: ctx.from.id });
     if (!current) throw new Error('الإصدار غير موجود.');
     const decision = await decideRelease({
       releaseId: ctx.match[2],
@@ -902,7 +904,7 @@ bot.callbackQuery(/^project:deploy-auth:authorize:(\d+)$/, async (ctx) => {
 bot.callbackQuery(/^project:deploy:readiness:(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   try {
-    const release = await getReleaseCandidate(ctx.match[1]);
+    const release = await getReleaseCandidate(ctx.match[1], { role: 'manager', telegramUserId: ctx.from.id });
     if (!release) throw new Error('الإصدار غير موجود.');
 
     const authorizationResult = await pool.query(
@@ -934,7 +936,7 @@ bot.callbackQuery(/^project:deploy:readiness:(\d+)$/, async (ctx) => {
 bot.callbackQuery(/^project:deploy:preflight:(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   try {
-    const release = await getReleaseCandidate(ctx.match[1]);
+    const release = await getReleaseCandidate(ctx.match[1], { role: 'manager', telegramUserId: ctx.from.id });
     if (!release) throw new Error('الإصدار غير موجود.');
 
     const authorizationResult = await pool.query(
@@ -974,7 +976,7 @@ bot.callbackQuery(/^project:deploy:preflight:(\d+)$/, async (ctx) => {
 bot.callbackQuery(/^project:deploy:preflight-status:(\d+)$/, async (ctx) => {
   if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: 'غير مصرح لك.' });
   try {
-    const release = await getReleaseCandidate(ctx.match[1]);
+    const release = await getReleaseCandidate(ctx.match[1], { role: 'manager', telegramUserId: ctx.from.id });
     if (!release) throw new Error('الإصدار غير موجود.');
     const job = await getLatestDeploymentPreflightJob({
       pool,
