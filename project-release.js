@@ -350,7 +350,7 @@ async function createReleaseCandidate({ project, designJobId, adminTelegramId, r
   }
 }
 
-async function getReleaseCandidate(releaseId) {
+async function getReleaseCandidate(releaseId, { role = 'manager', telegramUserId } = {}) {
   if (!/^\d+$/.test(String(releaseId || ''))) throw new Error('رقم الإصدار غير صالح.');
   const result = await getPool().query(`
     SELECT r.*, p.name AS project_name,
@@ -436,6 +436,8 @@ async function authorizeDeployment({ releaseId, telegramUserId }) {
       !/^\d+$/.test(String(telegramUserId || ''))) {
     throw new Error('بيانات تصريح النشر غير صالحة.');
   }
+
+  assertAuthorizedManager(telegramUserId);
 
   const client = await getPool().connect();
   try {
