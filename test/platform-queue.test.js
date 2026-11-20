@@ -401,7 +401,7 @@ test('platform bot update enqueue creates inbox and durable job in one transacti
     },
     release() {}
   };
-  const pool = { async connect() { return client; } };
+  const pool = { totalCount: 0, async connect() { return client; } };
 
   const first = await enqueuePlatformBotUpdate(pool, {
     botIdentity: 'master',
@@ -444,7 +444,7 @@ test('platform bot enqueue links a new inbox row to an existing active idempoten
     },
     release() {}
   };
-  const result = await enqueuePlatformBotUpdate({ connect: async () => client }, {
+  const result = await enqueuePlatformBotUpdate({ totalCount: 0, connect: async () => client }, {
     botIdentity: 'intake',
     update: { update_id: 889, message: { text: '/start' } }
   });
