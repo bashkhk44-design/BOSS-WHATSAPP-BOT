@@ -394,11 +394,17 @@ async function releaseTelegramRuntimeLock() {
   }
 }
 
+const { createBotOwnershipService } = require('./bot-ownership');
+const botOwnership = createBotOwnershipService(pool);
+
 module.exports = {
   pool,
   initDatabase,
   verifyDatabaseSchema,
   insertTelegramBot,
+  getBotAssignmentClients: botOwnership.listClients,
+  getBotAssignmentProjects: botOwnership.listProjects,
+  assignTelegramBotToProject: botOwnership.assignBotToProject,
   getActiveTelegramBots,
   decryptToken,
   encryptSecret,
