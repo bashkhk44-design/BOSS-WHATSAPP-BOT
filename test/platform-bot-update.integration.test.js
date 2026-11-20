@@ -164,3 +164,76 @@ test('platform bot queue preserves update order even when a newer update has hig
     await pool.end();
   }
 });
+
+
+test('platform bot inbox reconciliation reuses active jobs and does not persist rows for terminal jobs', {
+  skip: !process.env.DATABASE_URL ? 'DATABASE_URL is required for the disposable PostgreSQL integration test' : false
+}, async () => {
+  const { Pool } = require('pg');
+  const databaseUrl = process.env.DATABASE_URL;
+  const pool = new Pool({
+    connectionString: databaseUrl,
+    ssl: databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1')
+      ? false
+      : { rejectUnauthorized: false },
+    max: 3
+  });
+  const suffix = randomUUID();
+  const activeUpdateId = Number(BigInt(Date.now()) * 1000n + 31n);
+  const terminalUpdateId = activeUpdateId + 1;
+  const activeKey = 'telegram.master.update:' + activeUpdateId;
+  const terminalKey = 'telegram.intake.update:' + terminalUpdateId;
+  const inboxIds = [];
+
+  try {
+    await pool.query(
+      "INSERT INTO platform_jobs (job_type, idempotency_key, payload) VALUES ($1, $2, $3::jsonb)",
+      ['telegram.master.update', activeKey, JSON.stringify({ botIdentity: 'master', updateId: activeUpdateId, marker: suffix })]
+    );
+    const linked = await enqueuePlatformBotUpdate(pool, {
+      botIdentity: 'master',
+      update: { update_id: activeUpdateId, message: { text: 'recover inbox', marker: suffix } }
+    });
+    assert.equal(linked.duplicate, false);
+    assert.ok(linked.id);
+    assert.ok(linked.jobId);
+    const activeRow = await pool.query(
+      'SELECT id FROM platform_bot_inbound_updates WHERE bot_identity = $1 AND update_id = $2',
+      ['master', activeUpdateId]
+    );
+    assert.equal(String(activeRow.rows[0]?.id), String(linked.id));
+    inboxIds.push(linked.id);
+
+    await pool.query(
+      "INSERT INTO platform_jobs (job_type, idempotency_key, payload, status) VALUES ($1, $2, $3::jsonb, 'completed')",
+      ['telegram.intake.update', terminalKey, JSON.stringify({ botIdentity: 'intake', updateId: terminalUpdateId })]
+    );
+    const terminal = await enqueuePlatformBotUpdate(pool, {
+      botIdentity: 'intake',
+      update: { update_id: terminalUpdateId, message: { text: 'already completed' } }
+    });
+    assert.deepEqual(terminal, {
+      accepted: true,
+      duplicate: true,
+      id: null,
+      jobId: (await pool.query(
+        'SELECT id FROM platform_jobs WHERE job_type = $1 AND idempotency_key = $2',
+        ['telegram.intake.update', terminalKey]
+      )).rows[0].id
+    });
+    const terminalInbox = await pool.query(
+      'SELECT id FROM platform_bot_inbound_updates WHERE bot_identity = $1 AND update_id = $2',
+      ['intake', terminalUpdateId]
+    );
+    assert.equal(terminalInbox.rowCount, 0);
+  } finally {
+    await pool.query(
+      'DELETE FROM platform_jobs WHERE idempotency_key = ANY($1::text[])',
+      [[activeKey, terminalKey]]
+    );
+    if (inboxIds.length) {
+      await pool.query('DELETE FROM platform_bot_inbound_updates WHERE id = ANY($1::bigint[])', [inboxIds]);
+    }
+    await pool.end();
+  }
+});
