@@ -101,6 +101,21 @@ async function claimPlatformJob(pool, workerId, jobTypes) {
                   AND COALESCE(earlier_job.status, 'queued') <> 'dead_letter'
               )
             )
+            AND (
+              platform_jobs.job_type NOT IN ('telegram.master.update', 'telegram.intake.update')
+              OR NOT EXISTS (
+                SELECT 1
+                FROM platform_bot_inbound_updates AS earlier
+                LEFT JOIN platform_jobs AS earlier_job
+                  ON earlier_job.job_type = 'telegram.' || earlier.bot_identity || '.update'
+                 AND earlier_job.idempotency_key =
+                   'telegram.' || earlier.bot_identity || '.update:' || earlier.update_id::text
+                WHERE earlier.bot_identity = platform_jobs.payload->>'botIdentity'
+                  AND earlier.update_id < (platform_jobs.payload->>'updateId')::bigint
+                  AND earlier.state <> 'processed'
+                  AND COALESCE(earlier_job.status, 'queued') <> 'dead_letter'
+              )
+            )
             AND job_type = ANY($2::text[])
           ORDER BY priority DESC, available_at ASC, id ASC
           FOR UPDATE SKIP LOCKED

@@ -54,6 +54,10 @@ test('queue claims can be restricted to a validated set of registered job types'
   assert.match(call.sql, /job_type = ANY\(\$2::text\[\]\)/);
   assert.match(call.sql, /NOT EXISTS/);
   assert.match(call.sql, /earlier.state <> 'processed'/);
+  assert.match(call.sql, /platform_jobs\.job_type NOT IN \('telegram\.master\.update', 'telegram\.intake\.update'\)/);
+  assert.match(call.sql, /earlier\.bot_identity = platform_jobs\.payload->>'botIdentity'/);
+  assert.match(call.sql, /earlier\.update_id < \(platform_jobs\.payload->>'updateId'\)::bigint/);
+  assert.match(call.sql, /earlier_job\.status, 'queued'\) <> 'dead_letter'/);
   assert.deepEqual(normalizeJobTypes(['deployment.preflight', 'deployment.preflight']), ['deployment.preflight']);
   assert.throws(() => normalizeJobTypes([]), /1 to 50/);
   assert.throws(() => normalizeJobTypes(), /jobTypes is required/);
