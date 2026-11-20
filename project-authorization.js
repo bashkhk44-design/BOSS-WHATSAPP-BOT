@@ -3,16 +3,17 @@
 let configuredManagerId = process.env.TELEGRAM_ADMIN_ID;
 
 function configureManagerIdentity(managerTelegramId) {
-  if (managerTelegramId && !/^\d+$/.test(String(managerTelegramId))) {
+  if (!/^\d+$/.test(String(managerTelegramId || ''))) {
     throw new Error('إعداد معرّف المدير الرئيسي غير صالح.');
   }
-  if (managerTelegramId) configuredManagerId = String(managerTelegramId);
+  configuredManagerId = String(managerTelegramId);
 }
 
-function assertAuthorizedManager(telegramUserId, managerId = configuredManagerId || process.env.TELEGRAM_ADMIN_ID) {
+function assertAuthorizedManager(telegramUserId) {
   if (!/^\d+$/.test(String(telegramUserId || ''))) {
     throw new Error('معرّف المدير غير صالح.');
   }
+  const managerId = configuredManagerId || process.env.TELEGRAM_ADMIN_ID;
   if (!managerId || String(telegramUserId) !== String(managerId)) {
     throw new Error('غير مصرح: هذه العملية متاحة للمدير الرئيسي فقط.');
   }
