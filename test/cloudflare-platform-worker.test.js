@@ -321,7 +321,7 @@ test('Cloudflare retry after a failed Render wake reuses the committed inbox upd
         return { rowCount: 1, rows: [{ id: database.updates.size }] };
       }
       if (sql.includes('INSERT INTO platform_jobs')) {
-        const key = params[0] + ':' + params[1];
+        const key = params[1];
         if (database.jobs.has(key)) return { rowCount: 0, rows: [] };
         database.jobs.add(key);
         return { rowCount: 1, rows: [{ id: database.jobs.size }] };
