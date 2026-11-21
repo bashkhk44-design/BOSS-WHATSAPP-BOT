@@ -1,6 +1,16 @@
 name: Neon Staging Bootstrap and Migrations (Manual)
 
 on:
+  pull_request:
+    branches:
+      - staging/unified-platform-tls-migrations
+    paths:
+      - '.github/workflows/neon-staging-migrations.yml'
+      - 'db.js'
+      - 'migrations/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
   workflow_dispatch:
     inputs:
       confirm_target:
@@ -64,7 +74,8 @@ jobs:
   bootstrap:
     needs: postgres-integration
     if: >-
-      ${{ github.ref == 'refs/heads/staging/fix-neon-staging-migrations' &&
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/staging/fix-neon-staging-migrations' &&
           inputs.confirm_target == 'STAGING-ONLY' &&
           inputs.confirm_execution == 'RUN-STAGING-BOOTSTRAP' }}
     runs-on: ubuntu-latest
@@ -97,6 +108,7 @@ jobs:
           node <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
+          const { randomUUID } = require('node:crypto');
           const { Pool } = require('pg');
           const {
             APPROVED_MIGRATION_FILES,
@@ -168,12 +180,17 @@ jobs:
               await pool.end();
             }
 
-            // Do not print or otherwise expose the credential-bearing connection URL.
+            // Use a per-run delimiter and reject collisions. Never print the credential-bearing URL.
+            const delimiter = 'BOSS_STAGING_DATABASE_URL_' + randomUUID().replace(/-/g, '');
+            const normalizedUrl = databaseUrl.toString();
+            if (normalizedUrl.includes(delimiter)) {
+              throw new Error('Could not safely encode the staging database URL for subsequent steps.');
+            }
             fs.appendFileSync(
               process.env.GITHUB_ENV,
-              'DATABASE_URL<<BOSS_STAGING_DATABASE_URL_END\n' +
-                databaseUrl.toString() +
-                '\nBOSS_STAGING_DATABASE_URL_END\n'
+              'DATABASE_URL<<' + delimiter + '\\n' +
+                normalizedUrl +
+                '\\n' + delimiter + '\\n'
             );
 
             console.log('Preflight passed: exact Neon STAGING target, verified TLS, owner identity, and 11 approved migration files.');
