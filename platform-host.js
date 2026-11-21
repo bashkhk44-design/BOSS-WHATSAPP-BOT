@@ -108,17 +108,37 @@ async function registerPlatformTelegramWebhooks({ env, fetchImpl = fetch, assert
   return targets.map(target => target.identity);
 }
 
-async function waitForPlatformWorkerReady(readyPromise, timeoutMs = 30000) {
+function throwIfStartupAborted(signal) {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error('Platform host startup was cancelled');
+  }
+}
+
+async function waitForPlatformWorkerReady(readyPromise, timeoutMs = 30000, signal) {
   let timer;
+  let abortHandler;
   try {
-    await Promise.race([
+    const waits = [
       readyPromise,
       new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error('Platform queue worker did not become ready before webhook registration')), timeoutMs);
       })
-    ]);
+    ];
+    if (signal) {
+      waits.push(new Promise((_, reject) => {
+        abortHandler = () => reject(signal.reason instanceof Error
+          ? signal.reason
+          : new Error('Platform host startup was cancelled'));
+        if (signal.aborted) abortHandler();
+        else signal.addEventListener('abort', abortHandler, { once: true });
+      }));
+    }
+    await Promise.race(waits);
   } finally {
     clearTimeout(timer);
+    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler);
   }
 }
 
@@ -178,7 +198,8 @@ async function startHealthOnlyRuntime({ env = process.env, logger = console, db 
   };
 }
 
-async function startPlatformHost({ env = process.env, logger = console, db: injectedDb } = {}) {
+async function startPlatformHost({ env = process.env, logger = console, db: injectedDb, signal } = {}) {
+  throwIfStartupAborted(signal);
   const mode = env.PLATFORM_BOT_WEBHOOK_MODE || 'disabled';
   if (mode === 'disabled') {
     return startHealthOnlyRuntime({ env, logger, db: injectedDb });
@@ -236,6 +257,7 @@ async function startPlatformHost({ env = process.env, logger = console, db: inje
       adminId: env.TELEGRAM_ADMIN_ID
     });
     masterWebhook = await master.createWebhookRuntime();
+    throwIfStartupAborted(signal);
 
     const intake = createIntakeRuntime();
     intakeWebhook = await intake.createWebhookRuntime({
@@ -244,8 +266,10 @@ async function startPlatformHost({ env = process.env, logger = console, db: inje
         await master.bot.api.sendMessage(env.TELEGRAM_ADMIN_ID, text, extra);
       }
     });
+    throwIfStartupAborted(signal);
 
     await db.pool.query('SELECT 1');
+    throwIfStartupAborted(signal);
     worker = createPlatformWorker({
       pool: db.pool,
       runtimes: { master: masterWebhook, intake: intakeWebhook },
@@ -269,15 +293,19 @@ async function startPlatformHost({ env = process.env, logger = console, db: inje
     });
 
     await worker.processOne();
+    throwIfStartupAborted(signal);
     if (!(await db.isTelegramRuntimeLockHeld())) {
       throw new Error('Telegram runtime lock was lost before queue worker startup');
     }
 
     const done = worker.start();
-    await waitForPlatformWorkerReady(workerReady, Number(env.PLATFORM_WEBHOOK_READY_TIMEOUT_MS || 30000));
+    throwIfStartupAborted(signal);
+    await waitForPlatformWorkerReady(workerReady, Number(env.PLATFORM_WEBHOOK_READY_TIMEOUT_MS || 30000), signal);
+    throwIfStartupAborted(signal);
     const registeredWebhooks = await registerPlatformTelegramWebhooks({
       env,
       async assertReady() {
+        throwIfStartupAborted(signal);
         if (stopping || !ready) {
           throw new Error('Platform runtime became unavailable during webhook registration');
         }
@@ -315,6 +343,7 @@ async function main() {
   let runtimeStopping = false;
   let shutdownStarted = false;
   let server;
+  const startupAbortController = new AbortController();
 
   const port = Number(process.env.PORT || 8080);
   server = createHealthServer(() => ({ runtimeReady, runtimeStopping }));
@@ -337,6 +366,7 @@ async function main() {
     if (shutdownStarted) return;
     shutdownStarted = true;
     console.log('BOSS platform host stopping:', signal);
+    startupAbortController.abort(new Error('Platform host startup cancelled by ' + signal));
     onStopping();
     try {
       await runtime?.stop();
@@ -365,16 +395,19 @@ async function main() {
   }));
 
   try {
-    runtime = await startPlatformHost();
-    await runtime.done;
+    runtime = await startPlatformHost({ signal: startupAbortController.signal });
+    if (shutdownStarted) await runtime.stop();
+    else await runtime.done;
   } catch (error) {
     onStopping();
-    console.error('BOSS PLATFORM HOST STARTUP FAILED:', error.message);
-    process.exitCode = 1;
+    if (!startupAbortController.signal.aborted) {
+      console.error('BOSS PLATFORM HOST STARTUP FAILED:', error.message);
+      process.exitCode = 1;
+    }
     try { await runtime?.stop(); } catch (cleanupError) {
       console.error('BOSS platform cleanup failed:', cleanupError.message);
     }
-    server.close();
+    if (server.listening) server.close();
   }
 }
 
