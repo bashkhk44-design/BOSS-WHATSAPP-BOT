@@ -44,7 +44,7 @@ async function callTelegramWebhookMethod(token, method, payload, fetchImpl = fet
   }
 }
 
-async function registerPlatformTelegramWebhooks({ env, fetchImpl = fetch }) {
+async function registerPlatformTelegramWebhooks({ env, fetchImpl = fetch, assertReady = async () => {} }) {
   const baseUrl = validateWebhookBaseUrl(env.PLATFORM_WEBHOOK_BASE_URL);
   const targets = [
     {
@@ -77,6 +77,8 @@ async function registerPlatformTelegramWebhooks({ env, fetchImpl = fetch }) {
   const attempted = [];
   try {
     for (const target of targets) {
+      // Re-check the runtime lock before each external registration request.
+      await assertReady();
       // Track before sending: a network timeout can happen after Telegram
       // accepted setWebhook but before its response reached this process.
       attempted.push(target);
@@ -86,6 +88,9 @@ async function registerPlatformTelegramWebhooks({ env, fetchImpl = fetch }) {
         drop_pending_updates: false
       }, fetchImpl);
     }
+    // A lock can be lost while Telegram is processing the final request.
+    // Roll back every attempted registration if the runtime is no longer safe.
+    await assertReady();
   } catch (error) {
     const rollbackErrors = [];
     for (const target of attempted.reverse()) {
@@ -270,7 +275,17 @@ async function startPlatformHost({ env = process.env, logger = console, db: inje
 
     const done = worker.start();
     await waitForPlatformWorkerReady(workerReady, Number(env.PLATFORM_WEBHOOK_READY_TIMEOUT_MS || 30000));
-    const registeredWebhooks = await registerPlatformTelegramWebhooks({ env });
+    const registeredWebhooks = await registerPlatformTelegramWebhooks({
+      env,
+      async assertReady() {
+        if (stopping || !ready) {
+          throw new Error('Platform runtime became unavailable during webhook registration');
+        }
+        if (!(await db.isTelegramRuntimeLockHeld())) {
+          throw new Error('Telegram runtime lock was lost during webhook registration');
+        }
+      }
+    });
     logger.log('BOSS platform webhook host started; Telegram webhooks registered:', registeredWebhooks.join(', '), worker.workerId);
 
     return {
