@@ -707,6 +707,81 @@ async function getProjectSecrets({ telegramUserId, projectId }) {
   return secrets;
 }
 
+
+async function enqueueProjectNotification({ dedupeKey, eventType, payload }) {
+  if (typeof dedupeKey !== 'string' || !dedupeKey.trim() || dedupeKey.length > 200) {
+    throw new Error('مفتاح منع التكرار للإشعار غير صالح');
+  }
+  if (typeof eventType !== 'string' || !eventType.trim() || eventType.length > 100) {
+    throw new Error('نوع الإشعار غير صالح');
+  }
+  const result = await pool.query(`
+    INSERT INTO project_notification_outbox (dedupe_key, event_type, payload)
+    VALUES ($1, $2, $3::jsonb)
+    ON CONFLICT (dedupe_key) DO NOTHING
+    RETURNING id, dedupe_key, state
+  `, [dedupeKey, eventType, JSON.stringify(payload ?? {})]);
+  if (result.rowCount) return result.rows[0];
+  const existing = await pool.query(
+    'SELECT id, dedupe_key, state FROM project_notification_outbox WHERE dedupe_key = $1',
+    [dedupeKey]
+  );
+  return existing.rows[0] || null;
+}
+
+async function claimProjectNotifications({ workerId, limit = 10, leaseSeconds = 60 }) {
+  if (typeof workerId !== 'string' || !workerId.trim() || workerId.length > 200) {
+    throw new Error('معرّف عامل الإشعارات غير صالح');
+  }
+  const safeLimit = Math.max(1, Math.min(100, Math.floor(Number(limit) || 10)));
+  const safeLease = Math.max(10, Math.min(3600, Math.floor(Number(leaseSeconds) || 60)));
+  const result = await pool.query(`
+    WITH candidates AS (
+      SELECT id
+      FROM project_notification_outbox
+      WHERE available_at <= NOW()
+        AND (state = 'pending'
+          OR (state = 'processing' AND locked_at < NOW() - ($3::int * INTERVAL '1 second')))
+      ORDER BY available_at, id
+      FOR UPDATE SKIP LOCKED
+      LIMIT $2
+    )
+    UPDATE project_notification_outbox AS o
+    SET state = 'processing', attempts = attempts + 1,
+        locked_by = $1, locked_at = NOW(), updated_at = NOW()
+    FROM candidates
+    WHERE o.id = candidates.id
+    RETURNING o.*
+  `, [workerId, safeLimit, safeLease]);
+  return result.rows;
+}
+
+async function completeProjectNotification({ id, workerId }) {
+  const result = await pool.query(`
+    UPDATE project_notification_outbox
+    SET state = 'sent', sent_at = NOW(), locked_by = NULL,
+        locked_at = NULL, last_error = NULL, updated_at = NOW()
+    WHERE id = $1 AND state = 'processing' AND locked_by = $2
+    RETURNING id
+  `, [id, workerId]);
+  return result.rowCount === 1;
+}
+
+async function retryProjectNotification({ id, workerId, error, delaySeconds = 60, maxAttempts = 12 }) {
+  const delay = Math.max(5, Math.min(86400, Math.floor(Number(delaySeconds) || 60)));
+  const max = Math.max(1, Math.min(100, Math.floor(Number(maxAttempts) || 12)));
+  const result = await pool.query(`
+    UPDATE project_notification_outbox
+    SET state = CASE WHEN attempts >= $5 THEN 'dead' ELSE 'pending' END,
+        available_at = NOW() + ($4::int * INTERVAL '1 second'),
+        locked_by = NULL, locked_at = NULL,
+        last_error = LEFT($3, 2000), updated_at = NOW()
+    WHERE id = $1 AND state = 'processing' AND locked_by = $2
+    RETURNING id, state, attempts
+  `, [id, workerId, String(error || 'Unknown notification error'), delay, max]);
+  return result.rows[0] || null;
+}
+
 module.exports = {
   initProjectDatabase,
   setProjectSecret,
@@ -727,6 +802,10 @@ module.exports = {
   saveIntakeSession,
   deleteIntakeSession,
   approveProjectSpec,
+  enqueueProjectNotification,
+  claimProjectNotifications,
+  completeProjectNotification,
+  retryProjectNotification,
   ...projectAiJobs,
   ...projectApprovals,
   ...projectRelease
