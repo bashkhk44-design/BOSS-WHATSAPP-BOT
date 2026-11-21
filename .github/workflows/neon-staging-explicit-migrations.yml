@@ -23,11 +23,12 @@ jobs:
     environment: cloudflare-staging
     env:
       DATABASE_URL: ${{ secrets.CLOUDFLARE_STAGING_DATABASE_URL }}
+      DATABASE_SSL_REJECT_UNAUTHORIZED: 'true'
     steps:
       - name: Checkout reviewed staging branch
         uses: actions/checkout@v4
         with:
-          ref: 5395b4a1b1a95b826341980f2f30d611361624d9
+          ref: fb7c9f02703d4de0d15b3f871d79da78f8eecf58
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -69,9 +70,11 @@ jobs:
               throw new Error('Refusing connection: URL does not match the approved Neon STAGING host/database/role/TLS target.');
             }
 
+            const tlsUrl = new URL(process.env.DATABASE_URL);
+            tlsUrl.searchParams.delete('sslmode');
             const pool = new Pool({
-              connectionString: process.env.DATABASE_URL,
-              ssl: { rejectUnauthorized: false },
+              connectionString: tlsUrl.toString(),
+              ssl: { rejectUnauthorized: true, servername: EXPECTED_HOST },
               max: 1,
               connectionTimeoutMillis: 10000,
               query_timeout: 10000,
@@ -166,9 +169,11 @@ jobs:
           const { Pool } = require('pg');
 
           async function main() {
+            const tlsUrl = new URL(process.env.DATABASE_URL);
+            tlsUrl.searchParams.delete('sslmode');
             const pool = new Pool({
-              connectionString: process.env.DATABASE_URL,
-              ssl: { rejectUnauthorized: false },
+              connectionString: tlsUrl.toString(),
+              ssl: { rejectUnauthorized: true, servername: 'ep-sweet-breeze-bepbeuoj.c-9.us-east-2.aws.neon.tech' },
               max: 1,
               connectionTimeoutMillis: 10000,
               query_timeout: 10000,
