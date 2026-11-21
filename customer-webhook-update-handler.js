@@ -93,12 +93,20 @@ function createCustomerWebhookUpdateHandler({ pool, decryptToken, createCustomer
         !Number.isSafeInteger(updateId) || updateId < 0 ||
         Number(job?.payload?.botId) !== botId) return false;
     const renewed = await pool.query(`
-      UPDATE bot_inbound_updates
-      SET locked_at = NOW()
-      WHERE bot_id = $1 AND update_id = $2 AND state = 'processing'
-      RETURNING id
+      WITH refreshed AS (
+        UPDATE bot_inbound_updates
+        SET locked_at = NOW()
+        WHERE bot_id = $1 AND update_id = $2 AND state = 'processing'
+        RETURNING id
+      )
+      SELECT
+        EXISTS (SELECT 1 FROM refreshed)
+        OR EXISTS (
+          SELECT 1 FROM bot_inbound_updates
+          WHERE bot_id = $1 AND update_id = $2 AND state IN ('processed','failed')
+        ) AS renewed
     `, [botId, updateId]);
-    return renewed.rowCount > 0;
+    return renewed.rows[0]?.renewed === true;
   };
 
   return handleCustomerUpdate;
