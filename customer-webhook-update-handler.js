@@ -5,7 +5,7 @@ function createCustomerWebhookUpdateHandler({ pool, decryptToken, createCustomer
   if (typeof decryptToken !== 'function') throw new TypeError('decryptToken is required');
   if (typeof createCustomerBot !== 'function') throw new TypeError('createCustomerBot is required');
 
-  return async function handleCustomerUpdate(job, { leaseSeconds = 120 } = {}) {
+  const handleCustomerUpdate = async function handleCustomerUpdate(job, { leaseSeconds = 120 } = {}) {
     const botId = Number(job?.bot_id);
     const updateId = Number(job?.payload?.updateId);
     if (!Number.isSafeInteger(botId) || botId < 1 ||
@@ -62,7 +62,7 @@ function createCustomerWebhookUpdateHandler({ pool, decryptToken, createCustomer
 
     try {
       const token = decryptToken(row);
-      const bot = createCustomerBot(row, token);
+      const bot = createCustomerBot(row, token, { propagateErrors: true });
       if (!bot || typeof bot.handleUpdate !== 'function') {
         throw new Error('Customer bot adapter does not expose handleUpdate');
       }
@@ -83,6 +83,25 @@ function createCustomerWebhookUpdateHandler({ pool, decryptToken, createCustomer
       throw error;
     }
   };
+
+  // Keep the inbox lease alive alongside the platform_jobs lease. Without this,
+  // a long Telegram update could be reclaimed by another worker while still running.
+  handleCustomerUpdate.renewLease = async function renewInboxLease(job) {
+    const botId = Number(job?.bot_id);
+    const updateId = Number(job?.payload?.updateId);
+    if (!Number.isSafeInteger(botId) || botId < 1 ||
+        !Number.isSafeInteger(updateId) || updateId < 0 ||
+        Number(job?.payload?.botId) !== botId) return false;
+    const renewed = await pool.query(`
+      UPDATE bot_inbound_updates
+      SET locked_at = NOW()
+      WHERE bot_id = $1 AND update_id = $2 AND state = 'processing'
+      RETURNING id
+    `, [botId, updateId]);
+    return renewed.rowCount > 0;
+  };
+
+  return handleCustomerUpdate;
 }
 
 module.exports = { createCustomerWebhookUpdateHandler };
