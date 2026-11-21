@@ -8,7 +8,7 @@
 
 ## Required environment
 
-Copy `.env.platform.example` to a private local environment file and populate it with staging-only values. Do not commit the populated file. The worker requires the existing PostgreSQL URL, 32-byte hex encryption key, master bot token, administrator Telegram ID, and intake bot token. The ingress requires the database URL and two independent URL-safe webhook secrets (32-256 characters).
+Copy `.env.platform.example` to a private local environment file and populate it with staging-only values. Do not commit the populated file. The worker requires a PostgreSQL application URL, a separate direct PostgreSQL URL for its session-scoped Telegram advisory lock, a 32-byte hex encryption key, master bot token, administrator Telegram ID, and intake bot token. Both database URLs must target the same isolated staging database; do not use a pooler endpoint for `DATABASE_DIRECT_URL`. The ingress requires the database URL and two independent URL-safe webhook secrets (32-256 characters).
 
 Set Telegram's `secret_token` for the master bot to `MASTER_WEBHOOK_SECRET` and for the intake bot to `INTAKE_WEBHOOK_SECRET`. Keep those values separate from bot tokens. Configure each Telegram webhook URL to its matching route only after both staging services are deployed and tested.
 
@@ -18,7 +18,7 @@ Set Telegram's `secret_token` for the master bot to `MASTER_WEBHOOK_SECRET` and 
 - The platform worker registers no customer `telegram.update` handler.
 - The webhook ingress never receives or logs bot tokens.
 - The ingress and worker are separate processes/services; the worker must have no public ingress.
-- Start with a disposable PostgreSQL database and staging Telegram bots. Do not point these processes at production or call Telegram `setWebhook` until the full staging acceptance test is complete.
+- Start with a disposable PostgreSQL database and staging Telegram bots. Set `DATABASE_DIRECT_URL` to the database's direct (non-pooler) endpoint so the advisory lock stays on one PostgreSQL session. Do not point these processes at production or call Telegram `setWebhook` until the full staging acceptance test is complete.
 - This wiring does not deploy services, change Telegram webhook configuration, migrate production data, or alter production secrets.
 
 ## Verification still required
