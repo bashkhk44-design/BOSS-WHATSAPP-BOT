@@ -94,6 +94,7 @@ function createPlatformRuntimeLock({
       closePromise = (async () => {
         ready = false;
         setLockFailureHandler(null);
+        onLockFailureHandler = null;
         if (ownsLock) {
           ownsLock = false;
           await releaseLock();
