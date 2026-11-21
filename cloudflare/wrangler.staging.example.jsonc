@@ -5,7 +5,8 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "vars": {
-    "PLATFORM_BOT_WEBHOOK_MODE": "disabled"
+    "PLATFORM_BOT_WEBHOOK_MODE": "disabled",
+    "PLATFORM_WORKER_WAKE_URL": "https://REPLACE_WITH_RENDER_SERVICE.onrender.com/readyz"
   },
   "hyperdrive": [
     {
