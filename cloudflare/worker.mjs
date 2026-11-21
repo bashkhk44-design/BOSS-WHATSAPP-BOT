@@ -118,7 +118,7 @@ async function handleCustomerWebhook(request, env, botId, ClientClass, enqueue, 
   try {
     client = new ClientClass({ connectionString, connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS, query_timeout: DB_QUERY_TIMEOUT_MS, statement_timeout: DB_QUERY_TIMEOUT_MS });
     await client.connect();
-    const active = await client.query('SELECT id FROM telegram_bots WHERE id = $1 AND active = TRUE LIMIT 1', [botId]);
+    const active = await client.query('SELECT id FROM telegram_bots WHERE id = $1 AND active = TRUE AND transport_mode = 'webhook' LIMIT 1', [botId]);
     if (!active.rowCount) return jsonResponse(404, { ok: false, error: 'bot_not_found' });
     const queued = await enqueue(client, { botId: Number(botId), update });
     return jsonResponse(200, { ok: true, duplicate: queued.duplicate, queued: !queued.duplicate });
