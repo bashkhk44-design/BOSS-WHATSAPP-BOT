@@ -90,8 +90,9 @@ export async function deriveCustomerWebhookSecret(rootSecret, botId) {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-async function handleCustomerWebhook(request, env, botId, ClientClass, enqueue) {
+async function handleCustomerWebhook(request, env, botId, ClientClass, enqueue, maxBodyBytes) {
   if (env.CUSTOMER_BOT_WEBHOOK_MODE !== 'enabled') return jsonResponse(404, { ok: false, error: 'not_found' });
+  if (!Number.isSafeInteger(Number(botId)) || Number(botId) < 1) return jsonResponse(404, { ok: false, error: 'not_found' });
   if (request.method !== 'POST') return new Response(JSON.stringify({ ok: false, error: 'method_not_allowed' }), {
     status: 405, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', allow: 'POST' }
   });
@@ -101,12 +102,12 @@ async function handleCustomerWebhook(request, env, botId, ClientClass, enqueue) 
   if (encoding !== 'identity') { await request.body?.cancel().catch(() => {}); return jsonResponse(415, { ok: false, error: 'unsupported_content_encoding' }); }
   const declaredLength = request.headers.get('content-length');
   if (declaredLength !== null && (!/^\d+$/.test(declaredLength) || !Number.isSafeInteger(Number(declaredLength)))) return jsonResponse(400, { ok: false, error: 'invalid_content_length' });
-  if (declaredLength !== null && Number(declaredLength) > MAX_BODY_BYTES) { await request.body?.cancel(); return jsonResponse(413, { ok: false, error: 'payload_too_large' }); }
+  if (declaredLength !== null && Number(declaredLength) > maxBodyBytes) { await request.body?.cancel(); return jsonResponse(413, { ok: false, error: 'payload_too_large' }); }
   const expectedSecret = await deriveCustomerWebhookSecret(env.CUSTOMER_WEBHOOK_SECRET, botId);
   if (!expectedSecret || !safeEqual(request.headers.get('x-telegram-bot-api-secret-token'), expectedSecret)) {
     await request.body?.cancel(); return jsonResponse(401, { ok: false, error: 'unauthorized' });
   }
-  const body = await readRequestBody(request, MAX_BODY_BYTES);
+  const body = await readRequestBody(request, maxBodyBytes);
   if (body.tooLarge) return jsonResponse(413, { ok: false, error: 'payload_too_large' });
   let update;
   try { update = JSON.parse(new TextDecoder().decode(body.bytes)); } catch (_) { return jsonResponse(400, { ok: false, error: 'invalid_json' }); }
@@ -147,7 +148,7 @@ export function createPlatformWebhookHandler({
     }
 
     const customerMatch = url.pathname.match(/^\/telegram\/customer\/(\d+)$/);
-    if (customerMatch) return handleCustomerWebhook(request, env, customerMatch[1], ClientClass, enqueueCustomer);
+    if (customerMatch) return handleCustomerWebhook(request, env, customerMatch[1], ClientClass, enqueueCustomer, maxBodyBytes);
 
     const match = url.pathname.match(/^\/telegram\/platform\/(master|intake)$/);
     if (!match || env.PLATFORM_BOT_WEBHOOK_MODE !== 'enabled') {
