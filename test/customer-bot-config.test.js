@@ -173,6 +173,23 @@ test('fails closed when stored release artifact digest does not match', async ()
   );
 });
 
+test('fails closed when a bot has only half of its project ownership assignment', async () => {
+  await assert.rejects(
+    loadApprovedCustomerBotConfig({
+      pool: { async query() { throw new Error('query should not run'); } },
+      record: { client_id: 8, project_id: null }
+    }),
+    /project assignment is incomplete or invalid/
+  );
+  await assert.rejects(
+    loadApprovedCustomerBotConfig({
+      pool: { async query() { throw new Error('query should not run'); } },
+      record: { client_id: null, project_id: 12 }
+    }),
+    /project assignment is incomplete or invalid/
+  );
+});
+
 test('does not load a release for a bot that is not assigned to a customer project', async () => {
   const config = await loadApprovedCustomerBotConfig({
     pool: { async query() { throw new Error('query should not run'); } },
