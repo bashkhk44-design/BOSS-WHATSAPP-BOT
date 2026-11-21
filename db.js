@@ -297,7 +297,7 @@ async function verifyDatabaseSchema() {
   );
 
   const requiredVersions = APPROVED_MIGRATION_FILES.map(
-    (filename) => filename.replace(/\\.sql$/i, '')
+    (filename) => filename.replace(/\.sql$/i, '')
   );
   const ledgerResult = await pool.query(
     'SELECT version FROM schema_migrations WHERE version = ANY($1::text[])',
