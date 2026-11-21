@@ -48,6 +48,8 @@ async function startPlatformHost({ env = process.env, logger = console } = {}) {
     });
   };
 
+  process.on('boss:runtime-lock-lost', onLockLost);
+
   try {
     master = createMasterRuntime({
       env,
@@ -93,7 +95,6 @@ async function startPlatformHost({ env = process.env, logger = console } = {}) {
       throw new Error('Telegram runtime lock was lost before queue worker startup');
     }
 
-    process.on('boss:runtime-lock-lost', onLockLost);
     const done = worker.start();
     logger.log('BOSS platform webhook host started; waiting for queue health:', worker.workerId);
 
@@ -107,6 +108,7 @@ async function startPlatformHost({ env = process.env, logger = console } = {}) {
       }
     };
   } catch (error) {
+    process.removeListener('boss:runtime-lock-lost', onLockLost);
     try {
       await close();
     } catch (cleanupError) {
