@@ -9,9 +9,9 @@
 
 ## Required environment
 
-Copy `.env.platform.example` to a private local environment file and populate it with staging-only values. Do not commit the populated file. The worker requires the existing PostgreSQL URL, 32-byte hex encryption key, master bot token, administrator Telegram ID, and intake bot token. The ingress requires the database URL and two independent URL-safe webhook secrets (32-256 characters).
+Copy `.env.platform.example` to a private local environment file and populate it with staging-only values. Do not commit the populated file. The worker requires the PostgreSQL URL, 32-byte hex encryption key, master bot token, administrator Telegram ID, and intake bot token. The ingress requires the database URL, two independent URL-safe webhook secrets (32-256 characters), and `PLATFORM_WORKER_READY_URL` pointing to the Render host's HTTPS `/readyz` endpoint.
 
-Set Telegram's `secret_token` for the master bot to `MASTER_WEBHOOK_SECRET` and for the intake bot to `INTAKE_WEBHOOK_SECRET`. Keep those values separate from bot tokens. Configure each Telegram webhook URL to its matching route only after both staging services are deployed and tested.
+Set the Render staging service start command to `npm run start:platform-host` and its health-check path to `/readyz`. This must be a separate staging service until acceptance is complete; do not replace the current polling service yet. Set Telegram's `secret_token` for the master bot to `MASTER_WEBHOOK_SECRET` and for the intake bot to `INTAKE_WEBHOOK_SECRET`. Keep those values separate from bot tokens. Configure each Telegram webhook URL to its matching Cloudflare route only after both staging services are deployed and tested.
 
 ## Isolation and deployment boundary
 
