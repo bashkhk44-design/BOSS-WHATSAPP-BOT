@@ -273,18 +273,18 @@ async function persistSessionUpdate(ctx, session, step, data, options = {}) {
   });
 }
 
-async function persistTurn(ctx, session, step, data, assistantMessage, userMessage) {
+async function persistTurn(ctx, session, step, data, assistantMessage, userMessage, options = {}) {
   const messages = [];
   if (userMessage) messages.push({ role: 'client', content: userMessage });
   if (assistantMessage) messages.push({ role: 'assistant', content: assistantMessage });
-  return persistSessionUpdate(ctx, session, step, data, { messages });
+  return persistSessionUpdate(ctx, session, step, data, { ...options, messages });
 }
 
-async function runInteractiveIntake(ctx, session, userMessage = '') {
+async function runInteractiveIntake(ctx, session, userMessage = '', persistOptions = {}) {
   if (session.data?.aiFallback) {
     const result = advanceFallbackIntake(session.data, userMessage);
     const nextStep = result.readyForReview ? 'review' : 'ai_intake';
-    const persisted = await persistTurn(ctx, session, nextStep, result.data, result.assistantMessage, userMessage);
+    const persisted = await persistTurn(ctx, session, nextStep, result.data, result.assistantMessage, userMessage, persistOptions);
     if (!persisted.processed) return;
     if (result.readyForReview) {
       await ctx.reply('اكتمل جمع المتطلبات دون الاعتماد على المحلل الذكي. هذا ملخص طلبك:');
@@ -317,7 +317,7 @@ async function runInteractiveIntake(ctx, session, userMessage = '') {
     const notice = '⚠️ المحلل الذكي غير متاح مؤقتاً بسبب حد الاستخدام أو مشكلة اتصال. حفظنا إجابتك وسنكمل جمع المواصفات بأسئلة واضحة دون فقدان ما سبق.\\n\\n';
     const persisted = await persistTurn(
       ctx, session, 'ai_intake', fallback.data,
-      notice + fallback.assistantMessage, userMessage
+      notice + fallback.assistantMessage, userMessage, persistOptions
     );
     if (!persisted.processed) return;
     await ctx.reply(notice + fallback.assistantMessage);
@@ -332,7 +332,7 @@ async function runInteractiveIntake(ctx, session, userMessage = '') {
     aiIntakeMissing: missingItems
   };
   const nextStep = readyForReview ? 'review' : 'ai_intake';
-  const persisted = await persistTurn(ctx, session, nextStep, data, result.assistantMessage, userMessage);
+  const persisted = await persistTurn(ctx, session, nextStep, data, result.assistantMessage, userMessage, persistOptions);
   if (!persisted.processed) return;
 
   if (readyForReview) {
@@ -513,19 +513,21 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
 
     const editing = session.step === 'edit_business_type';
     const nextStep = editing ? 'review' : 'ai_intake';
-    const saved = await persistSessionUpdate(ctx, session, nextStep, data, {
-      businessType,
-      messages: [{ role: 'client', content: `نوع النشاط: ${typeName(businessType)}` }]
-    });
-    if (!saved.processed) return;
-
     await ctx.answerCallbackQuery();
 
     const nextSession = { ...session, step: nextStep, data };
     if (editing) {
+      const saved = await persistSessionUpdate(ctx, session, nextStep, data, {
+        businessType,
+        messages: [{ role: 'client', content: `نوع النشاط: ${typeName(businessType)}` }]
+      });
+      if (!saved.processed) return;
       await askNext(ctx, nextSession);
     } else {
-      await runInteractiveIntake(ctx, nextSession, '');
+      await runInteractiveIntake(ctx, nextSession, '', {
+        businessType,
+        messages: [{ role: 'client', content: `نوع النشاط: ${typeName(businessType)}` }]
+      });
     }
   });
 
