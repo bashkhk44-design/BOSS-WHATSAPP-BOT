@@ -48,6 +48,7 @@ function createIntakeRuntime({ dependencies = null, createBot = null } = {}) {
   let intakeStopping = false;
   let intakeMode = null;
   let notificationTimer = null;
+  let notifyAdminHandler = null;
 
 
 const TYPES = [
@@ -63,7 +64,7 @@ const TYPES = [
 
 
 async function dispatchPendingNotifications() {
-  if (typeof notifyAdmin !== 'function') return 0;
+  if (typeof notifyAdminHandler !== 'function') return 0;
   const workerId = `intake-notifier:${process.pid}`;
   const jobs = await runtimeDependencies.claimProjectNotifications({ workerId, limit: 10, leaseSeconds: 90 });
   let sent = 0;
@@ -88,7 +89,7 @@ async function dispatchPendingNotifications() {
       ].join('\n');
       const adminKeyboard = new InlineKeyboard()
         .text('🤖 إحالة إلى Gemini للتحليل', `project:ai:${payload.projectId}`);
-      await notifyAdmin({ text: text.length > 3500 ? text.slice(0, 3500) + '\n... تم اختصار بقية التفاصيل.' : text, extra: { reply_markup: adminKeyboard } });
+      await notifyAdminHandler({ text: text.length > 3500 ? text.slice(0, 3500) + '\n... تم اختصار بقية التفاصيل.' : text, extra: { reply_markup: adminKeyboard } });
       const completed = await runtimeDependencies.completeProjectNotification({ id: job.id, workerId });
       if (completed) sent += 1;
     } catch (error) {
@@ -386,6 +387,7 @@ function createWebhookAdapter(bot) {
 }
 
 async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) {
+  notifyAdminHandler = typeof notifyAdmin === 'function' ? notifyAdmin : null;
   const mode = options.mode === 'webhook' ? 'webhook' : 'polling';
   if (options.mode !== undefined && !['polling', 'webhook'].includes(options.mode)) {
     throw new TypeError('Intake runtime mode must be polling or webhook');
@@ -902,7 +904,7 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
   const currentBot = intakeBot;
   intakeStopping = false;
   if (notificationTimer) clearInterval(notificationTimer);
-  if (typeof notifyAdmin === 'function') {
+  if (typeof notifyAdminHandler === 'function') {
     dispatchPendingNotifications().catch(error => console.error('OUTBOX STARTUP ERROR:', error.message));
     notificationTimer = setInterval(() => {
       dispatchPendingNotifications().catch(error => console.error('OUTBOX POLL ERROR:', error.message));
