@@ -19,7 +19,7 @@ function createCustomerWebhookUpdateHandler({ pool, decryptToken, createCustomer
              b.token_ciphertext, b.token_iv, b.token_auth_tag
       FROM bot_inbound_updates u
       JOIN telegram_bots b ON b.id = u.bot_id
-      WHERE u.bot_id = $1 AND u.update_id = $2 AND b.active = TRUE
+      WHERE u.bot_id = $1 AND u.update_id = $2 AND b.active = TRUE AND b.transport_mode = 'webhook'
       LIMIT 1
     `, [botId, updateId]);
     if (!result.rowCount) throw new Error('Customer update or active bot was not found');
