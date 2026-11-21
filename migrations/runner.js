@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { getPostgresSslConfig } = require('../postgres-ssl');
 
 const LOCK_KEY_1 = 20261117;
 const LOCK_KEY_2 = 1;
@@ -159,22 +160,23 @@ function createMigrationRunner({
   };
 }
 
-async function main() {
-  if (!process.env.DATABASE_URL) {
+function createMigrationPoolOptions(env = process.env) {
+  if (!env.DATABASE_URL) {
     throw new Error('DATABASE_URL is required to run database migrations');
   }
 
-  const { Pool } = require('pg');
-
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === 'disable'
-      ? false
-      : { rejectUnauthorized: false },
+  return {
+    connectionString: env.DATABASE_URL,
+    ssl: getPostgresSslConfig(env),
     max: 1,
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 10000
-  });
+  };
+}
+
+async function main() {
+  const { Pool } = require('pg');
+  const pool = new Pool(createMigrationPoolOptions());
 
   try {
     const runner = createMigrationRunner({ pool });
@@ -195,6 +197,7 @@ if (require.main === module) {
 module.exports = {
   APPROVED_MIGRATION_FILES,
   createMigrationRunner,
+  createMigrationPoolOptions,
   listMigrationFiles,
   extractMigrationBody
 };
