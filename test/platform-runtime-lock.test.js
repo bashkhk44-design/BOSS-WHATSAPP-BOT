@@ -75,7 +75,7 @@ test('lost runtime lock marks webhook runtime unready and notifies the fail-clos
   const state = setup({ lockHeld: () => lockHeld });
   await state.runtime.start({ onLockFailure: async error => { notified = error.message; } });
   lockHeld = false;
-  await assert.rejects(state.runtime.assertReady(), /no longer owns/);
+  await assert.rejects(state.runtime.assertReady(), /no longer held/);
   assert.equal(state.runtime.ready, false);
   assert.equal(notified, 'Telegram runtime lock is no longer held');
   // A later driver notification must not invoke shutdown twice.
@@ -105,5 +105,5 @@ test('close clears the failure handler and releases an owned lock once', async (
   assert.equal(runtime.ready, false);
   assert.equal(runtime.ownsLock, false);
   assert.equal(events.filter(item => item === 'release').length, 1);
-  assert.equal(events.at(-1), 'clear-handler');
+  assert.deepEqual(events.slice(-2), ['clear-handler', 'release']);
 });
