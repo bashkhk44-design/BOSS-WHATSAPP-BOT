@@ -215,3 +215,48 @@ test('fails closed when a lease-required runtime has no matching owner row', asy
   assert.equal(runtime.getRuntimeSnapshot()[0].leaseLost, true);
   await runtime.stopBotRuntime();
 });
+
+
+test('loads approved project runtime config before creating the customer bot', async () => {
+  const records = [{
+    id: 21,
+    client_id: 7,
+    project_id: 31,
+    name: 'Configured',
+    username: 'configured_bot',
+    active: true,
+    token_ciphertext: 'encrypted'
+  }];
+  const pool = fixturePool(records);
+  const bots = fixtureBotFactory();
+  const runtimeConfig = {
+    schemaVersion: 1,
+    welcomeText: 'Hello from approved release',
+    helpText: 'Help',
+    commands: [{ command: 'catalog', description: 'Catalog', text: 'Items' }],
+    releaseId: '91'
+  };
+  let loadedFor = null;
+  let receivedRecord = null;
+  const runtime = createBotRuntime({
+    pool,
+    decryptToken: () => 'token',
+    loadRuntimeConfig: async record => {
+      loadedFor = { client_id: record.client_id, project_id: record.project_id };
+      return runtimeConfig;
+    },
+    createCustomerBot: record => {
+      receivedRecord = record;
+      return bots.create(record);
+    },
+    logger: { log() {}, error() {} },
+    heartbeatIntervalMs: 100000
+  });
+
+  await runtime.startBotById(21);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(loadedFor, { client_id: 7, project_id: 31 });
+  assert.equal(receivedRecord.runtimeConfig, runtimeConfig);
+  assert.deepEqual(bots.started, ['21']);
+  await runtime.stopBotById(21);
+});
