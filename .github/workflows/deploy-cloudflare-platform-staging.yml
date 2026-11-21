@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   deploy-staging:
-    if: ${{ inputs.confirmation == 'DEPLOY-BOSS-STAGING' }}
+    if: ${{ github.ref == 'refs/heads/staging/unified-platform-tls-migrations' && inputs.confirmation == 'DEPLOY-BOSS-STAGING' }}
     runs-on: ubuntu-latest
     environment: boss-platform-staging
 
@@ -29,6 +29,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          EXPECTED_REF="refs/heads/staging/unified-platform-tls-migrations"
+          if [ "$GITHUB_REF" != "$EXPECTED_REF" ]; then
+            echo "Refusing deployment: this workflow must run from $EXPECTED_REF."
+            exit 1
+          fi
 
           CONFIG="cloudflare/wrangler.staging.jsonc"
 
