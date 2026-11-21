@@ -102,7 +102,7 @@ test('Cloudflare Worker authenticates platform identities and atomically enqueue
 test('Cloudflare Worker rejects cross-identity secrets without opening a database client', async () => {
   const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
   const { FakeClient, state } = makeClientClass();
-  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient, fetchImpl: async () => new Response('ok', { status: 200 }) });
 
   const response = await handler(makeRequest('/telegram/platform/master', {
     secret: env.INTAKE_WEBHOOK_SECRET
@@ -115,7 +115,7 @@ test('Cloudflare Worker rejects cross-identity secrets without opening a databas
 test('Cloudflare Worker validates route, mode, method, and content type before database access', async () => {
   const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
   const { FakeClient, state } = makeClientClass();
-  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient, fetchImpl: async () => new Response('ok', { status: 200 }) });
 
   assert.equal((await handler(makeRequest('/telegram/platform/customer'), env)).status, 404);
   assert.equal((await handler(makeRequest('/telegram/platform/master', { method: 'GET' }), env)).status, 405);
@@ -149,7 +149,7 @@ test('Cloudflare Worker rejects malformed JSON, invalid update IDs, and oversize
 test('Cloudflare Worker fails closed when the Hyperdrive binding is missing', async () => {
   const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
   const { FakeClient, state } = makeClientClass();
-  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient, fetchImpl: async () => new Response('ok', { status: 200 }) });
 
   const response = await handler(makeRequest('/telegram/platform/master'), {
     ...env,
@@ -163,7 +163,7 @@ test('Cloudflare Worker fails closed when the Hyperdrive binding is missing', as
 test('Cloudflare Worker acknowledges duplicate delivery and always closes the Hyperdrive client', async () => {
   const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
   const { FakeClient, state } = makeClientClass({ duplicate: true });
-  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient, fetchImpl: async () => new Response('ok', { status: 200 }) });
 
   const response = await handler(makeRequest('/telegram/platform/master'), env);
   assert.equal(response.status, 200);
@@ -174,7 +174,7 @@ test('Cloudflare Worker acknowledges duplicate delivery and always closes the Hy
 test('Cloudflare Worker returns generic database errors and closes failed clients', async () => {
   const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
   const { FakeClient, state } = makeClientClass({ failQuery: true });
-  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient, fetchImpl: async () => new Response('ok', { status: 200 }) });
   const response = await handler(makeRequest('/telegram/platform/master'), env);
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { ok: false, error: 'temporarily_unavailable' });
@@ -184,7 +184,7 @@ test('Cloudflare Worker returns generic database errors and closes failed client
 test('Cloudflare Worker health check verifies PostgreSQL through Hyperdrive and closes the client', async () => {
   const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
   const { FakeClient, state } = makeClientClass();
-  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient, fetchImpl: async () => new Response('ok', { status: 200 }) });
   const response = await handler(new Request('https://edge.example.invalid/healthz'), env);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
@@ -251,7 +251,7 @@ test('Cloudflare configuration keeps Hyperdrive and Worker compatibility staging
 test('Cloudflare Worker rejects reuse of either platform webhook secret as either bot token', async () => {
   const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
   const { FakeClient, state } = makeClientClass();
-  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient, fetchImpl: async () => new Response('ok', { status: 200 }) });
 
   const cases = [
     ['MASTER_WEBHOOK_SECRET', 'TELEGRAM_BOT_TOKEN'],
