@@ -103,6 +103,22 @@ async function dispatchPendingNotifications() {
   return sent;
 }
 
+function startNotificationPolling() {
+  if (notificationTimer) clearInterval(notificationTimer);
+  notificationTimer = null;
+  if (typeof notifyAdminHandler !== 'function') return;
+  dispatchPendingNotifications().catch(error => console.error('OUTBOX STARTUP ERROR:', error.message));
+  notificationTimer = setInterval(() => {
+    dispatchPendingNotifications().catch(error => console.error('OUTBOX POLL ERROR:', error.message));
+  }, 15000);
+  if (typeof notificationTimer.unref === 'function') notificationTimer.unref();
+}
+
+function stopNotificationPolling() {
+  if (notificationTimer) clearInterval(notificationTimer);
+  notificationTimer = null;
+}
+
 async function saveMessage(userId, projectId, role, content) {
   await addConversationMessage({
     telegramUserId: userId,
@@ -377,6 +393,8 @@ function createWebhookAdapter(bot) {
     },
     async stop() {
       if (intakeBot === bot && intakeMode === 'webhook') {
+        stopNotificationPolling();
+        notifyAdminHandler = null;
         intakeBot = null;
         pollingPromise = null;
         intakeReadyPromise = null;
@@ -854,20 +872,14 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
 
   const currentBot = intakeBot;
   intakeStopping = false;
-  if (notificationTimer) clearInterval(notificationTimer);
-  if (typeof notifyAdminHandler === 'function') {
-    dispatchPendingNotifications().catch(error => console.error('OUTBOX STARTUP ERROR:', error.message));
-    notificationTimer = setInterval(() => {
-      dispatchPendingNotifications().catch(error => console.error('OUTBOX POLL ERROR:', error.message));
-    }, 15000);
-    if (typeof notificationTimer.unref === 'function') notificationTimer.unref();
-  }
-
   if (mode === 'webhook') {
     try {
       await currentBot.init();
+      startNotificationPolling();
       return createWebhookAdapter(currentBot);
     } catch (error) {
+      stopNotificationPolling();
+      notifyAdminHandler = null;
       if (intakeBot === currentBot) {
         intakeBot = null;
         pollingPromise = null;
@@ -922,8 +934,11 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
 
   try {
     await intakeReadyPromise;
+    startNotificationPolling();
     return currentBot;
   } catch (err) {
+    stopNotificationPolling();
+    notifyAdminHandler = null;
     intakeStopping = true;
 
     try {
@@ -942,7 +957,8 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
 }
 
 async function stopIntakeBot() {
-  if (notificationTimer) { clearInterval(notificationTimer); notificationTimer = null; }
+  stopNotificationPolling();
+  notifyAdminHandler = null;
   const currentBot = intakeBot;
   if (!currentBot) return;
 
