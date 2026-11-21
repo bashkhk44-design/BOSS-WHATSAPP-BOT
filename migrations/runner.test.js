@@ -14,7 +14,7 @@ const TEST_FILE = '001_test_migration.sql';
 const TEST_SQL = 'BEGIN;\nSELECT 1;\nCOMMIT;\n';
 const TEST_CHECKSUM = getMigrationChecksum(TEST_SQL);
 
-function createHarness({ existingRow = false, existingChecksum = null } = {}) {
+function createHarness({ existingRow = false, existingChecksum = null, existingChecksumMissing = false } = {}) {
   const statements = [];
   const warnings = [];
   let released = false;
@@ -29,7 +29,9 @@ function createHarness({ existingRow = false, existingChecksum = null } = {}) {
       }
       if (statement.startsWith('SELECT version, checksum FROM schema_migrations')) {
         return existingRow
-          ? { rows: [{ version: TEST_FILE.replace(/\.sql$/i, ''), checksum: existingChecksum }], rowCount: 1 }
+          ? { rows: [existingChecksumMissing
+              ? { version: TEST_FILE.replace(/\.sql$/i, '') }
+              : { version: TEST_FILE.replace(/\.sql$/i, ''), checksum: existingChecksum }], rowCount: 1 }
           : { rows: [], rowCount: 0 };
       }
       return { rows: [], rowCount: 0 };
@@ -127,6 +129,21 @@ test('an empty recorded checksum is rejected instead of treated as a legacy row'
   );
 });
 
+
+test('a recorded ledger row with a missing checksum field is rejected', async () => {
+  const harness = createHarness({
+    existingRow: true,
+    existingChecksumMissing: true
+  });
+
+  await assert.rejects(harness.runner.run(), /valid checksum matching the reviewed SQL/i);
+  assert.deepEqual(harness.warnings, []);
+  assert.equal(harness.wasReleased(), true);
+  assert.equal(
+    harness.statements.some(({ statement }) => statement === 'COMMIT'),
+    false
+  );
+});
 
 test('new migrations persist their SHA-256 checksum in the ledger', async () => {
   const harness = createHarness();
