@@ -151,3 +151,35 @@ test('staging Telegram webhook registration rejects a non-HTTPS or path-bearing 
     /must be an HTTPS origin/
   );
 });
+
+
+test('webhook registration readiness gate waits for the queue worker ready signal', async () => {
+  const { waitForPlatformWorkerReady } = require('../platform-host');
+  let signalReady;
+  let registrationStarted = false;
+  const workerReady = new Promise(resolve => { signalReady = resolve; });
+  const registration = (async () => {
+    await waitForPlatformWorkerReady(workerReady, 500);
+    registrationStarted = true;
+  })();
+
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(registrationStarted, false, 'webhook registration must not start before worker readiness');
+  signalReady();
+  await registration;
+  assert.equal(registrationStarted, true, 'webhook registration may proceed after worker readiness');
+});
+
+test('webhook registration readiness gate fails closed when the queue worker never becomes ready', async () => {
+  const { waitForPlatformWorkerReady } = require('../platform-host');
+  let registrationStarted = false;
+  const workerReady = new Promise(() => {});
+  await assert.rejects(
+    (async () => {
+      await waitForPlatformWorkerReady(workerReady, 20);
+      registrationStarted = true;
+    })(),
+    /did not become ready before webhook registration/
+  );
+  assert.equal(registrationStarted, false, 'webhook registration must remain blocked after readiness timeout');
+});
