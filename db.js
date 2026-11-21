@@ -281,7 +281,10 @@ async function verifyDatabaseSchema() {
     return !row || !row.is_valid || !row.is_ready ||
       typeof row.definition !== 'string' || !row.definition.includes(' USING ');
   });
-  const expectedUniqueIndexes = new Set(['client_projects_id_client_id_uq']);
+  const expectedUniqueIndexes = new Set([
+    'client_projects_id_client_id_uq',
+    'bot_auto_remediation_one_pending_idx'
+  ]);
   const invalidIndexes = requiredIndexes.filter((name) => {
     const row = indexRows.get(name);
     return row && row.is_unique !== expectedUniqueIndexes.has(name);
