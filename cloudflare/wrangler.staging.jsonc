@@ -12,5 +12,16 @@
       "binding": "HYPERDRIVE",
       "id": "82180f393f7f41478ddcb93404eb5e05"
     }
-  ]
+  ],
+  "previews": {
+    "vars": {
+      "PLATFORM_BOT_WEBHOOK_MODE": "disabled"
+    },
+    "hyperdrive": [
+      {
+        "binding": "HYPERDRIVE",
+        "id": "a10d6fde0bc345a286a25de4789382db"
+      }
+    ]
+  }
 }
