@@ -38,9 +38,9 @@ test('disabled staging mode starts health-only without Telegram credentials or r
     });
 
     assert.equal(runtime.mode, 'health-only');
-    assert.equal(runtime.ready, true);
+    assert.equal(runtime.ready, false, 'database connectivity alone must not signal webhook runtime readiness');
     assert.equal(db.calls.query, 1);
-    assert.deepEqual(readyEvents, [true]);
+    assert.deepEqual(readyEvents, [], 'health-only mode must not emit the runtime-ready event');
     await runtime.stop();
     assert.equal(runtime.ready, false);
     assert.equal(db.calls.poolEnd, 1);
