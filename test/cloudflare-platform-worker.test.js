@@ -10,7 +10,7 @@ const queueSource = fs.readFileSync(path.join(__dirname, '..', 'platform-queue.j
 
 const env = {
   PLATFORM_BOT_WEBHOOK_MODE: 'enabled',
-  PLATFORM_WORKER_WAKE_URL: 'https://boss-whatsapp-bot.onrender.com/readyz',
+  PLATFORM_WORKER_WAKE_URL: 'https://staging-render.example.invalid/readyz',
   MASTER_WEBHOOK_SECRET: 'master_edge_secret_abcdefghijklmnopqrstuvwxyz123456',
   INTAKE_WEBHOOK_SECRET: 'intake_edge_secret_abcdefghijklmnopqrstuvwxyz123456',
   TELEGRAM_BOT_TOKEN: 'master-telegram-token-' + 'm'.repeat(40),
