@@ -81,7 +81,9 @@ async function loadApprovedCustomerBotConfig({ pool, record } = {}) {
   }
 
   const result = await pool.query(`
-    SELECT r.id, r.release_version, r.artifact, r.artifact_sha256
+    SELECT r.id, r.project_id, r.release_version, r.spec_version,
+           r.artifact, r.artifact_sha256,
+           a.authorized_by, a.authorization_sha256
     FROM project_release_candidates r
     JOIN project_deployment_authorizations a
       ON a.release_id = r.id AND a.status = 'authorized'
@@ -98,9 +100,25 @@ async function loadApprovedCustomerBotConfig({ pool, record } = {}) {
   }
 
   const release = result.rows[0];
+  const authorizationPayload = {
+    releaseId: String(release.id),
+    projectId: String(release.project_id),
+    releaseVersion: Number(release.release_version),
+    specVersion: Number(release.spec_version),
+    artifactSha256: String(release.artifact_sha256 || ''),
+    authorizedBy: String(release.authorized_by || '')
+  };
+  if (!/^[a-f0-9]{64}$/.test(String(release.authorization_sha256 || '')) ||
+      sha256(stableJson(authorizationPayload)) !== release.authorization_sha256) {
+    throw new Error('Approved customer bot deployment authorization failed its integrity check.');
+  }
+
   if (!release.artifact || !/^[a-f0-9]{64}$/.test(String(release.artifact_sha256 || '')) ||
       sha256(stableJson(release.artifact)) !== release.artifact_sha256) {
     throw new Error('Approved customer bot release failed its integrity check.');
+  }
+  if (String(release.artifact.report?.project?.id || '') !== String(record.project_id)) {
+    throw new Error('Approved customer bot release belongs to a different project.');
   }
 
   const files = release.artifact.bundle?.files;
