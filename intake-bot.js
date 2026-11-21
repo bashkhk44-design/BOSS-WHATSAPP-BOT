@@ -598,8 +598,7 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
 
       let adminNotified = false;
       try {
-        await dispatchPendingNotifications();
-        adminNotified = true;
+        adminNotified = (await dispatchPendingNotifications()) > 0;
       } catch (notifyError) {
         console.error('ADMIN PROJECT NOTIFICATION OUTBOX ERROR:', notifyError.message);
       }
