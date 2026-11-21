@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   validatePlatformWorkerEnvironment,
+  verifyPlatformWorkerSchema,
   createPlatformWorker,
   closePlatformWorkerResources
 } = require('../platform-worker');
@@ -39,6 +40,28 @@ test('platform worker refuses missing or disabled webhook mode', () => {
   assert.throws(
     () => validatePlatformWorkerEnvironment({ ...validEnv, INTAKE_BOT_TOKEN: 'master-test-token' }),
     /different tokens/
+  );
+});
+
+
+test('platform worker readiness verifies both durable queue tables and their required columns', async () => {
+  const queries = [];
+  const pool = {
+    async query(sql) {
+      queries.push(sql);
+      return { rows: [], rowCount: 0 };
+    }
+  };
+  assert.equal(await verifyPlatformWorkerSchema(pool), true);
+  assert.equal(queries.length, 2);
+  assert.match(queries[0], /FROM platform_jobs/);
+  assert.match(queries[0], /locked_by/);
+  assert.match(queries[1], /FROM platform_bot_inbound_updates/);
+  assert.match(queries[1], /bot_identity/);
+
+  await assert.rejects(
+    verifyPlatformWorkerSchema({ async query() { throw new Error('relation missing'); } }),
+    /relation missing/
   );
 });
 

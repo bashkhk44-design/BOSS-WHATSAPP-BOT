@@ -1653,11 +1653,22 @@ async function startRuntime() {
   });
 }
 
-async function createWebhookRuntime() {
+const { createPlatformRuntimeLock } = require('./platform-runtime-lock');
+const webhookRuntimeLock = createPlatformRuntimeLock({
+  verifyDatabaseSchema,
+  acquireLock: acquireTelegramRuntimeLock,
+  isLockHeld: isTelegramRuntimeLockHeld,
+  releaseLock: releaseTelegramRuntimeLock,
+  setLockFailureHandler: setRuntimeLockFailureHandler,
+  recoverInterruptedJobs: recoverInterruptedProjectAiJobs,
+  initializeBot: () => bot.init()
+});
+
+async function createWebhookRuntime({ onLockFailure } = {}) {
+  await webhookRuntimeLock.start({ onLockFailure });
   let stopped = false;
-  await bot.init();
   return {
-    handleUpdate(update) {
+    async handleUpdate(update) {
       if (stopped) throw new Error('Master webhook runtime is stopped');
       if (!update || typeof update !== 'object' || Array.isArray(update) ||
           !Number.isSafeInteger(update.update_id) || update.update_id < 0) {
@@ -1666,6 +1677,7 @@ async function createWebhookRuntime() {
       if (typeof bot.handleUpdate !== 'function') {
         throw new TypeError('The configured master bot does not support handleUpdate');
       }
+      await webhookRuntimeLock.assertReady();
       return bot.handleUpdate(update);
     },
     async stop() {
@@ -1679,7 +1691,7 @@ async function closeWebhookResources() {
   if (!webhookResourcesClosePromise) {
     webhookResourcesClosePromise = (async () => {
       try {
-        await releaseTelegramRuntimeLock();
+        await webhookRuntimeLock.close();
       } finally {
         await pool.end();
       }

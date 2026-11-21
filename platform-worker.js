@@ -24,6 +24,25 @@ function validatePlatformWorkerEnvironment(env = process.env) {
   return true;
 }
 
+async function verifyPlatformWorkerSchema(pool) {
+  if (!pool || typeof pool.query !== 'function') {
+    throw new TypeError('PostgreSQL pool is required to verify platform worker schema');
+  }
+  await pool.query(`
+    SELECT id, job_type, status, attempts, max_attempts, available_at,
+           locked_by, locked_at, payload
+    FROM platform_jobs
+    LIMIT 0
+  `);
+  await pool.query(`
+    SELECT bot_identity, update_id, payload, state, attempts,
+           locked_by, locked_at
+    FROM platform_bot_inbound_updates
+    LIMIT 0
+  `);
+  return true;
+}
+
 function createPlatformWorker({
   pool,
   runtimes,
@@ -103,6 +122,7 @@ async function main() {
 
   const close = () => {
     if (!closePromise) {
+      process.emit('boss:runtime-stopping', 'PLATFORM_WORKER_SHUTDOWN');
       closePromise = closePlatformWorkerResources({
         worker,
         master,
@@ -119,7 +139,13 @@ async function main() {
       token: process.env.TELEGRAM_BOT_TOKEN,
       adminId: process.env.TELEGRAM_ADMIN_ID
     });
-    masterWebhook = await master.createWebhookRuntime();
+    masterWebhook = await master.createWebhookRuntime({
+      onLockFailure: async error => {
+        console.error('PLATFORM TELEGRAM RUNTIME LOCK LOST:', error.message);
+        process.exitCode = 1;
+        await close();
+      }
+    });
 
     const intake = createIntakeRuntime();
     intakeWebhook = await intake.createWebhookRuntime({
@@ -150,8 +176,14 @@ async function main() {
       process.exitCode = 1;
     }));
 
+    // Verify the actual queue tables/columns as well as basic database connectivity
+    // before advertising readiness; a missing migration must fail startup, not spin forever.
+    await verifyPlatformWorkerSchema(db.pool);
+    await db.pool.query('SELECT 1');
     console.log('Platform Telegram worker started: ' + worker.workerId);
-    await worker.start();
+    const workerLoop = worker.start();
+    process.emit('boss:runtime-ready');
+    await workerLoop;
   } catch (error) {
     try {
       await close();
@@ -168,4 +200,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { validatePlatformWorkerEnvironment, createPlatformWorker, closePlatformWorkerResources, main };
+module.exports = { validatePlatformWorkerEnvironment, verifyPlatformWorkerSchema, createPlatformWorker, closePlatformWorkerResources, main };
