@@ -205,7 +205,7 @@ test('Cloudflare Worker fails closed when the Hyperdrive binding is missing', as
 test('Cloudflare Worker acknowledges duplicate delivery and always closes the Hyperdrive client', async () => {
   const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
   const { FakeClient, state } = makeClientClass({ duplicate: true });
-  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient, fetchImpl: readyFetch });
 
   const response = await handler(makeRequest('/telegram/platform/master'), env);
   assert.equal(response.status, 200);
