@@ -5,7 +5,8 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "vars": {
-    "PLATFORM_BOT_WEBHOOK_MODE": "disabled"
+    "PLATFORM_BOT_WEBHOOK_MODE": "disabled",
+    "PLATFORM_WORKER_WAKE_URL": "https://boss-bot-platform-staging.onrender.com/readyz"
   },
   "hyperdrive": [
     {
@@ -15,7 +16,8 @@
   ],
   "previews": {
     "vars": {
-      "PLATFORM_BOT_WEBHOOK_MODE": "disabled"
+      "PLATFORM_BOT_WEBHOOK_MODE": "disabled",
+      "PLATFORM_WORKER_WAKE_URL": "https://boss-bot-platform-staging.onrender.com/readyz"
     },
     "hyperdrive": [
       {
