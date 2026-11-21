@@ -24,7 +24,8 @@ async function createPlatformBotWorker({
   env = {},
   createMasterRuntime,
   createIntakeRuntime,
-  leaseSeconds = 120
+  leaseSeconds = 120,
+  onLockFailure
 }) {
   if (!pool || typeof pool.query !== 'function') {
     throw new TypeError('PostgreSQL queue pool is required');
@@ -46,6 +47,32 @@ async function createPlatformBotWorker({
   let masterRuntime = null;
   let masterWebhook = null;
   let intakeWebhook = null;
+  let closePromise = null;
+
+  const close = () => {
+    if (!closePromise) {
+      closePromise = (async () => {
+        const failures = [];
+        const stopped = await Promise.allSettled([
+          intakeWebhook ? Promise.resolve().then(() => intakeWebhook.stop()) : Promise.resolve(),
+          masterWebhook ? Promise.resolve().then(() => masterWebhook.stop()) : Promise.resolve()
+        ]);
+        for (const result of stopped) {
+          if (result.status === 'rejected') failures.push(result.reason);
+        }
+        try {
+          await masterRuntime?.closeWebhookResources?.();
+        } catch (error) {
+          failures.push(error);
+        }
+        if (failures.length) {
+          throw new AggregateError(failures, 'One or more platform bot resources failed to close');
+        }
+      })();
+    }
+    return closePromise;
+  };
+
   try {
     masterRuntime = masterFactory({
       env,
@@ -56,7 +83,12 @@ async function createPlatformBotWorker({
       throw new TypeError('Master runtime factory must expose createWebhookRuntime()');
     }
 
-    masterWebhook = await masterRuntime.createWebhookRuntime();
+    masterWebhook = await masterRuntime.createWebhookRuntime({
+      onLockFailure: async error => {
+        if (typeof onLockFailure === 'function') await onLockFailure(error);
+        await close();
+      }
+    });
     const intakeRuntime = intakeFactory();
     if (!intakeRuntime || typeof intakeRuntime.createWebhookRuntime !== 'function') {
       throw new TypeError('Intake runtime factory must expose createWebhookRuntime()');
@@ -69,9 +101,11 @@ async function createPlatformBotWorker({
       }
     });
   } catch (error) {
-    try { await intakeWebhook?.stop(); } catch (_) {}
-    try { await masterWebhook?.stop(); } catch (_) {}
-    try { await masterRuntime?.closeWebhookResources?.(); } catch (_) {}
+    try {
+      await close();
+    } catch (cleanupError) {
+      error.cleanupError = cleanupError;
+    }
     throw error;
   }
 
@@ -84,36 +118,13 @@ async function createPlatformBotWorker({
     }
   });
 
-  let closePromise = null;
   return {
     enabled: true,
     handlers: {
       'telegram.master.update': dispatch,
       'telegram.intake.update': dispatch
     },
-    close() {
-      if (!closePromise) {
-        closePromise = (async () => {
-          const failures = [];
-          const stopped = await Promise.allSettled([
-            Promise.resolve().then(() => intakeWebhook.stop()),
-            Promise.resolve().then(() => masterWebhook.stop())
-          ]);
-          for (const result of stopped) {
-            if (result.status === 'rejected') failures.push(result.reason);
-          }
-          try {
-            await masterRuntime.closeWebhookResources?.();
-          } catch (error) {
-            failures.push(error);
-          }
-          if (failures.length) {
-            throw new AggregateError(failures, 'One or more platform bot resources failed to close');
-          }
-        })();
-      }
-      return closePromise;
-    }
+    close
   };
 }
 
