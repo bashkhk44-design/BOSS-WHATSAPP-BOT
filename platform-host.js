@@ -9,9 +9,74 @@ const {
   closePlatformWorkerResources
 } = require('./platform-worker');
 
-async function startPlatformHost({ env = process.env, logger = console } = {}) {
+async function startHealthOnlyRuntime({ env = process.env, logger = console, db } = {}) {
+  if (typeof env.DATABASE_URL !== 'string' ||
+      !/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL)) {
+    throw new Error('DATABASE_URL must use the PostgreSQL protocol');
+  }
+
+  const database = db || require('./db');
+  let stopped = false;
+  let stopPromise = null;
+  let resolveDone;
+  const done = new Promise(resolve => { resolveDone = resolve; });
+
+  try {
+    await database.pool.query('SELECT 1');
+    logger.log('BOSS staging health-only mode connected to PostgreSQL; Telegram runtimes are disabled.');
+    process.emit('boss:runtime-ready');
+  } catch (error) {
+    const cleanup = [];
+    if (database.pool && typeof database.pool.end === 'function') {
+      cleanup.push(Promise.resolve().then(() => database.pool.end()));
+    }
+    if (typeof database.closeTelegramRuntimeLockPool === 'function') {
+      cleanup.push(Promise.resolve().then(() => database.closeTelegramRuntimeLockPool()));
+    }
+    await Promise.allSettled(cleanup);
+    throw error;
+  }
+
+  return {
+    mode: 'health-only',
+    get ready() { return !stopped; },
+    done,
+    stop() {
+      if (!stopPromise) {
+        stopped = true;
+        process.emit('boss:runtime-stopping', 'platform-health-only');
+        stopPromise = (async () => {
+          const results = await Promise.allSettled([
+            database.pool && typeof database.pool.end === 'function'
+              ? database.pool.end()
+              : Promise.resolve(),
+            typeof database.closeTelegramRuntimeLockPool === 'function'
+              ? database.closeTelegramRuntimeLockPool()
+              : Promise.resolve()
+          ]);
+          resolveDone();
+          const failures = results.filter(result => result.status === 'rejected');
+          if (failures.length) {
+            throw new AggregateError(failures.map(result => result.reason), 'Health-only database cleanup failed');
+          }
+        })();
+      }
+      return stopPromise;
+    }
+  };
+}
+
+async function startPlatformHost({ env = process.env, logger = console, db: injectedDb } = {}) {
+  const mode = env.PLATFORM_BOT_WEBHOOK_MODE || 'disabled';
+  if (mode === 'disabled') {
+    return startHealthOnlyRuntime({ env, logger, db: injectedDb });
+  }
+  if (mode !== 'enabled') {
+    throw new Error('PLATFORM_BOT_WEBHOOK_MODE must be enabled or disabled');
+  }
+
   validatePlatformWorkerEnvironment(env);
-  const db = require('./db');
+  const db = injectedDb || require('./db');
   const { createMasterRuntime } = require('./telegram-master');
   const { createIntakeRuntime } = require('./intake-bot');
 
@@ -88,8 +153,6 @@ async function startPlatformHost({ env = process.env, logger = console } = {}) {
       }
     });
 
-    // Exercise the real queue tables before declaring readiness; SELECT 1 alone
-    // does not prove the queue schema or claim/recovery queries are usable.
     await worker.processOne();
     if (!(await db.isTelegramRuntimeLockHeld())) {
       throw new Error('Telegram runtime lock was lost before queue worker startup');
@@ -99,6 +162,7 @@ async function startPlatformHost({ env = process.env, logger = console } = {}) {
     logger.log('BOSS platform webhook host started; waiting for queue health:', worker.workerId);
 
     return {
+      mode: 'webhook',
       workerId: worker.workerId,
       get ready() { return ready && !stopping; },
       done,
@@ -191,4 +255,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { startPlatformHost, main };
+module.exports = { startHealthOnlyRuntime, startPlatformHost, main };
