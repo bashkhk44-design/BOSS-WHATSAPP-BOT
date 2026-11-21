@@ -54,7 +54,7 @@ jobs:
             }
 
             const url = new URL(process.env.DATABASE_URL);
-            const database = decodeURIComponent(url.pathname.replace(/^\\//, ''));
+            const database = decodeURIComponent(url.pathname.replace(/^\//, ''));
             const role = decodeURIComponent(url.username);
 
             if (url.protocol !== 'postgresql:' && url.protocol !== 'postgres:') {
@@ -149,8 +149,8 @@ jobs:
           }
           for (const file of expected) {
             const sql = fs.readFileSync(path.join('migrations', file), 'utf8');
-            if (!/^\\s*(?:--[^\\r\\n]*(?:\\r?\\n|$)\\s*)*BEGIN\\s*;/i.test(sql) ||
-                !/\\bCOMMIT\\s*;\\s*$/i.test(sql)) {
+            if (!/^\s*(?:--[^\r\n]*(?:\r?\n|$)\s*)*BEGIN\s*;/i.test(sql) ||
+                !/\bCOMMIT\s*;\s*$/i.test(sql)) {
               throw new Error('Migration transaction boundary check failed: ' + file);
             }
           }
