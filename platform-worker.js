@@ -31,7 +31,8 @@ function createPlatformWorker({
   leaseSeconds = 120,
   workerId,
   logger = console,
-  queueApi
+  queueApi,
+  onHealthChange
 }) {
   const handleUpdate = createPlatformBotUpdateHandler({ pool, runtimes, leaseSeconds });
   const options = {
@@ -46,6 +47,7 @@ function createPlatformWorker({
   };
   if (workerId) options.workerId = workerId;
   if (queueApi) options.queueApi = queueApi;
+  if (onHealthChange) options.onHealthChange = onHealthChange;
   return createQueueWorker(options);
 }
 
