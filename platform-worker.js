@@ -103,6 +103,7 @@ async function main() {
 
   const close = () => {
     if (!closePromise) {
+      process.emit('boss:runtime-stopping', 'PLATFORM_WORKER_SHUTDOWN');
       closePromise = closePlatformWorkerResources({
         worker,
         master,
@@ -119,7 +120,13 @@ async function main() {
       token: process.env.TELEGRAM_BOT_TOKEN,
       adminId: process.env.TELEGRAM_ADMIN_ID
     });
-    masterWebhook = await master.createWebhookRuntime();
+    masterWebhook = await master.createWebhookRuntime({
+      onLockFailure: async error => {
+        console.error('PLATFORM TELEGRAM RUNTIME LOCK LOST:', error.message);
+        process.exitCode = 1;
+        await close();
+      }
+    });
 
     const intake = createIntakeRuntime();
     intakeWebhook = await intake.createWebhookRuntime({
@@ -150,8 +157,12 @@ async function main() {
       process.exitCode = 1;
     }));
 
+    // Confirm the shared application pool is usable before advertising readiness.
+    await db.pool.query('SELECT 1');
     console.log('Platform Telegram worker started: ' + worker.workerId);
-    await worker.start();
+    const workerLoop = worker.start();
+    process.emit('boss:runtime-ready');
+    await workerLoop;
   } catch (error) {
     try {
       await close();
