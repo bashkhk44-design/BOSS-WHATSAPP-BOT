@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   migrate:
-    if: ${{ github.ref == 'refs/heads/ops/neon-staging-migration-runner' && inputs.confirm_target == 'APPLY-STAGING-MIGRATIONS' }}
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm_target == 'APPLY-STAGING-MIGRATIONS' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: cloudflare-staging
