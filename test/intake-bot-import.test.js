@@ -82,6 +82,7 @@ test('injected intake webhook runtime handles updates without starting polling o
     persistIntakeUpdate: noop,
     cancelProjectIntake: noop,
     claimProjectNotifications: async () => [],
+    renewProjectNotificationLease: async () => true,
     completeProjectNotification: noop,
     retryProjectNotification: noop,
     processIntakeTurn: noop,
