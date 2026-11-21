@@ -60,7 +60,7 @@ test('startup releases only the lock it successfully acquired when bot initializ
 test('lost runtime lock marks webhook runtime unready and notifies the fail-closed handler', async () => {
   let lockHeld = true;
   let notified = null;
-  const { runtime, events, failureHandler } = setup({
+  const state = setup({
     async isLockHeld() { events.push('check-lock'); return lockHeld; }
   });
   await runtime.start({ onLockFailure: async error => { notified = error.message; } });
@@ -69,7 +69,7 @@ test('lost runtime lock marks webhook runtime unready and notifies the fail-clos
   assert.equal(runtime.ready, false);
   assert.equal(notified, null);
   // Simulate the database driver's asynchronous lock-loss notification.
-  await failureHandler(new Error('lock connection lost'));
+  await state.failureHandler(new Error('lock connection lost'));
   assert.equal(notified, 'lock connection lost');
 });
 
