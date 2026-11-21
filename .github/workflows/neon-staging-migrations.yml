@@ -1,10 +1,24 @@
-name: Neon Staging Migrations (Manual)
+name: Neon Staging Bootstrap and Migrations (Manual)
 
 on:
+  pull_request:
+    branches:
+      - staging/unified-platform-tls-migrations
+    paths:
+      - '.github/workflows/neon-staging-migrations.yml'
+      - 'db.js'
+      - 'migrations/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
   workflow_dispatch:
     inputs:
       confirm_target:
-        description: "اكتب STAGING-ONLY لتأكيد أنك تقصد قاعدة Neon التجريبية"
+        description: "اكتب STAGING-ONLY لتأكيد قاعدة Neon التجريبية"
+        required: true
+        type: string
+      confirm_execution:
+        description: "اكتب RUN-STAGING-BOOTSTRAP للتأكيد على إنشاء المخطط وتطبيق الترحيلات على Staging"
         required: true
         type: string
 
@@ -12,25 +26,35 @@ permissions:
   contents: read
 
 concurrency:
-  group: neon-staging-migrations-only
+  group: neon-staging-bootstrap-and-migrations
   cancel-in-progress: false
 
 jobs:
-  migrate:
-    if: ${{ github.ref == 'refs/heads/ops/cloudflare-staging-isolation' && inputs.confirm_target == 'STAGING-ONLY' }}
+  postgres-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      DATABASE_URL: ${{ secrets.STAGING_MIGRATION_DATABASE_URL }}
-      DATABASE_SSL: require
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: boss_bot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d boss_bot_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
-      - name: Checkout staging branch
-        uses: actions/checkout@v4
+      - name: Checkout pull request commit or manually selected staging branch
+        uses: actions/checkout@v5
         with:
-          ref: ops/cloudflare-staging-isolation
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -38,87 +62,138 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Test staging migration allowlist
-        run: node --test migrations/runner.test.js
+      - name: Run repository tests
+        run: npm test
 
-      - name: Verify secret, exact Neon target, role, and migration set
+      - name: Run full bootstrap and migration integration against disposable PostgreSQL
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/boss_bot_test
+          DATABASE_SSL: disable
+        run: npm run db:test:integration
+
+  bootstrap:
+    needs: postgres-integration
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/staging/fix-neon-staging-migrations' &&
+          inputs.confirm_target == 'STAGING-ONLY' &&
+          inputs.confirm_execution == 'RUN-STAGING-BOOTSTRAP' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: cloudflare-staging
+    steps:
+      - name: Checkout reviewed staging branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run repository tests
+        run: npm test
+
+      - name: Verify exact Neon STAGING target, strict TLS, and reviewed migration inventory
+        env:
+          DATABASE_URL: ${{ secrets.CLOUDFLARE_STAGING_DATABASE_URL }}
+          DATABASE_SSL: require
+          DATABASE_SSL_REJECT_UNAUTHORIZED: 'true'
         run: |
           node <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
+          const { randomUUID } = require('node:crypto');
           const { Pool } = require('pg');
+          const {
+            APPROVED_MIGRATION_FILES,
+            listMigrationFiles
+          } = require('./migrations/runner');
 
-          const expectedHost = 'ep-wispy-night-bexu4b47.c-9.us-east-2.aws.neon.tech';
-          const expectedFiles = [
+          const expectedHost = 'ep-sweet-breeze-bepbeuoj.c-9.us-east-2.aws.neon.tech';
+          const expectedDatabase = 'neondb';
+          const expectedRole = 'neondb_owner';
+          const expectedMigrations = [
             '001_foundation_database.sql',
             '002_distributed_bot_worker_indexes.sql',
             '003_bot_runtime_commands.sql',
             '004_manager_command_recovery.sql',
             '005_worker_health_heartbeats.sql',
             '006_auto_remediation_audit.sql',
-            '007_platform_bot_inbox.sql'
-          ];
-          const baselineFiles = [
-            '000_staging_bootstrap.sql'
-          ];
-          const explicitlyExcludedFiles = [
-            '20261118_bot_runtime_status.sql'
+            '007_platform_bot_inbox.sql',
+            '20261118_bot_runtime_status.sql',
+            '20261119_bot_inbound_update_lease_owner.sql',
+            '20261119_bot_update_transport.sql',
+            '20261121_project_notification_outbox.sql'
           ];
 
           async function main() {
             if (!process.env.DATABASE_URL) {
-              throw new Error('Missing STAGING_MIGRATION_DATABASE_URL repository secret.');
+              throw new Error('Missing CLOUDFLARE_STAGING_DATABASE_URL in cloudflare-staging environment.');
             }
 
-            const parsed = new URL(process.env.DATABASE_URL);
-            if (parsed.hostname !== expectedHost || parsed.pathname !== '/neondb') {
-              throw new Error('Refusing to connect: URL is not the explicitly approved Neon STAGING host/database.');
+            const databaseUrl = new URL(process.env.DATABASE_URL);
+            if (databaseUrl.hostname !== expectedHost ||
+                databaseUrl.pathname !== '/' + expectedDatabase ||
+                decodeURIComponent(databaseUrl.username) !== expectedRole ||
+                !databaseUrl.password ||
+                (databaseUrl.port && databaseUrl.port !== '5432')) {
+              throw new Error('Refusing connection: URL does not match the approved Neon STAGING host, database, owner role, and port.');
             }
 
-            const actualFiles = fs.readdirSync(path.join(process.cwd(), 'migrations'))
-              .filter(name => /^\d+_[a-z0-9_-]+\.sql$/i.test(name))
-              .sort();
-
-            const recognizedNonRunnerFiles = [...baselineFiles, ...explicitlyExcludedFiles];
-            const unexpected = actualFiles.filter(name =>
-              !expectedFiles.includes(name) && !recognizedNonRunnerFiles.includes(name)
-            );
-            const missing = expectedFiles.filter(name => !actualFiles.includes(name));
-            const missingBaseline = baselineFiles.filter(name => !actualFiles.includes(name));
-            const { listMigrationFiles } = require('./migrations/runner');
-            const runnerFiles = listMigrationFiles(path.join(process.cwd(), 'migrations'));
-            if (unexpected.length || missing.length || missingBaseline.length ||
-                JSON.stringify(runnerFiles) !== JSON.stringify(expectedFiles)) {
-              throw new Error(
-                'Migration set differs from reviewed allowlist. Unexpected: ' +
-                (unexpected.join(', ') || 'none') + '; missing: ' +
-                (missing.join(', ') || 'none') + '; missing baseline: ' +
-                (missingBaseline.join(', ') || 'none') + '; runner allowlist mismatch: ' +
-                (JSON.stringify(runnerFiles) !== JSON.stringify(expectedFiles) ? 'yes' : 'no')
-              );
+            const sslMode = databaseUrl.searchParams.get('sslmode');
+            if (!['require', 'verify-full'].includes(sslMode)) {
+              throw new Error('Refusing connection: the Neon URL must use sslmode=require or sslmode=verify-full.');
             }
+
+            const migrationsDir = path.join(process.cwd(), 'migrations');
+            const runnerFiles = listMigrationFiles(migrationsDir);
+            if (JSON.stringify(APPROVED_MIGRATION_FILES) !== JSON.stringify(expectedMigrations) ||
+                JSON.stringify(runnerFiles) !== JSON.stringify(expectedMigrations)) {
+              throw new Error('Migration inventory differs from the reviewed 11-file allowlist.');
+            }
+
+            // Normalize the URL so db.js uses certificate and hostname verification too.
+            databaseUrl.searchParams.set('sslmode', 'verify-full');
 
             const pool = new Pool({
-              connectionString: process.env.DATABASE_URL,
-              ssl: { rejectUnauthorized: false },
+              connectionString: databaseUrl.toString(),
+              ssl: { rejectUnauthorized: true, servername: expectedHost },
               max: 1,
               connectionTimeoutMillis: 10000
             });
 
             try {
               const result = await pool.query(
-                'SELECT current_database() AS db, current_user AS role, inet_server_addr()::text AS server_ip'
+                'SELECT current_database() AS db, current_user AS role'
               );
-              const row = result.rows[0];
-              if (row.db !== 'neondb' || row.role !== 'neondb_owner') {
-                throw new Error('Refusing to migrate: expected database neondb and role neondb_owner.');
+              const identity = result.rows[0];
+              if (identity.db !== expectedDatabase || identity.role !== expectedRole) {
+                throw new Error('Connected PostgreSQL identity does not match the approved STAGING database and owner role.');
               }
-              console.log('Preflight passed: approved Neon STAGING host, database neondb, role neondb_owner.');
-              console.log('Server IP:', row.server_ip || 'not reported');
-              console.log('Reviewed migration files:', expectedFiles.length);
             } finally {
               await pool.end();
             }
+
+            // Use a per-run delimiter and reject collisions. Never print the credential-bearing URL.
+            const delimiter = 'BOSS_STAGING_DATABASE_URL_' + randomUUID().replace(/-/g, '');
+            const normalizedUrl = databaseUrl.toString();
+            if (normalizedUrl.includes(delimiter)) {
+              throw new Error('Could not safely encode the staging database URL for subsequent steps.');
+            }
+            fs.appendFileSync(
+              process.env.GITHUB_ENV,
+              'DATABASE_URL<<' + delimiter + '\n' +
+                normalizedUrl +
+                '\n' + delimiter + '\n'
+            );
+
+            console.log('Preflight passed: exact Neon STAGING target, verified TLS, owner identity, and 11 approved migration files.');
           }
 
           main().catch(error => {
@@ -127,5 +202,8 @@ jobs:
           });
           NODE
 
-      - name: Finish read-only staging preflight
-        run: echo "Read-only preflight completed. No database migrations were executed."
+      - name: Initialize prerequisite schema, apply migrations, and verify database schema
+        env:
+          DATABASE_SSL: require
+          DATABASE_SSL_REJECT_UNAUTHORIZED: 'true'
+        run: npm run db:bootstrap
