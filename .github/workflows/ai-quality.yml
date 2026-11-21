@@ -118,6 +118,8 @@ jobs:
         run: node --test test/deployment-preflight-worker.heartbeat.integration.test.js
       - name: Exercise concurrent distributed bot claims
         run: node --test test/customer-bot-worker.integration.test.js
+      - name: Exercise durable customer webhook queue and dispatch on disposable PostgreSQL
+        run: node --test test/customer-webhook.postgres.integration.test.js
       - name: Exercise distributed manager bot controls
         run: node --test test/customer-bot-worker-control.integration.test.js
       - name: Exercise durable automatic remediation
