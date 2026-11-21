@@ -4,18 +4,34 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createPlatformRuntimeLock } = require('../platform-runtime-lock');
 
-function setup(overrides = {}) {
+function setup({
+  acquireResult = true,
+  schemaError = null,
+  initError = null,
+  lockHeld = true
+} = {}) {
   const events = [];
   let failureHandler = null;
   const runtime = createPlatformRuntimeLock({
-    async verifyDatabaseSchema() { events.push('schema'); },
-    async acquireLock() { events.push('acquire'); return true; },
-    async isLockHeld() { events.push('check-lock'); return true; },
+    async verifyDatabaseSchema() {
+      events.push('schema');
+      if (schemaError) throw schemaError;
+    },
+    async acquireLock() { events.push('acquire'); return acquireResult; },
+    async isLockHeld() {
+      events.push('check-lock');
+      return typeof lockHeld === 'function' ? lockHeld() : lockHeld;
+    },
     async releaseLock() { events.push('release'); },
-    setLockFailureHandler(handler) { events.push(handler ? 'set-handler' : 'clear-handler'); failureHandler = handler; },
+    setLockFailureHandler(handler) {
+      events.push(handler ? 'set-handler' : 'clear-handler');
+      failureHandler = handler;
+    },
     async recoverInterruptedJobs() { events.push('recover'); },
-    async initializeBot() { events.push('init-bot'); },
-    ...overrides
+    async initializeBot() {
+      events.push('init-bot');
+      if (initError) throw initError;
+    }
   });
   return { runtime, events, get failureHandler() { return failureHandler; } };
 }
@@ -31,7 +47,7 @@ test('webhook runtime verifies schema and acquires the singleton lock before rec
 });
 
 test('webhook runtime fails closed when another runtime owns the lock', async () => {
-  const { runtime, events } = setup({ async acquireLock() { events.push('acquire'); return false; } });
+  const { runtime, events } = setup({ acquireResult: false });
   await assert.rejects(runtime.start(), /already owns/);
   assert.deepEqual(events, ['schema', 'acquire']);
   assert.equal(runtime.ready, false);
@@ -39,17 +55,13 @@ test('webhook runtime fails closed when another runtime owns the lock', async ()
 });
 
 test('schema verification failure happens before lock acquisition', async () => {
-  const { runtime, events } = setup({
-    async verifyDatabaseSchema() { events.push('schema'); throw new Error('schema unavailable'); }
-  });
+  const { runtime, events } = setup({ schemaError: new Error('schema unavailable') });
   await assert.rejects(runtime.start(), /schema unavailable/);
   assert.deepEqual(events, ['schema']);
 });
 
 test('startup releases only the lock it successfully acquired when bot initialization fails', async () => {
-  const { runtime, events } = setup({
-    async initializeBot() { events.push('init-bot'); throw new Error('Telegram init failed'); }
-  });
+  const { runtime, events } = setup({ initError: new Error('Telegram init failed') });
   await assert.rejects(runtime.start(), /Telegram init failed/);
   assert.deepEqual(events, [
     'schema', 'acquire', 'set-handler', 'recover', 'init-bot', 'clear-handler', 'release'
@@ -60,9 +72,7 @@ test('startup releases only the lock it successfully acquired when bot initializ
 test('lost runtime lock marks webhook runtime unready and notifies the fail-closed handler', async () => {
   let lockHeld = true;
   let notified = null;
-  const state = setup({
-    async isLockHeld() { return lockHeld; }
-  });
+  const state = setup({ lockHeld: () => lockHeld });
   await state.runtime.start({ onLockFailure: async error => { notified = error.message; } });
   lockHeld = false;
   await assert.rejects(state.runtime.assertReady(), /no longer owns/);
