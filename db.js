@@ -162,7 +162,9 @@ async function initDatabase() {
 }
 
 async function verifyDatabaseSchema() {
+  const { APPROVED_MIGRATION_FILES } = require('./migrations/runner');
   const requiredTables = [
+    'schema_migrations',
     'telegram_bots',
     'clients',
     'client_projects',
@@ -176,24 +178,270 @@ async function verifyDatabaseSchema() {
     'project_build_approvals',
     'project_release_candidates',
     'project_release_approvals',
-    'project_deployment_authorizations'
+    'project_deployment_authorizations',
+    'bot_runtime_status',
+    'bot_inbound_updates',
+    'platform_jobs',
+    'ai_usage',
+    'platform_audit_logs',
+    'bot_runtime_commands',
+    'bot_worker_status',
+    'bot_auto_remediation_attempts',
+    'platform_bot_inbound_updates',
+    'project_notification_outbox',
+    'project_intake_update_receipts'
   ];
 
-  const result = await pool.query(
+  const tablesResult = await pool.query(
     `SELECT table_name,
             to_regclass('public.' || table_name) IS NOT NULL AS exists
      FROM unnest($1::text[]) AS required(table_name)`,
     [requiredTables]
   );
-
-  const missing = result.rows
+  const missingTables = tablesResult.rows
     .filter((row) => !row.exists)
     .map((row) => row.table_name);
 
-  if (missing.length) {
+  const requiredColumns = [
+    ['schema_migrations', 'checksum'],
+    ['telegram_bots', 'client_id'],
+    ['telegram_bots', 'project_id'],
+    ['telegram_bots', 'update_transport'],
+    ['bot_runtime_commands', 'claimed_by'],
+    ['bot_runtime_commands', 'claimed_at'],
+    ['bot_runtime_commands', 'auto_remediation_attempt_id'],
+    ['bot_inbound_updates', 'locked_by'],
+    ['project_notification_outbox', 'dedupe_key'],
+    ['project_notification_outbox', 'state'],
+    ['project_intake_update_receipts', 'bot_identity'],
+    ['project_intake_update_receipts', 'update_id'],
+    ['project_intake_update_receipts', 'project_id']
+  ];
+  const columnsResult = await pool.query(
+    `SELECT required.table_name, required.column_name
+     FROM unnest($1::text[], $2::text[]) AS required(table_name, column_name)
+     LEFT JOIN information_schema.columns actual
+       ON actual.table_schema = 'public'
+      AND actual.table_name = required.table_name
+      AND actual.column_name = required.column_name
+     WHERE actual.column_name IS NULL`,
+    [
+      requiredColumns.map(([table]) => table),
+      requiredColumns.map(([, column]) => column)
+    ]
+  );
+  const missingColumns = columnsResult.rows.map(
+    (row) => row.table_name + '.' + row.column_name
+  );
+
+  const requiredIndexes = [
+    'client_projects_id_client_id_uq',
+    'telegram_bots_client_idx',
+    'telegram_bots_project_idx',
+    'bot_runtime_status_health_idx',
+    'bot_inbound_updates_claim_idx',
+    'platform_jobs_claim_idx',
+    'platform_jobs_client_idx',
+    'ai_usage_client_created_idx',
+    'ai_usage_bot_created_idx',
+    'platform_audit_client_created_idx',
+    'platform_audit_bot_created_idx',
+    'bot_runtime_status_lease_idx',
+    'telegram_bots_active_runtime_idx',
+    'bot_runtime_commands_claim_idx',
+    'bot_runtime_commands_recovery_idx',
+    'bot_worker_status_heartbeat_idx',
+    'bot_auto_remediation_one_pending_idx',
+    'bot_auto_remediation_history_idx',
+    'platform_bot_inbound_claim_idx',
+    'platform_bot_inbound_identity_received_idx',
+    'bot_runtime_status_worker_heartbeat_idx',
+    'bot_runtime_status_status_heartbeat_idx',
+    'bot_inbound_updates_pending_order_idx',
+    'telegram_bots_active_transport_idx',
+    'project_intake_update_receipts_project_idx',
+    'project_notification_outbox_ready_idx'
+  ];
+  const expectedIndexes = {
+    client_projects_id_client_id_uq: { table: 'client_projects', columns: ['id', 'client_id'], unique: true, predicate: null },
+    telegram_bots_client_idx: { table: 'telegram_bots', columns: ['client_id'], unique: false, predicate: 'client_idisnotnull' },
+    telegram_bots_project_idx: { table: 'telegram_bots', columns: ['project_id'], unique: false, predicate: 'project_idisnotnull' },
+    bot_runtime_status_health_idx: { table: 'bot_runtime_status', columns: ['status', 'last_heartbeat_at'], unique: false, predicate: null },
+    bot_inbound_updates_claim_idx: { table: 'bot_inbound_updates', columns: ['state', 'available_at', 'id'], unique: false, predicate: null },
+    platform_jobs_claim_idx: { table: 'platform_jobs', columns: ['status', 'priority DESC', 'available_at', 'id'], unique: false, predicate: null },
+    platform_jobs_client_idx: { table: 'platform_jobs', columns: ['client_id', 'created_at DESC'], unique: false, predicate: null },
+    ai_usage_client_created_idx: { table: 'ai_usage', columns: ['client_id', 'created_at DESC'], unique: false, predicate: null },
+    ai_usage_bot_created_idx: { table: 'ai_usage', columns: ['bot_id', 'created_at DESC'], unique: false, predicate: null },
+    platform_audit_client_created_idx: { table: 'platform_audit_logs', columns: ['client_id', 'created_at DESC'], unique: false, predicate: null },
+    platform_audit_bot_created_idx: { table: 'platform_audit_logs', columns: ['bot_id', 'created_at DESC'], unique: false, predicate: null },
+    bot_runtime_status_lease_idx: { table: 'bot_runtime_status', columns: ['status', 'last_heartbeat_at', 'bot_id'], unique: false, predicate: null },
+    telegram_bots_active_runtime_idx: { table: 'telegram_bots', columns: ['id'], unique: false, predicate: 'active=true' },
+    bot_runtime_commands_claim_idx: { table: 'bot_runtime_commands', columns: ['status', 'target_worker_id', 'id'], unique: false, predicate: null },
+    bot_runtime_commands_recovery_idx: { table: 'bot_runtime_commands', columns: ['status', 'claimed_at', 'id'], unique: false, predicate: null },
+    bot_worker_status_heartbeat_idx: { table: 'bot_worker_status', columns: ['status', 'last_heartbeat_at'], unique: false, predicate: null },
+    bot_auto_remediation_one_pending_idx: { table: 'bot_auto_remediation_attempts', columns: ['bot_id'], unique: true, predicate: "status=anyarray['queued','processing']" },
+    bot_auto_remediation_history_idx: { table: 'bot_auto_remediation_attempts', columns: ['bot_id', 'requested_at DESC'], unique: false, predicate: null },
+    platform_bot_inbound_claim_idx: { table: 'platform_bot_inbound_updates', columns: ['state', 'available_at', 'id'], unique: false, predicate: null },
+    platform_bot_inbound_identity_received_idx: { table: 'platform_bot_inbound_updates', columns: ['bot_identity', 'received_at DESC'], unique: false, predicate: null },
+    bot_runtime_status_worker_heartbeat_idx: { table: 'bot_runtime_status', columns: ['worker_id', 'last_heartbeat_at DESC'], unique: false, predicate: null },
+    bot_runtime_status_status_heartbeat_idx: { table: 'bot_runtime_status', columns: ['status', 'last_heartbeat_at DESC'], unique: false, predicate: null },
+    bot_inbound_updates_pending_order_idx: { table: 'bot_inbound_updates', columns: ['bot_id', 'update_id'], unique: false, predicate: "state<>'processed'" },
+    telegram_bots_active_transport_idx: { table: 'telegram_bots', columns: ['update_transport', 'id'], unique: false, predicate: 'active=true' },
+    project_intake_update_receipts_project_idx: { table: 'project_intake_update_receipts', columns: ['project_id', 'processed_at DESC'], unique: false, predicate: null },
+    project_notification_outbox_ready_idx: { table: 'project_notification_outbox', columns: ['available_at', 'id'], unique: false, predicate: "state=anyarray['pending','processing']" }
+  };
+  const normalizeCatalogSql = (value) => String(value || '')
+    .toLowerCase()
+    .replace(/"([a-z_][a-z0-9_]*)"/g, '$1')
+    .replace(/::[a-z_][a-z0-9_]*(?:\[\])?/g, '')
+    .replace(/\bpublic\./g, '')
+    .replace(/\s+/g, '')
+    // PostgreSQL may render DESC's default NULLS FIRST explicitly in per-key definitions.
+    // Treat that spelling as equivalent to the implicit default; NULLS LAST remains distinct.
+    .replace(/descnullsfirst/g, 'desc')
+    .replace(/[()]/g, '');
+  const indexRowsResult = await pool.query(
+    `SELECT index_row.relname AS indexname,
+            table_row.relname AS tablename,
+            access_method.amname AS access_method,
+            index_meta.indisvalid AS is_valid,
+            index_meta.indisready AS is_ready,
+            index_meta.indisunique AS is_unique,
+            ARRAY(
+              SELECT CASE
+                       WHEN (index_meta.indoption[position - 1] & 1) = 1 THEN
+                         pg_get_indexdef(index_meta.indexrelid, position, true) ||
+                         CASE
+                           WHEN (index_meta.indoption[position - 1] & 2) = 2 THEN ' DESC'
+                           ELSE ' DESC NULLS LAST'
+                         END
+                       WHEN (index_meta.indoption[position - 1] & 2) = 2 THEN
+                         pg_get_indexdef(index_meta.indexrelid, position, true) || ' ASC NULLS FIRST'
+                       ELSE
+                         pg_get_indexdef(index_meta.indexrelid, position, true)
+                     END
+              FROM generate_series(1, index_meta.indnkeyatts) AS position
+              ORDER BY position
+            ) AS key_columns,
+            pg_get_expr(index_meta.indpred, index_meta.indrelid, true) AS predicate
+     FROM pg_class table_row
+     JOIN pg_namespace table_namespace ON table_namespace.oid = table_row.relnamespace
+     JOIN pg_index index_meta ON index_meta.indrelid = table_row.oid
+     JOIN pg_class index_row ON index_row.oid = index_meta.indexrelid
+     JOIN pg_am access_method ON access_method.oid = index_row.relam
+     WHERE table_namespace.nspname = 'public'
+       AND index_row.relname = ANY($1::text[])`,
+    [requiredIndexes]
+  );
+  const indexRows = new Map(indexRowsResult.rows.map((row) => [row.indexname, row]));
+  const missingIndexes = requiredIndexes.filter((name) => {
+    const row = indexRows.get(name);
+    return !row || !row.is_valid || !row.is_ready;
+  });
+  const invalidIndexes = requiredIndexes.filter((name) => {
+    const row = indexRows.get(name);
+    const expected = expectedIndexes[name];
+    if (!row || !expected) return false;
+    const actualColumns = Array.isArray(row.key_columns) ? row.key_columns : [];
+    const columnsMatch = actualColumns.length === expected.columns.length &&
+      actualColumns.every((column, index) =>
+        normalizeCatalogSql(column) === normalizeCatalogSql(expected.columns[index])
+      );
+    const predicateMatch = expected.predicate === null
+      ? row.predicate === null
+      : normalizeCatalogSql(row.predicate) === normalizeCatalogSql(expected.predicate);
+    return row.tablename !== expected.table ||
+      row.access_method !== 'btree' ||
+      row.is_unique !== expected.unique ||
+      !columnsMatch ||
+      !predicateMatch;
+  });
+
+  const requiredConstraints = [
+    'telegram_bots_client_id_fk',
+    'telegram_bots_project_client_fk',
+    'platform_jobs_project_client_fk',
+    'telegram_bots_project_requires_client',
+    'platform_jobs_project_requires_client',
+    'ai_usage_project_requires_client',
+    'platform_audit_project_requires_client',
+    'telegram_bots_update_transport_check'
+  ];
+  const expectedConstraints = {
+    telegram_bots_client_id_fk: { table: 'telegram_bots', type: 'f', definition: 'FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE RESTRICT' },
+    telegram_bots_project_client_fk: { table: 'telegram_bots', type: 'f', definition: 'FOREIGN KEY (project_id, client_id) REFERENCES client_projects(id, client_id) ON DELETE RESTRICT' },
+    platform_jobs_project_client_fk: { table: 'platform_jobs', type: 'f', definition: 'FOREIGN KEY (project_id, client_id) REFERENCES client_projects(id, client_id) ON DELETE RESTRICT' },
+    telegram_bots_project_requires_client: { table: 'telegram_bots', type: 'c', definition: 'CHECK (project_id IS NULL OR client_id IS NOT NULL)' },
+    platform_jobs_project_requires_client: { table: 'platform_jobs', type: 'c', definition: 'CHECK (project_id IS NULL OR client_id IS NOT NULL)' },
+    ai_usage_project_requires_client: { table: 'ai_usage', type: 'c', definition: 'CHECK (project_id IS NULL OR client_id IS NOT NULL)' },
+    platform_audit_project_requires_client: { table: 'platform_audit_logs', type: 'c', definition: 'CHECK (project_id IS NULL OR client_id IS NOT NULL)' },
+    telegram_bots_update_transport_check: { table: 'telegram_bots', type: 'c', definition: "CHECK (update_transport = ANY (ARRAY['polling'::text, 'webhook'::text]))" }
+  };
+  const constraintsResult = await pool.query(
+    `SELECT constraint_row.conname,
+            table_row.relname AS tablename,
+            constraint_row.contype AS constraint_type,
+            constraint_row.convalidated AS is_validated,
+            pg_get_constraintdef(constraint_row.oid, true) AS definition
+     FROM pg_constraint constraint_row
+     JOIN pg_namespace namespace_row
+       ON namespace_row.oid = constraint_row.connamespace
+     JOIN pg_class table_row ON table_row.oid = constraint_row.conrelid
+     WHERE namespace_row.nspname = 'public'
+       AND constraint_row.conname = ANY($1::text[])`,
+    [requiredConstraints]
+  );
+  const constraintRows = new Map(constraintsResult.rows.map((row) => [row.conname, row]));
+  const missingConstraints = requiredConstraints.filter((name) => !constraintRows.has(name));
+  const invalidConstraints = requiredConstraints.filter((name) => {
+    const row = constraintRows.get(name);
+    const expected = expectedConstraints[name];
+    return row && expected && (
+      !row.is_validated ||
+      row.tablename !== expected.table ||
+      row.constraint_type !== expected.type ||
+      normalizeCatalogSql(row.definition) !== normalizeCatalogSql(expected.definition)
+    );
+  });
+
+  const requiredVersions = APPROVED_MIGRATION_FILES.map(
+    (filename) => filename.replace(/\.sql$/i, '')
+  );
+  const ledgerResult = await pool.query(
+    'SELECT version FROM schema_migrations WHERE version = ANY($1::text[])',
+    [requiredVersions]
+  );
+  const foundVersions = new Set(ledgerResult.rows.map((row) => row.version));
+  const missingVersions = requiredVersions.filter(
+    (version) => !foundVersions.has(version)
+  );
+
+  const failures = [];
+  if (missingTables.length) failures.push('الجداول: ' + missingTables.join(', '));
+  if (missingColumns.length) failures.push('الأعمدة: ' + missingColumns.join(', '));
+  if (missingIndexes.length) failures.push('الفهارس: ' + missingIndexes.join(', '));
+  if (missingConstraints.length) failures.push('القيود الناقصة: ' + missingConstraints.join(', '));
+  if (invalidIndexes.length) {
+    const details = invalidIndexes.map((name) => {
+      const row = indexRows.get(name);
+      const expected = expectedIndexes[name];
+      return name + ' actual=' + JSON.stringify({
+        table: row?.tablename,
+        method: row?.access_method,
+        unique: row?.is_unique,
+        columns: row?.key_columns,
+        predicate: row?.predicate
+      }) + ' expected=' + JSON.stringify(expected);
+    });
+    failures.push('تعريف الفهارس أو التفرد غير الصحيح: ' + details.join(' | '));
+  }
+  if (invalidConstraints.length) failures.push('القيود غير المعتمدة أو غير الموثقة: ' + invalidConstraints.join(', '));
+  if (missingVersions.length) failures.push('سجل الترحيلات: ' + missingVersions.join(', '));
+
+  if (failures.length) {
     throw new Error(
-      'قاعدة البيانات غير مهيأة. شغّل Neon Staging Bootstrap بصلاحية المالك. الجداول الناقصة: ' +
-      missing.join(', ')
+      'قاعدة البيانات غير مكتملة بعد التهيئة. العناصر الناقصة: ' +
+      failures.join(' | ')
     );
   }
 
@@ -412,5 +660,6 @@ module.exports = {
   acquireTelegramRuntimeLock,
   isTelegramRuntimeLockHeld,
   releaseTelegramRuntimeLock,
+  closeTelegramRuntimeLockPool: closeLockPool,
   setRuntimeLockFailureHandler
 };

@@ -1,16 +1,29 @@
 {
-  "name": "boss-bot-platform-ingress-staging",
+  "name": "boss-bot-master-staging",
   "main": "worker.mjs",
   "compatibility_date": "2026-11-17",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "vars": {
-    "PLATFORM_BOT_WEBHOOK_MODE": "disabled"
+    "PLATFORM_BOT_WEBHOOK_MODE": "disabled",
+    "PLATFORM_WORKER_WAKE_URL": "https://boss-bot-platform-staging.onrender.com/readyz"
   },
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",
-      "id": "82180f393f7f41478ddcb93404eb5e05"
+      "id": "a10d6fde0bc345a286a25de4789382db"
     }
-  ]
+  ],
+  "previews": {
+    "vars": {
+      "PLATFORM_BOT_WEBHOOK_MODE": "disabled",
+      "PLATFORM_WORKER_WAKE_URL": "https://boss-bot-platform-staging.onrender.com/readyz"
+    },
+    "hyperdrive": [
+      {
+        "binding": "HYPERDRIVE",
+        "id": "a10d6fde0bc345a286a25de4789382db"
+      }
+    ]
+  }
 }

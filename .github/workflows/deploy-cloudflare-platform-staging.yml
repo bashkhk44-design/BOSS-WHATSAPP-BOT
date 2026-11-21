@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   deploy-staging:
-    if: ${{ inputs.confirmation == 'DEPLOY-BOSS-STAGING' }}
+    if: ${{ github.ref == 'refs/heads/staging/unified-platform-tls-migrations' && inputs.confirmation == 'DEPLOY-BOSS-STAGING' }}
     runs-on: ubuntu-latest
     environment: boss-platform-staging
 
@@ -30,10 +30,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          EXPECTED_REF="refs/heads/staging/unified-platform-tls-migrations"
+          if [ "$GITHUB_REF" != "$EXPECTED_REF" ]; then
+            echo "Refusing deployment: this workflow must run from $EXPECTED_REF."
+            exit 1
+          fi
+
           CONFIG="cloudflare/wrangler.staging.jsonc"
 
-          grep -Fq '"name": "boss-bot-platform-ingress-staging"' "$CONFIG"
-          grep -Fq '"id": "82180f393f7f41478ddcb93404eb5e05"' "$CONFIG"
+          grep -Fq '"name": "boss-bot-master-staging"' "$CONFIG"
+          grep -Fq '"id": "a10d6fde0bc345a286a25de4789382db"' "$CONFIG"
           grep -Fq '"PLATFORM_BOT_WEBHOOK_MODE": "disabled"' "$CONFIG"
           grep -Fq '"workers_dev": true' "$CONFIG"
 

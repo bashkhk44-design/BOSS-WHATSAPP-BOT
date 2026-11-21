@@ -23,6 +23,8 @@ function createIntakeRuntime({ dependencies = null, createBot = null } = {}) {
     saveIntakeSession,
     deleteIntakeSession,
     approveProjectSpec,
+    persistIntakeUpdate,
+    cancelProjectIntake,
     processIntakeTurn,
     advanceFallbackIntake
   } = runtimeDependencies;
@@ -31,8 +33,8 @@ function createIntakeRuntime({ dependencies = null, createBot = null } = {}) {
     'Bot', 'InlineKeyboard', 'pool', 'createClientProjectWithSession',
     'setProjectBusinessType', 'updateProjectName', 'updateClientProjectStatus',
     'addConversationMessage', 'getIntakeSession', 'getProjectConversation',
-    'saveIntakeSession', 'deleteIntakeSession', 'approveProjectSpec',
-    'processIntakeTurn', 'advanceFallbackIntake'
+    'saveIntakeSession', 'deleteIntakeSession', 'approveProjectSpec', 'persistIntakeUpdate', 'cancelProjectIntake',
+    'processIntakeTurn', 'advanceFallbackIntake', 'claimProjectNotifications', 'renewProjectNotificationLease', 'completeProjectNotification', 'retryProjectNotification'
   ]) {
     if (!runtimeDependencies[name]) {
       throw new TypeError('Missing intake runtime dependency: ' + name);
@@ -46,6 +48,8 @@ function createIntakeRuntime({ dependencies = null, createBot = null } = {}) {
   let intakeReadyPromise = null;
   let intakeStopping = false;
   let intakeMode = null;
+  let notificationTimer = null;
+  let notifyAdminHandler = null;
 
 
 const TYPES = [
@@ -58,6 +62,64 @@ const TYPES = [
   ['payments', '💳 مدفوعات'],
   ['other', '✨ نشاط آخر']
 ];
+
+
+const { createProjectNotificationDispatcher } = require('./project-notification-dispatcher');
+
+const notificationDispatcher = createProjectNotificationDispatcher({
+  getNotifyAdminHandler: () => notifyAdminHandler,
+  claimNotifications: options => runtimeDependencies.claimProjectNotifications(options),
+  renewLease: options => runtimeDependencies.renewProjectNotificationLease(options),
+  completeNotification: options => runtimeDependencies.completeProjectNotification(options),
+  retryNotification: options => runtimeDependencies.retryProjectNotification(options),
+  leaseSeconds: 120,
+  heartbeatIntervalMs: 30000,
+  sendNotification: async (job, handler) => {
+    if (job.event_type !== 'project_approved') {
+      throw new Error('Unsupported notification event type: ' + job.event_type);
+    }
+    const payload = job.payload || {};
+    const message = [
+      '📥 طلب مشروع جديد — يحتاج مراجعة الإدارة',
+      '',
+      `رقم المشروع: ${payload.projectId || 'غير محدد'}`,
+      `معرّف العميل: ${payload.telegramUserId || 'غير محدد'}`,
+      '',
+      buildSummary(payload.spec || {}),
+      '',
+      `نسخة المواصفات المعتمدة: ${payload.version || 'غير محددة'}`
+    ].join('\\n');
+    const adminKeyboard = new InlineKeyboard()
+      .text('🤖 إحالة إلى Gemini للتحليل', `project:ai:${payload.projectId}`);
+    await handler({
+      text: message.length > 3500
+        ? message.slice(0, 3500) + '\\n... تم اختصار بقية التفاصيل.'
+        : message,
+      extra: { reply_markup: adminKeyboard }
+    });
+  }
+});
+
+async function dispatchPendingNotifications() {
+  return notificationDispatcher.dispatch();
+}
+
+function startNotificationPolling() {
+  if (notificationTimer) clearInterval(notificationTimer);
+  notificationTimer = null;
+  if (typeof notifyAdminHandler !== 'function') return;
+  dispatchPendingNotifications().catch(error => console.error('OUTBOX STARTUP ERROR:', error.message));
+  notificationTimer = setInterval(() => {
+    dispatchPendingNotifications().catch(error => console.error('OUTBOX POLL ERROR:', error.message));
+  }, 15000);
+  if (typeof notificationTimer.unref === 'function') notificationTimer.unref();
+}
+
+async function stopNotificationPolling() {
+  if (notificationTimer) clearInterval(notificationTimer);
+  notificationTimer = null;
+  await notificationDispatcher.waitForIdle();
+}
 
 async function saveMessage(userId, projectId, role, content) {
   await addConversationMessage({
@@ -211,12 +273,38 @@ async function askNext(ctx, session) {
   }
 }
 
-async function runInteractiveIntake(ctx, session, userMessage = '') {
+
+async function persistSessionUpdate(ctx, session, step, data, options = {}) {
+  const updateId = ctx.update?.update_id;
+  if (!Number.isSafeInteger(updateId)) {
+    throw new Error('لا يمكن حفظ الإجابة دون معرّف تحديث تيليغرام موثوق');
+  }
+  return persistIntakeUpdate({
+    botIdentity: 'intake',
+    updateId,
+    telegramUserId: ctx.from.id,
+    projectId: session.project_id,
+    step,
+    data,
+    messages: options.messages || [],
+    projectName: options.projectName,
+    businessType: options.businessType
+  });
+}
+
+async function persistTurn(ctx, session, step, data, assistantMessage, userMessage, options = {}) {
+  const messages = [];
+  if (userMessage) messages.push({ role: 'client', content: userMessage });
+  if (assistantMessage) messages.push({ role: 'assistant', content: assistantMessage });
+  return persistSessionUpdate(ctx, session, step, data, { ...options, messages });
+}
+
+async function runInteractiveIntake(ctx, session, userMessage = '', persistOptions = {}) {
   if (session.data?.aiFallback) {
     const result = advanceFallbackIntake(session.data, userMessage);
     const nextStep = result.readyForReview ? 'review' : 'ai_intake';
-    await saveIntakeSession({ telegramUserId: ctx.from.id, projectId: session.project_id, step: nextStep, data: result.data });
-    await saveMessage(ctx.from.id, session.project_id, 'assistant', result.assistantMessage);
+    const persisted = await persistTurn(ctx, session, nextStep, result.data, result.assistantMessage, userMessage, persistOptions);
+    if (!persisted.processed) return;
     if (result.readyForReview) {
       await ctx.reply('اكتمل جمع المتطلبات دون الاعتماد على المحلل الذكي. هذا ملخص طلبك:');
       await askNext(ctx, { ...session, step: 'review', data: result.data });
@@ -226,9 +314,10 @@ async function runInteractiveIntake(ctx, session, userMessage = '') {
     return;
   }
 
+  let result;
   try {
     const history = await getProjectConversation(ctx.from.id, session.project_id);
-    const result = await processIntakeTurn({
+    result = await processIntakeTurn({
       project: {
         project_id: session.project_id,
         project_name: session.data.projectName,
@@ -238,48 +327,40 @@ async function runInteractiveIntake(ctx, session, userMessage = '') {
       userMessage,
       history
     });
-
-    const missingItems = result.missingItems || [];
-    const readyForReview = result.readyForReview && missingItems.length === 0;
-    const data = {
-      ...result.data,
-      aiIntakeTurns: (Number(session.data?.aiIntakeTurns) || 0) + (userMessage ? 1 : 0),
-      aiIntakeMissing: missingItems
-    };
-    const nextStep = readyForReview ? 'review' : 'ai_intake';
-
-    await saveIntakeSession({
-      telegramUserId: ctx.from.id,
-      projectId: session.project_id,
-      step: nextStep,
-      data
-    });
-
-    await saveMessage(
-      ctx.from.id,
-      session.project_id,
-      'assistant',
-      result.assistantMessage
-    );
-
-    if (readyForReview) {
-      await ctx.reply('✅ اكتمل جمع المتطلبات بمساعدة AI ANALYST. هذا ملخص طلبك للمراجعة:');
-      await askNext(ctx, { ...session, step: 'review', data });
-      return;
-    }
-
-    await ctx.reply(result.assistantMessage);
   } catch (error) {
     console.error('INTERACTIVE AI INTAKE ERROR:', error.message);
     const fallback = advanceFallbackIntake(
       { ...(session.data || {}), aiFallback: true },
       userMessage
     );
-    await saveIntakeSession({ telegramUserId: ctx.from.id, projectId: session.project_id, step: 'ai_intake', data: fallback.data });
-    const notice = '⚠️ المحلل الذكي غير متاح مؤقتاً بسبب حد الاستخدام أو مشكلة اتصال. حفظنا إجابتك وسنكمل جمع المواصفات بأسئلة واضحة دون فقدان ما سبق.\n\n';
-    await saveMessage(ctx.from.id, session.project_id, 'assistant', notice + fallback.assistantMessage);
+    const notice = '⚠️ المحلل الذكي غير متاح مؤقتاً بسبب حد الاستخدام أو مشكلة اتصال. حفظنا إجابتك وسنكمل جمع المواصفات بأسئلة واضحة دون فقدان ما سبق.\\n\\n';
+    const persisted = await persistTurn(
+      ctx, session, 'ai_intake', fallback.data,
+      notice + fallback.assistantMessage, userMessage, persistOptions
+    );
+    if (!persisted.processed) return;
     await ctx.reply(notice + fallback.assistantMessage);
+    return;
   }
+
+  const missingItems = result.missingItems || [];
+  const readyForReview = result.readyForReview && missingItems.length === 0;
+  const data = {
+    ...result.data,
+    aiIntakeTurns: (Number(session.data?.aiIntakeTurns) || 0) + (userMessage ? 1 : 0),
+    aiIntakeMissing: missingItems
+  };
+  const nextStep = readyForReview ? 'review' : 'ai_intake';
+  const persisted = await persistTurn(ctx, session, nextStep, data, result.assistantMessage, userMessage, persistOptions);
+  if (!persisted.processed) return;
+
+  if (readyForReview) {
+    await ctx.reply('✅ اكتمل جمع المتطلبات بمساعدة AI ANALYST. هذا ملخص طلبك للمراجعة:');
+    await askNext(ctx, { ...session, step: 'review', data });
+    return;
+  }
+
+  await ctx.reply(result.assistantMessage);
 }
 
 async function beginProject(ctx) {
@@ -287,18 +368,12 @@ async function beginProject(ctx) {
   const session = await getIntakeSession(userId);
 
   if (session) {
-    await pool.query(
-      `UPDATE client_projects p
-       SET status = 'cancelled', updated_at = NOW()
-       FROM clients c
-       WHERE p.client_id = c.id
-         AND p.id = $1
-         AND c.telegram_user_id = $2
-         AND p.status = 'collecting_requirements'`,
-      [session.project_id, String(userId)]
-    );
-
-    await deleteIntakeSession(userId);
+    const cancelled = await cancelProjectIntake({
+      telegramUserId: userId,
+      projectId: session.project_id,
+      updateId: ctx.update?.update_id
+    });
+    if (cancelled.duplicate) return;
   }
 
   await ctx.reply(
@@ -320,6 +395,8 @@ function createWebhookAdapter(bot) {
     },
     async stop() {
       if (intakeBot === bot && intakeMode === 'webhook') {
+        await stopNotificationPolling();
+        notifyAdminHandler = null;
         intakeBot = null;
         pollingPromise = null;
         intakeReadyPromise = null;
@@ -331,6 +408,7 @@ function createWebhookAdapter(bot) {
 }
 
 async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) {
+  notifyAdminHandler = typeof notifyAdmin === 'function' ? notifyAdmin : null;
   const mode = options.mode === 'webhook' ? 'webhook' : 'polling';
   if (options.mode !== undefined && !['polling', 'webhook'].includes(options.mode)) {
     throw new TypeError('Intake runtime mode must be polling or webhook');
@@ -366,12 +444,8 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       if (session.step !== step || session.data?.platform !== 'telegram') {
         session = { ...session, step, data };
 
-        await saveIntakeSession({
-          telegramUserId: ctx.from.id,
-          projectId: session.project_id,
-          step,
-          data
-        });
+        const saved = await persistSessionUpdate(ctx, session, step, data);
+        if (!saved.processed) return;
       }
 
       await ctx.reply(
@@ -452,36 +526,23 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
     const businessType = ctx.match[1];
     const data = { ...session.data, businessType, platform: 'telegram' };
 
-    await setProjectBusinessType({
-      telegramUserId: ctx.from.id,
-      projectId: session.project_id,
-      businessType
-    });
-
     const editing = session.step === 'edit_business_type';
     const nextStep = editing ? 'review' : 'ai_intake';
-
-    await saveIntakeSession({
-      telegramUserId: ctx.from.id,
-      projectId: session.project_id,
-      step: nextStep,
-      data
-    });
-
-    await saveMessage(
-      ctx.from.id,
-      session.project_id,
-      'client',
-      `نوع النشاط: ${typeName(businessType)}`
-    );
-
     await ctx.answerCallbackQuery();
 
     const nextSession = { ...session, step: nextStep, data };
     if (editing) {
+      const saved = await persistSessionUpdate(ctx, session, nextStep, data, {
+        businessType,
+        messages: [{ role: 'client', content: `نوع النشاط: ${typeName(businessType)}` }]
+      });
+      if (!saved.processed) return;
       await askNext(ctx, nextSession);
     } else {
-      await runInteractiveIntake(ctx, nextSession, '');
+      await runInteractiveIntake(ctx, nextSession, '', {
+        businessType,
+        messages: [{ role: 'client', content: `نوع النشاط: ${typeName(businessType)}` }]
+      });
     }
   });
 
@@ -499,19 +560,10 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
     const platform = 'telegram';
     const data = { ...session.data, platform };
 
-    await saveIntakeSession({
-      telegramUserId: ctx.from.id,
-      projectId: session.project_id,
-      step: 'description',
-      data
+    const saved = await persistSessionUpdate(ctx, session, 'description', data, {
+      messages: [{ role: 'client', content: 'المنصة: تيليغرام فقط' }]
     });
-
-    await saveMessage(
-      ctx.from.id,
-      session.project_id,
-      'client',
-      'المنصة: تيليغرام فقط'
-    );
+    if (!saved.processed) return;
 
     await ctx.answerCallbackQuery();
 
@@ -538,41 +590,19 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       const result = await approveProjectSpec({
         telegramUserId: ctx.from.id,
         projectId: session.project_id,
-        spec: session.data
+        spec: session.data,
+        updateId: ctx.update?.update_id
       });
+      if (result.duplicate) {
+        await ctx.answerCallbackQuery({ text: 'تمت معالجة هذا الطلب مسبقاً.' });
+        return;
+      }
 
       let adminNotified = false;
-
-      if (notifyAdmin) {
-        try {
-          let adminMessage = [
-            '📥 طلب مشروع جديد — يحتاج مراجعة الإدارة',
-            '',
-            `رقم المشروع: ${session.project_id}`,
-            `اسم العميل: ${ctx.from.first_name || 'غير محدد'}`,
-            `معرّف العميل: ${ctx.from.id}`,
-            `حساب العميل: ${ctx.from.username ? '@' + ctx.from.username : 'غير متوفر'}`,
-            '',
-            buildSummary(session.data),
-            '',
-            `نسخة المواصفات المعتمدة: ${result.version}`
-          ].join('\n');
-
-          if (adminMessage.length > 3500) {
-            adminMessage = adminMessage.slice(0, 3500) + '\n... تم اختصار بقية التفاصيل.';
-          }
-
-          const adminKeyboard = new InlineKeyboard()
-            .text('🤖 إحالة إلى Gemini للتحليل', `project:ai:${session.project_id}`);
-
-          await notifyAdmin({
-            text: adminMessage,
-            extra: { reply_markup: adminKeyboard }
-          });
-          adminNotified = true;
-        } catch (notifyError) {
-          console.error('ADMIN PROJECT NOTIFICATION ERROR:', notifyError.message);
-        }
+      try {
+        adminNotified = (await dispatchPendingNotifications()) > 0;
+      } catch (notifyError) {
+        console.error('ADMIN PROJECT NOTIFICATION OUTBOX ERROR:', notifyError.message);
       }
 
       await ctx.answerCallbackQuery({
@@ -602,12 +632,8 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       return;
     }
 
-    await saveIntakeSession({
-      telegramUserId: ctx.from.id,
-      projectId: session.project_id,
-      step: 'edit_menu',
-      data: session.data
-    });
+    const saved = await persistSessionUpdate(ctx, session, 'edit_menu', session.data);
+    if (!saved.processed) return;
 
     await ctx.answerCallbackQuery();
     await askNext(ctx, { ...session, step: 'edit_menu' });
@@ -621,12 +647,8 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       return;
     }
 
-    await saveIntakeSession({
-      telegramUserId: ctx.from.id,
-      projectId: session.project_id,
-      step: 'review',
-      data: session.data
-    });
+    const saved = await persistSessionUpdate(ctx, session, 'review', session.data);
+    if (!saved.processed) return;
 
     await ctx.answerCallbackQuery();
     await askNext(ctx, { ...session, step: 'review' });
@@ -654,12 +676,8 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
 
     const step = field === 'businessType' ? 'edit_business_type' : 'edit_' + field;
 
-    await saveIntakeSession({
-      telegramUserId: ctx.from.id,
-      projectId: session.project_id,
-      step,
-      data: session.data
-    });
+    const saved = await persistSessionUpdate(ctx, session, step, session.data);
+    if (!saved.processed) return;
 
     await ctx.answerCallbackQuery();
 
@@ -688,14 +706,16 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
     const session = await getIntakeSession(ctx.from.id);
 
     if (session) {
-      await updateClientProjectStatus({
+      const cancelled = await cancelProjectIntake({
         telegramUserId: ctx.from.id,
         projectId: session.project_id,
-        status: 'cancelled'
+        updateId: ctx.update?.update_id
       });
+      if (cancelled.duplicate) {
+        await ctx.answerCallbackQuery({ text: 'تمت معالجة الإلغاء مسبقاً.' });
+        return;
+      }
     }
-
-    await deleteIntakeSession(ctx.from.id);
     await ctx.answerCallbackQuery({
       text: 'تم إلغاء جلسة الاستقبال.'
     });
@@ -746,8 +766,9 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       return;
     }
 
-    if (!session.step.startsWith('edit_')) {
-      await saveMessage(userId, session.project_id, 'client', text);
+    if (session.step === 'ai_intake') {
+      await runInteractiveIntake(ctx, session, text);
+      return;
     }
 
     if (session.step.startsWith('edit_')) {
@@ -755,11 +776,6 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       const data = { ...session.data };
 
       if (field === 'projectName') {
-        await updateProjectName({
-          telegramUserId: userId,
-          projectId: session.project_id,
-          name: text
-        });
         data.projectName = text;
       } else {
         const editableFields = [
@@ -775,29 +791,18 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
         data[field] = text;
       }
 
-      await saveIntakeSession({
-        telegramUserId: userId,
-        projectId: session.project_id,
-        step: 'review',
-        data
+      const editMessages = [
+        { role: 'client', content: text },
+        { role: 'system', content: 'تم تعديل الحقل: ' + field }
+      ];
+      const saved = await persistSessionUpdate(ctx, session, 'review', data, {
+        projectName: field === 'projectName' ? text : undefined,
+        messages: editMessages
       });
-
-      await saveMessage(userId, session.project_id, 'client', text);
-
-      await saveMessage(
-        userId,
-        session.project_id,
-        'system',
-        'تم تعديل الحقل: ' + field
-      );
+      if (!saved.processed) return;
 
       await ctx.reply('✅ تم حفظ التعديل في المواصفات.');
       await askNext(ctx, { ...session, step: 'review', data });
-      return;
-    }
-
-    if (session.step === 'ai_intake') {
-      await runInteractiveIntake(ctx, session, text);
       return;
     }
 
@@ -809,12 +814,10 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
           .join('\n')
       };
 
-      await saveIntakeSession({
-        telegramUserId: userId,
-        projectId: session.project_id,
-        step: 'review',
-        data
+      const saved = await persistSessionUpdate(ctx, session, 'review', data, {
+        messages: [{ role: 'client', content: text }]
       });
+      if (!saved.processed) return;
 
       session = { ...session, step: 'review', data };
       await askNext(ctx, session);
@@ -851,12 +854,10 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       [fields[session.step]]: text
     };
 
-    await saveIntakeSession({
-      telegramUserId: userId,
-      projectId: session.project_id,
-      step: nextStep,
-      data
+    const saved = await persistSessionUpdate(ctx, session, nextStep, data, {
+      messages: [{ role: 'client', content: text }]
     });
+    if (!saved.processed) return;
 
     session = {
       ...session,
@@ -873,12 +874,14 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
 
   const currentBot = intakeBot;
   intakeStopping = false;
-
   if (mode === 'webhook') {
     try {
       await currentBot.init();
+      startNotificationPolling();
       return createWebhookAdapter(currentBot);
     } catch (error) {
+      await stopNotificationPolling();
+      notifyAdminHandler = null;
       if (intakeBot === currentBot) {
         intakeBot = null;
         pollingPromise = null;
@@ -933,8 +936,11 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
 
   try {
     await intakeReadyPromise;
+    startNotificationPolling();
     return currentBot;
   } catch (err) {
+    await stopNotificationPolling();
+    notifyAdminHandler = null;
     intakeStopping = true;
 
     try {
@@ -953,6 +959,8 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
 }
 
 async function stopIntakeBot() {
+  await stopNotificationPolling();
+  notifyAdminHandler = null;
   const currentBot = intakeBot;
   if (!currentBot) return;
 

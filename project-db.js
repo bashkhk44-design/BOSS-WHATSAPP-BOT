@@ -395,6 +395,7 @@ async function saveProjectSpec({
       FROM client_projects p
       JOIN clients c ON c.id = p.client_id
       WHERE p.id = $1 AND c.telegram_user_id = $2
+        AND p.status = 'collecting_requirements'
       FOR UPDATE OF p
     `, [projectId, String(telegramUserId)]);
 
@@ -534,18 +535,34 @@ async function deleteIntakeSession(telegramUserId) {
 async function approveProjectSpec({
   telegramUserId,
   projectId,
-  spec
+  spec,
+  updateId
 }) {
+  if (!Number.isSafeInteger(Number(updateId)) || Number(updateId) < 0) {
+    throw new Error('معرّف تحديث تيليغرام غير صالح');
+  }
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
+
+    const receipt = await client.query(`
+      INSERT INTO project_intake_update_receipts (bot_identity, update_id, telegram_user_id, project_id)
+      VALUES ('intake', $1, $2, $3)
+      ON CONFLICT (bot_identity, update_id) DO NOTHING
+      RETURNING update_id
+    `, [String(updateId), String(telegramUserId), projectId]);
+    if (!receipt.rowCount) {
+      await client.query('ROLLBACK');
+      return { duplicate: true };
+    }
 
     const owned = await client.query(`
       SELECT p.id
       FROM client_projects p
       JOIN clients c ON c.id = p.client_id
       WHERE p.id = $1 AND c.telegram_user_id = $2
+        AND p.status = 'collecting_requirements'
       FOR UPDATE OF p
     `, [projectId, String(telegramUserId)]);
 
@@ -580,12 +597,21 @@ async function approveProjectSpec({
     `, [projectId, JSON.stringify({ version })]);
 
     await client.query(`
+      INSERT INTO project_notification_outbox (dedupe_key, event_type, payload)
+      VALUES ($1, 'project_approved', $2::jsonb)
+      ON CONFLICT (dedupe_key) DO NOTHING
+    `, [
+      `project-approved:${projectId}:${version}`,
+      JSON.stringify({ projectId, telegramUserId: String(telegramUserId), version, spec })
+    ]);
+
+    await client.query(`
       DELETE FROM client_intake_sessions
       WHERE telegram_user_id = $1 AND project_id = $2
     `, [String(telegramUserId), projectId]);
 
     await client.query('COMMIT');
-    return saved.rows[0];
+    return { ...saved.rows[0], duplicate: false };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -707,6 +733,245 @@ async function getProjectSecrets({ telegramUserId, projectId }) {
   return secrets;
 }
 
+
+async function enqueueProjectNotification({ dedupeKey, eventType, payload }) {
+  if (typeof dedupeKey !== 'string' || !dedupeKey.trim() || dedupeKey.length > 200) {
+    throw new Error('مفتاح منع التكرار للإشعار غير صالح');
+  }
+  if (typeof eventType !== 'string' || !eventType.trim() || eventType.length > 100) {
+    throw new Error('نوع الإشعار غير صالح');
+  }
+  const result = await pool.query(`
+    INSERT INTO project_notification_outbox (dedupe_key, event_type, payload)
+    VALUES ($1, $2, $3::jsonb)
+    ON CONFLICT (dedupe_key) DO NOTHING
+    RETURNING id, dedupe_key, state
+  `, [dedupeKey, eventType, JSON.stringify(payload ?? {})]);
+  if (result.rowCount) return result.rows[0];
+  const existing = await pool.query(
+    'SELECT id, dedupe_key, state FROM project_notification_outbox WHERE dedupe_key = $1',
+    [dedupeKey]
+  );
+  return existing.rows[0] || null;
+}
+
+async function claimProjectNotifications({ workerId, limit = 10, leaseSeconds = 60 }) {
+  if (typeof workerId !== 'string' || !workerId.trim() || workerId.length > 200) {
+    throw new Error('معرّف عامل الإشعارات غير صالح');
+  }
+  const safeLimit = Math.max(1, Math.min(100, Math.floor(Number(limit) || 10)));
+  const safeLease = Math.max(10, Math.min(3600, Math.floor(Number(leaseSeconds) || 60)));
+  const result = await pool.query(`
+    WITH candidates AS (
+      SELECT id
+      FROM project_notification_outbox
+      WHERE available_at <= NOW()
+        AND (state = 'pending'
+          OR (state = 'processing' AND locked_at < NOW() - ($3::int * INTERVAL '1 second')))
+      ORDER BY available_at, id
+      FOR UPDATE SKIP LOCKED
+      LIMIT $2
+    )
+    UPDATE project_notification_outbox AS o
+    SET state = 'processing', attempts = attempts + 1,
+        locked_by = $1, locked_at = NOW(), updated_at = NOW()
+    FROM candidates
+    WHERE o.id = candidates.id
+    RETURNING o.*
+  `, [workerId, safeLimit, safeLease]);
+  return result.rows;
+}
+
+async function renewProjectNotificationLease({ id, workerId }) {
+  if (id === undefined || id === null ||
+      typeof workerId !== 'string' || !workerId.trim()) {
+    throw new Error('معرّف الإشعار أو العامل غير صالح');
+  }
+  const result = await pool.query(`
+    UPDATE project_notification_outbox
+    SET locked_at = NOW(), updated_at = NOW()
+    WHERE id = $1 AND state = 'processing' AND locked_by = $2
+    RETURNING id, locked_at
+  `, [id, workerId]);
+  return result.rowCount === 1;
+}
+
+async function completeProjectNotification({ id, workerId }) {
+  const result = await pool.query(`
+    UPDATE project_notification_outbox
+    SET state = 'sent', sent_at = NOW(), locked_by = NULL,
+        locked_at = NULL, last_error = NULL, updated_at = NOW()
+    WHERE id = $1 AND state = 'processing' AND locked_by = $2
+    RETURNING id
+  `, [id, workerId]);
+  return result.rowCount === 1;
+}
+
+async function retryProjectNotification({ id, workerId, error, delaySeconds = 60, maxAttempts = 12 }) {
+  const delay = Math.max(5, Math.min(86400, Math.floor(Number(delaySeconds) || 60)));
+  const max = Math.max(1, Math.min(100, Math.floor(Number(maxAttempts) || 12)));
+  const result = await pool.query(`
+    UPDATE project_notification_outbox
+    SET state = CASE WHEN attempts >= $5 THEN 'dead' ELSE 'pending' END,
+        available_at = NOW() + ($4::int * INTERVAL '1 second'),
+        locked_by = NULL, locked_at = NULL,
+        last_error = LEFT($3, 2000), updated_at = NOW()
+    WHERE id = $1 AND state = 'processing' AND locked_by = $2
+    RETURNING id, state, attempts
+  `, [id, workerId, String(error || 'Unknown notification error'), delay, max]);
+  return result.rows[0] || null;
+}
+
+
+async function cancelProjectIntake({ telegramUserId, projectId, updateId, botIdentity = 'intake' }) {
+  if (!telegramUserId || !/^\d+$/.test(String(projectId || ''))) {
+    throw new Error('بيانات العميل أو المشروع غير صحيحة');
+  }
+  if (!Number.isSafeInteger(Number(updateId)) || Number(updateId) < 0) {
+    throw new Error('معرّف تحديث تيليغرام غير صالح');
+  }
+  if (!['master', 'intake'].includes(botIdentity)) throw new Error('هوية البوت غير صالحة');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const receipt = await client.query(`
+      INSERT INTO project_intake_update_receipts (bot_identity, update_id, telegram_user_id, project_id)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (bot_identity, update_id) DO NOTHING
+      RETURNING update_id
+    `, [botIdentity, String(updateId), String(telegramUserId), projectId]);
+    if (!receipt.rowCount) {
+      await client.query('ROLLBACK');
+      return { cancelled: false, duplicate: true };
+    }
+
+    const owned = await client.query(`
+      SELECT p.id
+      FROM client_projects p
+      JOIN clients c ON c.id = p.client_id
+      WHERE p.id = $1 AND c.telegram_user_id = $2
+        AND p.status = 'collecting_requirements'
+      FOR UPDATE OF p
+    `, [projectId, String(telegramUserId)]);
+    if (!owned.rowCount) throw new Error('المشروع غير موجود أو لم يعد قابلاً للإلغاء');
+
+    await client.query(`
+      UPDATE client_projects
+      SET status = 'cancelled', updated_at = NOW()
+      WHERE id = $1
+    `, [projectId]);
+    await client.query(`
+      DELETE FROM client_intake_sessions
+      WHERE telegram_user_id = $1 AND project_id = $2
+    `, [String(telegramUserId), projectId]);
+
+    await client.query('COMMIT');
+    return { cancelled: true, duplicate: false };
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function persistIntakeUpdate({
+  botIdentity = 'intake',
+  updateId,
+  telegramUserId,
+  projectId,
+  step,
+  data,
+  messages = [],
+  projectName,
+  businessType
+}) {
+  if (projectName !== undefined && (!String(projectName || '').trim() || String(projectName).trim().length > 100)) {
+    throw new Error('اسم المشروع مطلوب ويجب ألا يتجاوز 100 حرف');
+  }
+  if (businessType !== undefined && !['restaurant', 'store', 'games', 'booking', 'services', 'support', 'payments', 'other'].includes(businessType)) {
+    throw new Error('نوع النشاط غير صالح');
+  }
+  if (!['master', 'intake'].includes(botIdentity)) throw new Error('هوية البوت غير صالحة');
+  if (!Number.isSafeInteger(Number(updateId)) || Number(updateId) < 0) throw new Error('معرّف تحديث تيليغرام غير صالح');
+  if (!telegramUserId || !/^\d+$/.test(String(projectId || ''))) throw new Error('بيانات العميل أو المشروع غير صحيحة');
+  if (typeof step !== 'string' || !step.trim() || !Array.isArray(messages)) throw new Error('بيانات تحديث الاستبيان غير صالحة');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const owned = await client.query(`
+      SELECT p.id
+      FROM client_projects p
+      JOIN clients c ON c.id = p.client_id
+      WHERE p.id = $1 AND c.telegram_user_id = $2
+        AND p.status = 'collecting_requirements'
+      FOR UPDATE OF p
+    `, [projectId, String(telegramUserId)]);
+    if (!owned.rowCount) throw new Error('المشروع غير موجود أو لا يخص هذا العميل');
+
+    const receipt = await client.query(`
+      INSERT INTO project_intake_update_receipts (bot_identity, update_id, telegram_user_id, project_id)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (bot_identity, update_id) DO NOTHING
+      RETURNING update_id
+    `, [botIdentity, String(updateId), String(telegramUserId), projectId]);
+
+    if (!receipt.rowCount) {
+      await client.query('ROLLBACK');
+      return { processed: false, duplicate: true };
+    }
+
+    if (projectName !== undefined || businessType !== undefined) {
+      const projectUpdate = await client.query(`
+        UPDATE client_projects
+        SET name = CASE WHEN $2 THEN $3 ELSE name END,
+            business_type = CASE WHEN $4 THEN $5 ELSE business_type END,
+            updated_at = NOW()
+        WHERE id = $1 AND status = 'collecting_requirements'
+        RETURNING id
+      `, [
+        projectId,
+        projectName !== undefined,
+        projectName === undefined ? null : String(projectName).trim(),
+        businessType !== undefined,
+        businessType === undefined ? null : businessType
+      ]);
+      if (!projectUpdate.rowCount) throw new Error('المشروع غير متاح للتعديل أو لا يخص هذا العميل');
+    }
+
+    await client.query(`
+      INSERT INTO client_intake_sessions (telegram_user_id, project_id, step, data, updated_at)
+      VALUES ($1, $2, $3, $4::jsonb, NOW())
+      ON CONFLICT (telegram_user_id)
+      DO UPDATE SET project_id = EXCLUDED.project_id,
+                    step = EXCLUDED.step,
+                    data = EXCLUDED.data,
+                    updated_at = NOW()
+    `, [String(telegramUserId), projectId, step, JSON.stringify(data || {})]);
+
+    for (const message of messages) {
+      if (!message || !['client', 'assistant', 'admin', 'system'].includes(message.role) ||
+          typeof message.content !== 'string') {
+        throw new Error('رسالة محادثة غير صالحة');
+      }
+      await client.query(`
+        INSERT INTO client_conversations (project_id, role, content, metadata)
+        VALUES ($1, $2, $3, $4::jsonb)
+      `, [projectId, message.role, message.content, JSON.stringify(message.metadata || {})]);
+    }
+
+    await client.query('COMMIT');
+    return { processed: true, duplicate: false };
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   initProjectDatabase,
   setProjectSecret,
@@ -727,6 +992,13 @@ module.exports = {
   saveIntakeSession,
   deleteIntakeSession,
   approveProjectSpec,
+  persistIntakeUpdate,
+  cancelProjectIntake,
+  enqueueProjectNotification,
+  claimProjectNotifications,
+  renewProjectNotificationLease,
+  completeProjectNotification,
+  retryProjectNotification,
   ...projectAiJobs,
   ...projectApprovals,
   ...projectRelease

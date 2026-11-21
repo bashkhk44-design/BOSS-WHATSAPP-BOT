@@ -17,6 +17,10 @@ function validatePlatformWorkerEnvironment(env = process.env) {
   if (!/^\d+$/.test(env.TELEGRAM_ADMIN_ID)) {
     throw new Error('TELEGRAM_ADMIN_ID must be a numeric Telegram user ID');
   }
+  if (typeof env.DATABASE_DIRECT_URL !== 'string' ||
+      !/^postgres(?:ql)?:\/\//i.test(env.DATABASE_DIRECT_URL)) {
+    throw new Error('DATABASE_DIRECT_URL is required for the session-scoped Telegram advisory lock');
+  }
   const { validatePlatformBotWorkerEnvironment } = require('./platform-bot-worker');
   if (!validatePlatformBotWorkerEnvironment(env)) {
     throw new Error('PLATFORM_BOT_WEBHOOK_MODE=enabled is required to start the platform worker');
@@ -31,7 +35,8 @@ function createPlatformWorker({
   leaseSeconds = 120,
   workerId,
   logger = console,
-  queueApi
+  queueApi,
+  onHealthChange
 }) {
   const handleUpdate = createPlatformBotUpdateHandler({ pool, runtimes, leaseSeconds });
   const options = {
@@ -46,6 +51,7 @@ function createPlatformWorker({
   };
   if (workerId) options.workerId = workerId;
   if (queueApi) options.queueApi = queueApi;
+  if (onHealthChange) options.onHealthChange = onHealthChange;
   return createQueueWorker(options);
 }
 

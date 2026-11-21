@@ -11,7 +11,8 @@ function createQueueWorker({
   leaseSeconds = 120,
   leaseRenewalIntervalMs,
   logger = console,
-  queueApi = queue
+  queueApi = queue,
+  onHealthChange = () => {}
 }) {
   if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required');
   if (!handlers || typeof handlers !== 'object' || Object.keys(handlers).length < 1) throw new TypeError('A non-empty job handler map is required');
@@ -126,10 +127,12 @@ function createQueueWorker({
       try {
         const processed = await processOne({ shouldStop: () => stopping });
         consecutiveErrors = 0;
+        onHealthChange(true, null);
         if (!processed && !stopping) {
           await waitOrStop(pollIntervalMs);
         }
       } catch (error) {
+        onHealthChange(false, error);
         consecutiveErrors += 1;
         const retryDelayMs = Math.min(30000, Math.max(pollIntervalMs, 1000) * (2 ** Math.min(consecutiveErrors - 1, 5)));
         logger.error(`QUEUE WORKER DATABASE/LOOP ERROR (attempt ${consecutiveErrors}); retrying in ${retryDelayMs}ms: ${error.message}`);

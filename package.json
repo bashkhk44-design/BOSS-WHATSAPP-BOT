@@ -16,7 +16,9 @@
     "start:deployment-preflight-worker": "node deployment-preflight-worker.js",
     "start:platform-worker": "node platform-worker.js",
     "start:platform-webhook": "node platform-webhook.js",
-    "db:bootstrap": "node scripts/bootstrap-database.js"
+    "db:bootstrap": "node scripts/bootstrap-database.js",
+    "start:platform-host": "node platform-host.js",
+    "db:test:integration": "node scripts/postgres-bootstrap-integration.js"
   },
   "keywords": [],
   "type": "commonjs",

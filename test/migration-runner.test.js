@@ -9,12 +9,13 @@ const path = require('node:path');
 const {
   APPROVED_MIGRATION_FILES,
   createMigrationRunner,
+  getMigrationChecksum,
   listMigrationFiles,
   extractMigrationBody
 } = require('../migrations/runner');
 
 function makePool({ locked = true, failLedger = false } = {}) {
-  const applied = new Set();
+  const applied = new Map();
   const calls = [];
 
   const client = {
@@ -25,17 +26,17 @@ function makePool({ locked = true, failLedger = false } = {}) {
         return { rows: [{ locked }], rowCount: 1 };
       }
 
-      if (sql.includes('SELECT version FROM schema_migrations')) {
-        const exists = applied.has(params[0]);
+      if (sql.includes('SELECT version, checksum FROM schema_migrations')) {
+        const checksum = applied.get(params[0]);
         return {
-          rows: exists ? [{ version: params[0] }] : [],
-          rowCount: exists ? 1 : 0
+          rows: checksum === undefined ? [] : [{ version: params[0], checksum }],
+          rowCount: checksum === undefined ? 0 : 1
         };
       }
 
       if (sql.includes('INSERT INTO schema_migrations')) {
         if (failLedger) throw new Error('Simulated ledger failure');
-        applied.add(params[0]);
+        applied.set(params[0], params[2]);
         return { rows: [], rowCount: 1 };
       }
 
@@ -60,17 +61,17 @@ test('migration runner applies pending files once and skips recorded versions', 
   );
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
 
-  fs.writeFileSync(
-    path.join(directory, '001_test_foundation.sql'),
-    '-- migration header comment\n-- safe fixture\nBEGIN; SELECT 1; COMMIT;'
-  );
+  const filename = '001_test_foundation.sql';
+  const sql = '-- migration header comment\n-- safe fixture\nBEGIN; SELECT 1; COMMIT;';
+  fs.writeFileSync(path.join(directory, filename), sql);
 
   const mock = makePool();
   const runner = createMigrationRunner({
     pool: mock.pool,
     migrationsDir: directory,
-    approvedMigrationFiles: ['001_test_foundation.sql'],
-    logger: { log() {}, error() {} }
+    approvedMigrationFiles: [filename],
+    approvedMigrationChecksums: { [filename]: getMigrationChecksum(sql) },
+    logger: { log() {}, warn() {}, error() {} }
   });
 
   const first = await runner.run();
@@ -79,6 +80,10 @@ test('migration runner applies pending files once and skips recorded versions', 
   assert.deepEqual(first.applied, ['001_test_foundation']);
   assert.deepEqual(second.skipped, ['001_test_foundation']);
   assert.equal(mock.applied.size, 1);
+  assert.equal(
+    mock.applied.get('001_test_foundation'),
+    getMigrationChecksum(sql)
+  );
 
   assert.equal(
     mock.calls.filter((call) => call.sql === 'BEGIN').length,
@@ -108,17 +113,17 @@ test('migration runner rolls back when ledger registration fails', async (t) => 
   );
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
 
-  fs.writeFileSync(
-    path.join(directory, '001_test_failure.sql'),
-    'BEGIN; SELECT 1; COMMIT;'
-  );
+  const filename = '001_test_failure.sql';
+  const sql = 'BEGIN; SELECT 1; COMMIT;';
+  fs.writeFileSync(path.join(directory, filename), sql);
 
   const mock = makePool({ failLedger: true });
   const runner = createMigrationRunner({
     pool: mock.pool,
     migrationsDir: directory,
-    approvedMigrationFiles: ['001_test_failure.sql'],
-    logger: { log() {}, error() {} }
+    approvedMigrationFiles: [filename],
+    approvedMigrationChecksums: { [filename]: getMigrationChecksum(sql) },
+    logger: { log() {}, warn() {}, error() {} }
   });
 
   await assert.rejects(runner.run(), /Simulated ledger failure/);
@@ -148,7 +153,7 @@ test('migration runner refuses to proceed when another runner owns the lock', as
     pool: mock.pool,
     migrationsDir: os.tmpdir(),
     approvedMigrationFiles: [],
-    logger: { log() {}, error() {} }
+    logger: { log() {}, warn() {}, error() {} }
   });
 
   await assert.rejects(runner.run(), /already active/);
@@ -202,10 +207,11 @@ test('migration discovery fails closed when an approved migration file is missin
 });
 
 test('default migration allowlist contains all currently reviewed migrations', () => {
-  assert.equal(APPROVED_MIGRATION_FILES.length, 10);
+  assert.equal(APPROVED_MIGRATION_FILES.length, 11);
   assert.ok(APPROVED_MIGRATION_FILES.includes('20261118_bot_runtime_status.sql'));
   assert.ok(APPROVED_MIGRATION_FILES.includes('20261119_bot_inbound_update_lease_owner.sql'));
   assert.ok(APPROVED_MIGRATION_FILES.includes('20261119_bot_update_transport.sql'));
+  assert.ok(APPROVED_MIGRATION_FILES.includes('20261121_project_notification_outbox.sql'));
   assert.equal(APPROVED_MIGRATION_FILES.includes('000_staging_bootstrap.sql'), false);
 });
 
@@ -236,6 +242,6 @@ test('foundation migration has balanced PL/pgSQL dollar delimiters and ownership
     'ai_usage_project_requires_client',
     'platform_audit_project_requires_client'
   ]) {
-    assert.ok(sql.includes(constraint), `missing ownership constraint: ${constraint}`);
+    assert.ok(sql.includes(constraint), 'missing ownership constraint: ' + constraint);
   }
 });
