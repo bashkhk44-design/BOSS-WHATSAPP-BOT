@@ -265,3 +265,57 @@ test('webhook readiness wait is cancelled immediately when shutdown is requested
   controller.abort(new Error('shutdown during worker readiness'));
   await assert.rejects(waiting, /shutdown during worker readiness/);
 });
+
+test('health-only startup aborts if shutdown arrives while the database probe is pending', async () => {
+  const controller = new AbortController();
+  let finishProbe;
+  const calls = { poolEnd: 0, lockPoolEnd: 0 };
+  const db = {
+    pool: {
+      query() {
+        return new Promise(resolve => { finishProbe = resolve; });
+      },
+      async end() { calls.poolEnd += 1; }
+    },
+    async closeTelegramRuntimeLockPool() { calls.lockPoolEnd += 1; }
+  };
+
+  const startup = startPlatformHost({
+    env: {
+      PLATFORM_BOT_WEBHOOK_MODE: 'disabled',
+      DATABASE_URL: 'postgresql://staging:test@localhost/staging'
+    },
+    db,
+    signal: controller.signal,
+    logger: { log() {}, error() {} }
+  });
+
+  await new Promise(resolve => setImmediate(resolve));
+  controller.abort(new Error('shutdown during database probe'));
+  finishProbe({ rows: [{ '?column?': 1 }] });
+
+  await assert.rejects(startup, /shutdown during database probe/);
+  assert.equal(calls.poolEnd, 1);
+  assert.equal(calls.lockPoolEnd, 1);
+});
+
+test('health-only startup checks cancellation before opening the database connection', async () => {
+  const controller = new AbortController();
+  controller.abort(new Error('shutdown before database probe'));
+  const db = fakeDatabase();
+
+  await assert.rejects(
+    startPlatformHost({
+      env: {
+        PLATFORM_BOT_WEBHOOK_MODE: 'disabled',
+        DATABASE_URL: 'postgresql://staging:test@localhost/staging'
+      },
+      db,
+      signal: controller.signal,
+      logger: { log() {}, error() {} }
+    }),
+    /shutdown before database probe/
+  );
+  assert.equal(db.calls.query, 0);
+  assert.equal(db.calls.poolEnd, 0);
+});
