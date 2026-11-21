@@ -188,9 +188,9 @@ jobs:
             }
             fs.appendFileSync(
               process.env.GITHUB_ENV,
-              'DATABASE_URL<<' + delimiter + '\\n' +
+              'DATABASE_URL<<' + delimiter + '\n' +
                 normalizedUrl +
-                '\\n' + delimiter + '\\n'
+                '\n' + delimiter + '\n'
             );
 
             console.log('Preflight passed: exact Neon STAGING target, verified TLS, owner identity, and 11 approved migration files.');
