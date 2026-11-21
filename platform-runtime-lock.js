@@ -29,12 +29,11 @@ function createPlatformRuntimeLock({
       if (!acquired) throw new Error('Another Telegram runtime already owns the platform lock');
       ownsLock = true;
 
-      setLockFailureHandler(async error => {
-        ready = false;
-        if (typeof onLockFailure === 'function') await onLockFailure(error);
-      });
-
       try {
+        setLockFailureHandler(async error => {
+          ready = false;
+          if (typeof onLockFailure === 'function') await onLockFailure(error);
+        });
         await recoverInterruptedJobs();
         await initializeBot();
         if (!(await isLockHeld())) {
