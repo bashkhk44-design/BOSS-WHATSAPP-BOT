@@ -74,29 +74,33 @@ async function registerPlatformTelegramWebhooks({ env, fetchImpl = fetch }) {
     throw new Error('Telegram webhook secrets must be independent from bot API tokens');
   }
 
-  const registered = [];
+  const attempted = [];
   try {
     for (const target of targets) {
+      // Track before sending: a network timeout can happen after Telegram
+      // accepted setWebhook but before its response reached this process.
+      attempted.push(target);
       await callTelegramWebhookMethod(target.token, 'setWebhook', {
         url: baseUrl + '/telegram/platform/' + target.identity,
         secret_token: target.secret,
         drop_pending_updates: false
       }, fetchImpl);
-      registered.push(target);
     }
   } catch (error) {
-    for (const target of registered.reverse()) {
+    const rollbackErrors = [];
+    for (const target of attempted.reverse()) {
       try {
         await callTelegramWebhookMethod(target.token, 'deleteWebhook', {
           drop_pending_updates: false
         }, fetchImpl);
       } catch (rollbackError) {
-        error.rollbackError = rollbackError;
+        rollbackErrors.push(rollbackError);
       }
     }
+    if (rollbackErrors.length) error.rollbackErrors = rollbackErrors;
     throw error;
   }
-  return registered.map(target => target.identity);
+  return targets.map(target => target.identity);
 }
 
 async function waitForPlatformWorkerReady(readyPromise, timeoutMs = 30000) {
