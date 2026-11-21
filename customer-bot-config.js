@@ -110,9 +110,12 @@ function validateCustomerBotConfig(input) {
 
 async function loadApprovedCustomerBotConfig({ pool, record } = {}) {
   if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required.');
-  if (!record || !/^\d+$/.test(String(record.project_id || '')) ||
-      !/^\d+$/.test(String(record.client_id || ''))) {
-    return null;
+  if (!record) return null;
+  const projectId = record.project_id == null ? '' : String(record.project_id);
+  const clientId = record.client_id == null ? '' : String(record.client_id);
+  if (!projectId && !clientId) return null;
+  if (!/^\d+$/.test(projectId) || !/^\d+$/.test(clientId)) {
+    throw new Error('Customer bot project assignment is incomplete or invalid.');
   }
 
   const result = await pool.query(`
