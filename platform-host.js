@@ -9,6 +9,106 @@ const {
   closePlatformWorkerResources
 } = require('./platform-worker');
 
+function validateWebhookBaseUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('PLATFORM_WEBHOOK_BASE_URL is required when Telegram webhooks are enabled');
+  }
+  const url = new URL(value);
+  if (url.protocol !== 'https:' || url.pathname !== '/' || url.search || url.hash ||
+      url.username || url.password) {
+    throw new Error('PLATFORM_WEBHOOK_BASE_URL must be an HTTPS origin without path, query, or credentials');
+  }
+  return url.origin;
+}
+
+async function callTelegramWebhookMethod(token, method, payload, fetchImpl = fetch) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetchImpl('https://api.telegram.org/bot' + token + '/' + method, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+      signal: controller.signal
+    });
+    let result;
+    try { result = await response.json(); } catch (_) {
+      throw new Error('Telegram ' + method + ' returned an unreadable response');
+    }
+    if (!response.ok || result?.ok !== true) {
+      throw new Error('Telegram ' + method + ' failed: ' + String(result?.description || response.status));
+    }
+    return result.result;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function registerPlatformTelegramWebhooks({ env, fetchImpl = fetch }) {
+  const baseUrl = validateWebhookBaseUrl(env.PLATFORM_WEBHOOK_BASE_URL);
+  const targets = [
+    {
+      identity: 'master',
+      token: env.TELEGRAM_BOT_TOKEN,
+      secret: env.MASTER_WEBHOOK_SECRET
+    },
+    {
+      identity: 'intake',
+      token: env.INTAKE_BOT_TOKEN,
+      secret: env.INTAKE_WEBHOOK_SECRET
+    }
+  ];
+  for (const target of targets) {
+    if (typeof target.token !== 'string' || !target.token.trim()) {
+      throw new Error('A Telegram bot token is required for ' + target.identity + ' webhook registration');
+    }
+    if (!/^[A-Za-z0-9_-]{32,256}$/.test(target.secret || '')) {
+      throw new Error('A valid webhook secret is required for ' + target.identity);
+    }
+  }
+  if (targets[0].token === targets[1].token || targets[0].secret === targets[1].secret) {
+    throw new Error('Master and intake webhook credentials must be distinct');
+  }
+
+  const registered = [];
+  try {
+    for (const target of targets) {
+      await callTelegramWebhookMethod(target.token, 'setWebhook', {
+        url: baseUrl + '/telegram/platform/' + target.identity,
+        secret_token: target.secret,
+        drop_pending_updates: false
+      }, fetchImpl);
+      registered.push(target);
+    }
+  } catch (error) {
+    for (const target of registered.reverse()) {
+      try {
+        await callTelegramWebhookMethod(target.token, 'deleteWebhook', {
+          drop_pending_updates: false
+        }, fetchImpl);
+      } catch (rollbackError) {
+        error.rollbackError = rollbackError;
+      }
+    }
+    throw error;
+  }
+  return registered.map(target => target.identity);
+}
+
+async function waitForPlatformWorkerReady(readyPromise, timeoutMs = 30000) {
+  let timer;
+  try {
+    await Promise.race([
+      readyPromise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Platform queue worker did not become ready before webhook registration')), timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function startHealthOnlyRuntime({ env = process.env, logger = console, db } = {}) {
   if (typeof env.DATABASE_URL !== 'string' ||
       !/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL)) {
@@ -86,6 +186,8 @@ async function startPlatformHost({ env = process.env, logger = console, db: inje
   let closePromise = null;
   let stopping = false;
   let ready = false;
+  let resolveWorkerReady;
+  const workerReady = new Promise(resolve => { resolveWorkerReady = resolve; });
 
   const close = () => {
     if (!closePromise) {
@@ -142,6 +244,7 @@ async function startPlatformHost({ env = process.env, logger = console, db: inje
         if (isHealthy) {
           if (!ready) {
             ready = true;
+            resolveWorkerReady();
             process.emit('boss:runtime-ready');
           }
         } else {
@@ -158,7 +261,9 @@ async function startPlatformHost({ env = process.env, logger = console, db: inje
     }
 
     const done = worker.start();
-    logger.log('BOSS platform webhook host started; waiting for queue health:', worker.workerId);
+    await waitForPlatformWorkerReady(workerReady, Number(env.PLATFORM_WEBHOOK_READY_TIMEOUT_MS || 30000));
+    const registeredWebhooks = await registerPlatformTelegramWebhooks({ env });
+    logger.log('BOSS platform webhook host started; Telegram webhooks registered:', registeredWebhooks.join(', '), worker.workerId);
 
     return {
       mode: 'webhook',
@@ -254,4 +359,12 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { startHealthOnlyRuntime, startPlatformHost, main };
+module.exports = {
+  validateWebhookBaseUrl,
+  callTelegramWebhookMethod,
+  registerPlatformTelegramWebhooks,
+  waitForPlatformWorkerReady,
+  startHealthOnlyRuntime,
+  startPlatformHost,
+  main
+};
