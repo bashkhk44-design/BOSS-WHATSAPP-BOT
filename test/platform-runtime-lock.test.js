@@ -61,12 +61,12 @@ test('lost runtime lock marks webhook runtime unready and notifies the fail-clos
   let lockHeld = true;
   let notified = null;
   const state = setup({
-    async isLockHeld() { events.push('check-lock'); return lockHeld; }
+    async isLockHeld() { return lockHeld; }
   });
-  await runtime.start({ onLockFailure: async error => { notified = error.message; } });
+  await state.runtime.start({ onLockFailure: async error => { notified = error.message; } });
   lockHeld = false;
-  await assert.rejects(runtime.assertReady(), /no longer owns/);
-  assert.equal(runtime.ready, false);
+  await assert.rejects(state.runtime.assertReady(), /no longer owns/);
+  assert.equal(state.runtime.ready, false);
   assert.equal(notified, null);
   // Simulate the database driver's asynchronous lock-loss notification.
   await state.failureHandler(new Error('lock connection lost'));
