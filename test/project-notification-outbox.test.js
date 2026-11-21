@@ -77,6 +77,23 @@ test('outbox claim uses SKIP LOCKED and reclaims expired processing leases', asy
   }
 });
 
+test('outbox lease renewal is fenced by notification id and worker owner', async () => {
+  const loaded = loadProjectDb(async (sql, params) => {
+    assert.match(sql, /SET locked_at = NOW\(\), updated_at = NOW\(\)/);
+    assert.match(sql, /WHERE id = \$1 AND state = 'processing' AND locked_by = \$2/);
+    assert.deepEqual(params, ['11', 'worker-A']);
+    return { rowCount: 1, rows: [{ id: '11' }] };
+  });
+  try {
+    const renewed = await loaded.projectDb.renewProjectNotificationLease({
+      id: '11', workerId: 'worker-A'
+    });
+    assert.equal(renewed, true);
+  } finally {
+    loaded.restore();
+  }
+});
+
 test('outbox completion is fenced by the worker lease owner', async () => {
   const loaded = loadProjectDb(async (sql, params) => {
     assert.match(sql, /state = 'processing' AND locked_by = \$2/);
