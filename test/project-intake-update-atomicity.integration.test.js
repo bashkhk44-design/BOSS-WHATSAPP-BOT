@@ -92,7 +92,7 @@ test('concurrent duplicate intake updates commit one session transition and one 
     `);
     const client = await tenantPool.query(
       'INSERT INTO clients (telegram_user_id) VALUES ($1) RETURNING id',
-      ['telegram-' + schema]
+      ['123456789']
     );
     const project = await tenantPool.query(
       `INSERT INTO client_projects (client_id, name, status)
