@@ -102,6 +102,7 @@ async function main() {
   let runtime = null;
   let runtimeReady = false;
   let runtimeStopping = false;
+  let shutdownStarted = false;
   let server;
 
   const port = Number(process.env.PORT || 8080);
@@ -120,7 +121,8 @@ async function main() {
   process.on('boss:runtime-stopping', onStopping);
 
   const shutdown = async signal => {
-    if (runtimeStopping) return;
+    if (shutdownStarted) return;
+    shutdownStarted = true;
     console.log('BOSS platform host stopping:', signal);
     onStopping();
     try {
@@ -128,9 +130,16 @@ async function main() {
     } finally {
       process.removeListener('boss:runtime-ready', onReady);
       process.removeListener('boss:runtime-stopping', onStopping);
+      process.removeListener('boss:runtime-lock-lost', onLockLost);
       await new Promise(resolve => server.close(resolve));
     }
   };
+
+  const onLockLost = error => shutdown('LOCK_LOST').catch(shutdownError => {
+    console.error('BOSS platform host lock-loss shutdown failed:', shutdownError.message);
+    process.exitCode = 1;
+  });
+  process.on('boss:runtime-lock-lost', onLockLost);
 
   process.once('SIGTERM', () => shutdown('SIGTERM').catch(error => {
     console.error('BOSS platform host shutdown failed:', error.message);
