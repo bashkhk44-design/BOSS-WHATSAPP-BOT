@@ -303,3 +303,63 @@ test('Cloudflare Worker rejects missing or unsafe Render readiness URLs before e
   }
   assert.equal(state.constructed, 0);
 });
+
+
+test('Cloudflare retry after a failed Render wake reuses the committed inbox update without creating a duplicate job', async () => {
+  const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
+  const { enqueuePlatformBotUpdate } = require('../platform-queue');
+  const database = { updates: new Set(), jobs: new Set(), clients: 0, ended: 0 };
+  class PersistentFakeClient {
+    constructor() { database.clients += 1; }
+    async connect() {}
+    async query(sql, params) {
+      if (/^\\s*(BEGIN|COMMIT|ROLLBACK)\\s*$/i.test(sql)) return { rowCount: 0, rows: [] };
+      if (sql.includes('INSERT INTO platform_bot_inbound_updates')) {
+        const key = params[0] + ':' + params[1];
+        if (database.updates.has(key)) return { rowCount: 0, rows: [] };
+        database.updates.add(key);
+        return { rowCount: 1, rows: [{ id: database.updates.size }] };
+      }
+      if (sql.includes('INSERT INTO platform_jobs')) {
+        const key = params[0] + ':' + params[1];
+        if (database.jobs.has(key)) return { rowCount: 0, rows: [] };
+        database.jobs.add(key);
+        return { rowCount: 1, rows: [{ id: database.jobs.size }] };
+      }
+      throw new Error('unexpected SQL: ' + sql);
+    }
+    async end() { database.ended += 1; }
+  }
+
+  let wakeAttempts = 0;
+  const handler = createPlatformWebhookHandler({
+    ClientClass: PersistentFakeClient,
+    enqueue: enqueuePlatformBotUpdate,
+    fetchImpl: async () => {
+      wakeAttempts += 1;
+      return wakeAttempts === 1
+        ? new Response('service waking', { status: 503 })
+        : new Response('ready', { status: 200 });
+    }
+  });
+  const request = () => makeRequest('/telegram/platform/master', {
+    body: JSON.stringify({ update_id: 99001, message: { text: '/start' } })
+  });
+
+  const first = await handler(request(), env);
+  assert.equal(first.status, 503);
+  assert.deepEqual(await first.json(), { ok: false, error: 'worker_not_ready' });
+  assert.deepEqual([...database.updates], ['master:99001']);
+  assert.deepEqual([...database.jobs], ['telegram.master.update:99001']);
+
+  const retry = await handler(request(), env);
+  assert.equal(retry.status, 200);
+  assert.deepEqual(await retry.json(), {
+    ok: true, duplicate: true, queued: false, workerReady: true
+  });
+  assert.equal(wakeAttempts, 2);
+  assert.equal(database.updates.size, 1, 'Telegram retry must not create a second inbox row');
+  assert.equal(database.jobs.size, 1, 'Telegram retry must not create a second queue job');
+  assert.equal(database.clients, 2);
+  assert.equal(database.ended, 2);
+});
