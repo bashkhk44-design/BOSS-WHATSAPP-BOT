@@ -35,7 +35,7 @@ test('customer update dispatcher routes only to the bot bound to the durable job
   assert.equal(handled[0].botId, 12);
   assert.equal(handled[0].token, 'test-token');
   assert.equal(handled[0].update.update_id, 101);
-  assert.match(calls[0].sql, /u\.bot_id = \$1 AND u\.update_id = \$2 AND b\.active = TRUE/);
+  assert.match(calls[0].sql, /u\.bot_id = \$1 AND u\.update_id = \$2\s+AND b\.active = TRUE/);
   assert.match(calls[1].sql, /state = 'processing'/);
   assert.match(calls[2].sql, /state = 'processed'/);
 });
@@ -83,7 +83,7 @@ test('customer update dispatcher does not run a Telegram update already marked p
     pool: {
       async query(sql) {
         calls += 1;
-        if (/SELECT u\\.id AS inbox_id/.test(sql)) {
+        if (/SELECT u\.id AS inbox_id/.test(sql)) {
           return { rowCount: 1, rows: [{
             inbox_id: 22, payload: { update_id: 303 }, id: 15, name: 'Customer 15',
             username: 'customer15', token_ciphertext: 'cipher', token_iv: 'iv', token_auth_tag: 'tag'
