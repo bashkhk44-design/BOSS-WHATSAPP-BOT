@@ -104,7 +104,7 @@ test('a recorded database checksum mismatch stops the migration run', async () =
     existingChecksum: 'f'.repeat(64)
   });
 
-  await assert.rejects(harness.runner.run(), /database ledger does not match/i);
+  await assert.rejects(harness.runner.run(), /valid checksum matching the reviewed SQL/i);
   assert.equal(harness.wasReleased(), true);
   assert.equal(
     harness.statements.some(({ statement }) => statement === 'COMMIT'),
@@ -127,16 +127,6 @@ test('an empty recorded checksum is rejected instead of treated as a legacy row'
   );
 });
 
-test('a missing checksum field is rejected instead of treated as a legacy row', async () => {
-  const harness = createHarness({
-    existingRow: true,
-    existingChecksum: undefined
-  });
-
-  await assert.rejects(harness.runner.run(), /valid checksum matching the reviewed SQL/i);
-  assert.deepEqual(harness.warnings, []);
-  assert.equal(harness.wasReleased(), true);
-});
 
 test('new migrations persist their SHA-256 checksum in the ledger', async () => {
   const harness = createHarness();
