@@ -28,7 +28,7 @@ jobs:
       - name: Checkout reviewed staging branch
         uses: actions/checkout@v4
         with:
-          ref: fb7c9f02703d4de0d15b3f871d79da78f8eecf58
+          ref: 30eeacf10524baaa2292b316e418549d8e15e29c
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
