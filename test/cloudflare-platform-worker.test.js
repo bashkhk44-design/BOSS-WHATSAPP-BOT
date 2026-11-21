@@ -10,6 +10,7 @@ const queueSource = fs.readFileSync(path.join(__dirname, '..', 'platform-queue.j
 
 const env = {
   PLATFORM_BOT_WEBHOOK_MODE: 'enabled',
+  PLATFORM_WORKER_WAKE_URL: 'https://boss-whatsapp-bot.onrender.com/readyz',
   MASTER_WEBHOOK_SECRET: 'master_edge_secret_abcdefghijklmnopqrstuvwxyz123456',
   INTAKE_WEBHOOK_SECRET: 'intake_edge_secret_abcdefghijklmnopqrstuvwxyz123456',
   TELEGRAM_BOT_TOKEN: 'master-telegram-token-' + 'm'.repeat(40),
@@ -68,11 +69,11 @@ function makeClientClass({ duplicate = false, failQuery = false } = {}) {
 test('Cloudflare Worker authenticates platform identities and atomically enqueues with one short-lived Hyperdrive client', async () => {
   const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
   const { FakeClient, state } = makeClientClass();
-  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient });
+  const handler = createPlatformWebhookHandler({ ClientClass: FakeClient, fetchImpl: async () => new Response('ok', { status: 200 }) });
 
   const master = await handler(makeRequest('/telegram/platform/master'), env);
   assert.equal(master.status, 200);
-  assert.deepEqual(await master.json(), { ok: true, duplicate: false, queued: true });
+  assert.deepEqual(await master.json(), { ok: true, duplicate: false, queued: true, workerReady: true });
   assert.equal(state.constructed, 1);
   assert.equal(state.connected, 1);
   assert.equal(state.ended, 1);
@@ -166,7 +167,7 @@ test('Cloudflare Worker acknowledges duplicate delivery and always closes the Hy
 
   const response = await handler(makeRequest('/telegram/platform/master'), env);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, duplicate: true, queued: false });
+  assert.deepEqual(await response.json(), { ok: true, duplicate: true, queued: false, workerReady: true });
   assert.equal(state.ended, 1);
 });
 
@@ -269,6 +270,36 @@ test('Cloudflare Worker rejects reuse of either platform webhook secret as eithe
       secret: invalidEnv[secretName]
     }), invalidEnv);
     assert.equal(response.status, 401, secretName + ' must not reuse ' + tokenName);
+  }
+  assert.equal(state.constructed, 0);
+});
+
+test('Cloudflare Worker refuses to acknowledge updates unless the Render worker is ready', async () => {
+  const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
+  const { FakeClient, state } = makeClientClass();
+  const handler = createPlatformWebhookHandler({
+    ClientClass: FakeClient,
+    fetchImpl: async () => new Response('not ready', { status: 503 })
+  });
+  const response = await handler(makeRequest('/telegram/platform/master'), env);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { ok: false, error: 'worker_not_ready' });
+  assert.equal(state.queries.at(-1).sql, 'COMMIT', 'the durable queue insert must commit before wake confirmation');
+});
+
+test('Cloudflare Worker rejects missing or unsafe Render readiness URLs before enqueue', async () => {
+  const { createPlatformWebhookHandler } = await import('../cloudflare/worker.mjs');
+  const { FakeClient, state } = makeClientClass();
+  const handler = createPlatformWebhookHandler({
+    ClientClass: FakeClient,
+    fetchImpl: async () => new Response('ok')
+  });
+  for (const value of [undefined, 'http://example.com/readyz', 'https://example.com/other', 'https://user:pass@example.com/readyz']) {
+    const response = await handler(makeRequest('/telegram/platform/master'), {
+      ...env,
+      PLATFORM_WORKER_WAKE_URL: value
+    });
+    assert.equal(response.status, 503);
   }
   assert.equal(state.constructed, 0);
 });
