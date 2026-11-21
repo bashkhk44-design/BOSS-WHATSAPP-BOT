@@ -19,10 +19,13 @@ function createHarness(overrides = {}) {
     retries: [],
     sends: []
   };
+  let claimAvailable = true;
   const defaults = {
     getNotifyAdminHandler: () => async () => {},
     claimNotifications: async options => {
       calls.claims.push(options);
+      if (!claimAvailable) return [];
+      claimAvailable = false;
       return [{ id: '77', event_type: 'project_approved', payload: {}, attempts: 1 }];
     },
     renewLease: async options => {
@@ -66,6 +69,7 @@ test('overlapping polling ticks share one in-flight dispatch and claim one notif
   sending.resolve();
   assert.equal(await first, 1);
   assert.equal(calls.completions.length, 1);
+  assert.equal(calls.claims.length, 2, 'the dispatcher checks for the next item after completing one');
   assert.equal(calls.retries.length, 0);
 });
 
