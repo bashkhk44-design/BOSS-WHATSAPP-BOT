@@ -24,3 +24,12 @@ Set Telegram's `secret_token` for the master bot to `MASTER_WEBHOOK_SECRET` and 
 ## Verification still required
 
 Run the unit and PostgreSQL integration workflows on the new branch, then test separate staging master/intake bots end-to-end, including duplicate delivery, retry, lease expiry, and clean shutdown. A green CI run is not proof that a live webhook or production deployment is active.
+
+
+## Combined Render web host (staging only)
+
+- `npm run start:platform-host` runs the platform queue worker and the Render HTTP health server in one process.
+- The host starts the HTTP server first, then verifies the database schema through the Master runtime, acquires the Telegram advisory lock, initializes both no-polling webhook adapters, checks PostgreSQL connectivity, and starts the queue loop.
+- `/livez` reports process liveness. Configure the Render health-check path as `/readyz`, which returns 503 until the platform runtime has completed startup and while shutdown is in progress.
+- If the Master runtime reports advisory-lock loss, the host marks itself not ready and begins graceful shutdown.
+- This is a staging candidate only. It does not remove the need for a protected Cloudflare-to-Render wake path, isolated staging bot credentials, webhook registration tests, and end-to-end acceptance. Do not change the production Render start command or Cloudflare mode until those gates pass.
