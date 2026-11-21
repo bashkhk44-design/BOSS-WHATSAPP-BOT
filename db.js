@@ -307,7 +307,18 @@ async function verifyDatabaseSchema() {
             index_meta.indisready AS is_ready,
             index_meta.indisunique AS is_unique,
             ARRAY(
-              SELECT pg_get_indexdef(index_meta.indexrelid, position, true)
+              SELECT CASE
+                       WHEN (index_meta.indoption[position - 1] & 1) = 1 THEN
+                         pg_get_indexdef(index_meta.indexrelid, position, true) ||
+                         CASE
+                           WHEN (index_meta.indoption[position - 1] & 2) = 2 THEN ' DESC'
+                           ELSE ' DESC NULLS LAST'
+                         END
+                       WHEN (index_meta.indoption[position - 1] & 2) = 2 THEN
+                         pg_get_indexdef(index_meta.indexrelid, position, true) || ' ASC NULLS FIRST'
+                       ELSE
+                         pg_get_indexdef(index_meta.indexrelid, position, true)
+                     END
               FROM generate_series(1, index_meta.indnkeyatts) AS position
               ORDER BY position
             ) AS key_columns,
