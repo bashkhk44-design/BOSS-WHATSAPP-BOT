@@ -892,7 +892,8 @@ async function persistIntakeUpdate({
       FROM client_projects p
       JOIN clients c ON c.id = p.client_id
       WHERE p.id = $1 AND c.telegram_user_id = $2
-      FOR UPDATE
+        AND p.status = 'collecting_requirements'
+      FOR UPDATE OF p
     `, [projectId, String(telegramUserId)]);
     if (!owned.rowCount) throw new Error('المشروع غير موجود أو لا يخص هذا العميل');
 
