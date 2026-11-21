@@ -28,11 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: cloudflare-staging
-    env:
-      DATABASE_URL: ${{ secrets.CLOUDFLARE_STAGING_DATABASE_URL }}
-      DATABASE_SSL: require
-      DATABASE_SSL_REJECT_UNAUTHORIZED: 'true'
-
     steps:
       - name: Checkout reviewed staging branch
         uses: actions/checkout@v4
@@ -52,6 +47,10 @@ jobs:
         run: npm test
 
       - name: Verify exact Neon STAGING target, strict TLS, and reviewed migration inventory
+        env:
+          DATABASE_URL: ${{ secrets.CLOUDFLARE_STAGING_DATABASE_URL }}
+          DATABASE_SSL: require
+          DATABASE_SSL_REJECT_UNAUTHORIZED: 'true'
         run: |
           node <<'NODE'
           const fs = require('node:fs');
@@ -145,4 +144,7 @@ jobs:
           NODE
 
       - name: Initialize prerequisite schema, apply migrations, and verify database schema
+        env:
+          DATABASE_SSL: require
+          DATABASE_SSL_REJECT_UNAUTHORIZED: 'true'
         run: npm run db:bootstrap
