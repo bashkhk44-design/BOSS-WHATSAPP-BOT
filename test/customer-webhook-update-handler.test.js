@@ -111,7 +111,7 @@ test('customer update dispatcher renews its inbox lease while processing', async
     pool: { async query(sql, params) {
       querySeen = sql;
       assert.deepEqual(params, [21, 404]);
-      return { rowCount: 1, rows: [{ id: 88 }] };
+      return { rowCount: 1, rows: [{ renewed: true }] };
     } },
     decryptToken() { return 'unused'; },
     createCustomerBot() { return { async handleUpdate() {} }; }
