@@ -118,3 +118,33 @@ test('intake update refuses project IDs not owned by the Telegram user', async (
     loaded.restore();
   }
 });
+
+test('project name and business type changes share the intake transaction and receipt', async () => {
+  const loaded = loadProjectDb(async (sql) => {
+    if (sql === 'BEGIN' || sql === 'COMMIT') return { rowCount: 0, rows: [] };
+    if (sql.includes('SELECT p.id')) return { rowCount: 1, rows: [{ id: '55' }] };
+    if (sql.includes('INSERT INTO project_intake_update_receipts')) return { rowCount: 1, rows: [{ update_id: '902' }] };
+    if (sql.includes('UPDATE client_projects')) return { rowCount: 1, rows: [{ id: '55' }] };
+    if (sql.includes('INSERT INTO client_intake_sessions')) return { rowCount: 1, rows: [] };
+    if (sql.includes('INSERT INTO client_conversations')) return { rowCount: 1, rows: [] };
+    assert.fail('unexpected SQL: ' + sql);
+  });
+  try {
+    const result = await loaded.projectDb.persistIntakeUpdate({
+      updateId: 902, telegramUserId: '123', projectId: '55',
+      step: 'review', data: { projectName: 'New name', businessType: 'store' },
+      projectName: 'New name', businessType: 'store',
+      messages: [{ role: 'client', content: 'Updated business details' }]
+    });
+    assert.deepEqual(result, { processed: true, duplicate: false });
+    const sql = loaded.queries.map(q => q.sql);
+    const receiptAt = sql.findIndex(q => q.includes('INSERT INTO project_intake_update_receipts'));
+    const projectAt = sql.findIndex(q => q.includes('UPDATE client_projects'));
+    const sessionAt = sql.findIndex(q => q.includes('INSERT INTO client_intake_sessions'));
+    const messageAt = sql.findIndex(q => q.includes('INSERT INTO client_conversations'));
+    assert.ok(receiptAt > 0 && projectAt > receiptAt && sessionAt > projectAt && messageAt > sessionAt);
+    assert.equal(sql.at(-1), 'COMMIT');
+  } finally {
+    loaded.restore();
+  }
+});

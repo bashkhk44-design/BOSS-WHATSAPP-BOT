@@ -395,6 +395,7 @@ async function saveProjectSpec({
       FROM client_projects p
       JOIN clients c ON c.id = p.client_id
       WHERE p.id = $1 AND c.telegram_user_id = $2
+        AND p.status = 'collecting_requirements'
       FOR UPDATE OF p
     `, [projectId, String(telegramUserId)]);
 
@@ -534,8 +535,12 @@ async function deleteIntakeSession(telegramUserId) {
 async function approveProjectSpec({
   telegramUserId,
   projectId,
-  spec
+  spec,
+  updateId
 }) {
+  if (!Number.isSafeInteger(Number(updateId)) || Number(updateId) < 0) {
+    throw new Error('معرّف تحديث تيليغرام غير صالح');
+  }
   const client = await pool.connect();
 
   try {
@@ -551,6 +556,17 @@ async function approveProjectSpec({
 
     if (!owned.rowCount) {
       throw new Error('المشروع غير موجود أو لا يخص هذا العميل');
+    }
+
+    const receipt = await client.query(`
+      INSERT INTO project_intake_update_receipts (bot_identity, update_id, telegram_user_id, project_id)
+      VALUES ('intake', $1, $2, $3)
+      ON CONFLICT (bot_identity, update_id) DO NOTHING
+      RETURNING update_id
+    `, [String(updateId), String(telegramUserId), projectId]);
+    if (!receipt.rowCount) {
+      await client.query('ROLLBACK');
+      return { duplicate: true };
     }
 
     const versionResult = await client.query(`
@@ -594,7 +610,7 @@ async function approveProjectSpec({
     `, [String(telegramUserId), projectId]);
 
     await client.query('COMMIT');
-    return saved.rows[0];
+    return { ...saved.rows[0], duplicate: false };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

@@ -575,8 +575,13 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       const result = await approveProjectSpec({
         telegramUserId: ctx.from.id,
         projectId: session.project_id,
-        spec: session.data
+        spec: session.data,
+        updateId: ctx.update?.update_id
       });
+      if (result.duplicate) {
+        await ctx.answerCallbackQuery({ text: 'تمت معالجة هذا الطلب مسبقاً.' });
+        return;
+      }
 
       let adminNotified = false;
       try {
