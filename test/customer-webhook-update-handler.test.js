@@ -76,3 +76,30 @@ test('customer update dispatcher records failed delivery and rethrows for queue 
   );
   assert.match(updates[2], /state = 'failed'/);
 });
+
+test('customer update dispatcher does not run a Telegram update already marked processed', async () => {
+  let calls = 0;
+  const handler = createCustomerWebhookUpdateHandler({
+    pool: {
+      async query(sql) {
+        calls += 1;
+        if (/SELECT u\\.id AS inbox_id/.test(sql)) {
+          return { rowCount: 1, rows: [{
+            inbox_id: 22, payload: { update_id: 303 }, id: 15, name: 'Customer 15',
+            username: 'customer15', token_ciphertext: 'cipher', token_iv: 'iv', token_auth_tag: 'tag'
+          }] };
+        }
+        if (/UPDATE bot_inbound_updates/.test(sql)) return { rowCount: 0, rows: [] };
+        if (/SELECT state FROM bot_inbound_updates/.test(sql)) {
+          return { rowCount: 1, rows: [{ state: 'processed' }] };
+        }
+        assert.fail('unexpected database query');
+      }
+    },
+    decryptToken() { assert.fail('processed updates must not decrypt tokens'); },
+    createCustomerBot() { assert.fail('processed updates must not be dispatched'); }
+  });
+  const result = await handler({ bot_id: 15, payload: { botId: 15, updateId: 303 } });
+  assert.deepEqual(result, { botId: 15, updateId: 303, processed: true, duplicate: true });
+  assert.equal(calls, 3);
+});
