@@ -10,6 +10,10 @@
     "PLATFORM_BOT_WEBHOOK_MODE": "disabled",
     "CUSTOMER_BOT_WEBHOOK_MODE": "disabled"
   },
+  // Configure these as Worker secrets, never as vars or committed values:
+  // wrangler secret put MASTER_WEBHOOK_SECRET
+  // wrangler secret put INTAKE_WEBHOOK_SECRET
+  // wrangler secret put CUSTOMER_WEBHOOK_SECRET
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",
