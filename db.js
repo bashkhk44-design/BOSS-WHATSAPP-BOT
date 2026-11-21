@@ -162,7 +162,9 @@ async function initDatabase() {
 }
 
 async function verifyDatabaseSchema() {
+  const { APPROVED_MIGRATION_FILES } = require('./migrations/runner');
   const requiredTables = [
+    'schema_migrations',
     'telegram_bots',
     'clients',
     'client_projects',
@@ -176,24 +178,147 @@ async function verifyDatabaseSchema() {
     'project_build_approvals',
     'project_release_candidates',
     'project_release_approvals',
-    'project_deployment_authorizations'
+    'project_deployment_authorizations',
+    'bot_runtime_status',
+    'bot_inbound_updates',
+    'platform_jobs',
+    'ai_usage',
+    'platform_audit_logs',
+    'bot_runtime_commands',
+    'bot_worker_status',
+    'bot_auto_remediation_attempts',
+    'platform_bot_inbound_updates',
+    'project_notification_outbox',
+    'project_intake_update_receipts'
   ];
 
-  const result = await pool.query(
+  const tablesResult = await pool.query(
     `SELECT table_name,
             to_regclass('public.' || table_name) IS NOT NULL AS exists
      FROM unnest($1::text[]) AS required(table_name)`,
     [requiredTables]
   );
-
-  const missing = result.rows
+  const missingTables = tablesResult.rows
     .filter((row) => !row.exists)
     .map((row) => row.table_name);
 
-  if (missing.length) {
+  const requiredColumns = [
+    ['telegram_bots', 'client_id'],
+    ['telegram_bots', 'project_id'],
+    ['telegram_bots', 'update_transport'],
+    ['bot_runtime_commands', 'claimed_by'],
+    ['bot_runtime_commands', 'claimed_at'],
+    ['bot_runtime_commands', 'auto_remediation_attempt_id'],
+    ['bot_inbound_updates', 'locked_by'],
+    ['project_notification_outbox', 'dedupe_key'],
+    ['project_notification_outbox', 'state'],
+    ['project_intake_update_receipts', 'bot_identity'],
+    ['project_intake_update_receipts', 'update_id'],
+    ['project_intake_update_receipts', 'project_id']
+  ];
+  const columnsResult = await pool.query(
+    `SELECT required.table_name, required.column_name
+     FROM unnest($1::text[], $2::text[]) AS required(table_name, column_name)
+     LEFT JOIN information_schema.columns actual
+       ON actual.table_schema = 'public'
+      AND actual.table_name = required.table_name
+      AND actual.column_name = required.column_name
+     WHERE actual.column_name IS NULL`,
+    [
+      requiredColumns.map(([table]) => table),
+      requiredColumns.map(([, column]) => column)
+    ]
+  );
+  const missingColumns = columnsResult.rows.map(
+    (row) => row.table_name + '.' + row.column_name
+  );
+
+  const requiredIndexes = [
+    'client_projects_id_client_id_uq',
+    'telegram_bots_client_idx',
+    'telegram_bots_project_idx',
+    'bot_runtime_status_health_idx',
+    'bot_inbound_updates_claim_idx',
+    'platform_jobs_claim_idx',
+    'platform_jobs_client_idx',
+    'ai_usage_client_created_idx',
+    'ai_usage_bot_created_idx',
+    'platform_audit_client_created_idx',
+    'platform_audit_bot_created_idx',
+    'bot_runtime_status_lease_idx',
+    'telegram_bots_active_runtime_idx',
+    'bot_runtime_commands_claim_idx',
+    'bot_runtime_commands_recovery_idx',
+    'bot_worker_status_heartbeat_idx',
+    'bot_auto_remediation_one_pending_idx',
+    'bot_auto_remediation_history_idx',
+    'platform_bot_inbound_claim_idx',
+    'platform_bot_inbound_identity_received_idx',
+    'bot_runtime_status_worker_heartbeat_idx',
+    'bot_runtime_status_status_heartbeat_idx',
+    'bot_inbound_updates_pending_order_idx',
+    'telegram_bots_active_transport_idx',
+    'project_intake_update_receipts_project_idx',
+    'project_notification_outbox_ready_idx'
+  ];
+  const indexesResult = await pool.query(
+    `SELECT indexname
+     FROM pg_indexes
+     WHERE schemaname = 'public' AND indexname = ANY($1::text[])`,
+    [requiredIndexes]
+  );
+  const foundIndexes = new Set(indexesResult.rows.map((row) => row.indexname));
+  const missingIndexes = requiredIndexes.filter((name) => !foundIndexes.has(name));
+
+  const requiredConstraints = [
+    'telegram_bots_client_id_fk',
+    'telegram_bots_project_client_fk',
+    'platform_jobs_project_client_fk',
+    'telegram_bots_project_requires_client',
+    'platform_jobs_project_requires_client',
+    'ai_usage_project_requires_client',
+    'platform_audit_project_requires_client',
+    'telegram_bots_update_transport_check'
+  ];
+  const constraintsResult = await pool.query(
+    `SELECT constraint_row.conname
+     FROM pg_constraint constraint_row
+     JOIN pg_namespace namespace_row
+       ON namespace_row.oid = constraint_row.connamespace
+     WHERE namespace_row.nspname = 'public'
+       AND constraint_row.conname = ANY($1::text[])`,
+    [requiredConstraints]
+  );
+  const foundConstraints = new Set(
+    constraintsResult.rows.map((row) => row.conname)
+  );
+  const missingConstraints = requiredConstraints.filter(
+    (name) => !foundConstraints.has(name)
+  );
+
+  const requiredVersions = APPROVED_MIGRATION_FILES.map(
+    (filename) => filename.replace(/\\.sql$/i, '')
+  );
+  const ledgerResult = await pool.query(
+    'SELECT version FROM schema_migrations WHERE version = ANY($1::text[])',
+    [requiredVersions]
+  );
+  const foundVersions = new Set(ledgerResult.rows.map((row) => row.version));
+  const missingVersions = requiredVersions.filter(
+    (version) => !foundVersions.has(version)
+  );
+
+  const failures = [];
+  if (missingTables.length) failures.push('الجداول: ' + missingTables.join(', '));
+  if (missingColumns.length) failures.push('الأعمدة: ' + missingColumns.join(', '));
+  if (missingIndexes.length) failures.push('الفهارس: ' + missingIndexes.join(', '));
+  if (missingConstraints.length) failures.push('القيود: ' + missingConstraints.join(', '));
+  if (missingVersions.length) failures.push('سجل الترحيلات: ' + missingVersions.join(', '));
+
+  if (failures.length) {
     throw new Error(
-      'قاعدة البيانات غير مهيأة. شغّل Neon Staging Bootstrap بصلاحية المالك. الجداول الناقصة: ' +
-      missing.join(', ')
+      'قاعدة البيانات غير مكتملة بعد التهيئة. العناصر الناقصة: ' +
+      failures.join(' | ')
     );
   }
 
