@@ -68,6 +68,38 @@ test('rejects duplicate and reserved Telegram commands', () => {
   }), /reserved Telegram command/);
 });
 
+test('validates safe inline buttons and callback responses', () => {
+  const input = validConfig();
+  input.commands[0].buttons = [{
+    text: 'View details',
+    callbackData: 'catalog_details',
+    responseText: 'These are the details.'
+  }];
+  const result = validateCustomerBotConfig(input);
+  assert.deepEqual(result.commands[0].buttons, input.commands[0].buttons);
+});
+
+test('rejects duplicate or unsafe callback data and oversized button labels', () => {
+  const duplicate = validConfig();
+  duplicate.commands[0].buttons = [
+    { text: 'One', callbackData: 'same', responseText: 'First' },
+    { text: 'Two', callbackData: 'same', responseText: 'Second' }
+  ];
+  assert.throws(() => validateCustomerBotConfig(duplicate), /Duplicate Telegram callback data/);
+
+  const unsafe = validConfig();
+  unsafe.commands[0].buttons = [
+    { text: 'Run', callbackData: 'run\\nrequire', responseText: 'No' }
+  ];
+  assert.throws(() => validateCustomerBotConfig(unsafe), /safe ASCII characters/);
+
+  const oversized = validConfig();
+  oversized.commands[0].buttons = [
+    { text: 'x'.repeat(65), callbackData: 'long_label', responseText: 'No' }
+  ];
+  assert.throws(() => validateCustomerBotConfig(oversized), /64 UTF-8 bytes/);
+});
+
 test('loads only a digest-verified approved release with manager authorization', async () => {
   const release = makeRelease();
   let query;
