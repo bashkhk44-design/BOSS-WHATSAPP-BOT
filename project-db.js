@@ -782,6 +782,76 @@ async function retryProjectNotification({ id, workerId, error, delaySeconds = 60
   return result.rows[0] || null;
 }
 
+
+async function persistIntakeUpdate({
+  botIdentity = 'intake',
+  updateId,
+  telegramUserId,
+  projectId,
+  step,
+  data,
+  messages = []
+}) {
+  if (!['master', 'intake'].includes(botIdentity)) throw new Error('هوية البوت غير صالحة');
+  if (!Number.isSafeInteger(Number(updateId)) || Number(updateId) < 0) throw new Error('معرّف تحديث تيليغرام غير صالح');
+  if (!telegramUserId || !/^\\d+$/.test(String(projectId || ''))) throw new Error('بيانات العميل أو المشروع غير صحيحة');
+  if (typeof step !== 'string' || !step.trim() || !Array.isArray(messages)) throw new Error('بيانات تحديث الاستبيان غير صالحة');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const owned = await client.query(`
+      SELECT p.id
+      FROM client_projects p
+      JOIN clients c ON c.id = p.client_id
+      WHERE p.id = $1 AND c.telegram_user_id = $2
+      FOR UPDATE
+    `, [projectId, String(telegramUserId)]);
+    if (!owned.rowCount) throw new Error('المشروع غير موجود أو لا يخص هذا العميل');
+
+    const receipt = await client.query(`
+      INSERT INTO project_intake_update_receipts (bot_identity, update_id, telegram_user_id, project_id)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (bot_identity, update_id) DO NOTHING
+      RETURNING update_id
+    `, [botIdentity, String(updateId), String(telegramUserId), projectId]);
+
+    if (!receipt.rowCount) {
+      await client.query('ROLLBACK');
+      return { processed: false, duplicate: true };
+    }
+
+    await client.query(`
+      INSERT INTO client_intake_sessions (telegram_user_id, project_id, step, data, updated_at)
+      VALUES ($1, $2, $3, $4::jsonb, NOW())
+      ON CONFLICT (telegram_user_id)
+      DO UPDATE SET project_id = EXCLUDED.project_id,
+                    step = EXCLUDED.step,
+                    data = EXCLUDED.data,
+                    updated_at = NOW()
+    `, [String(telegramUserId), projectId, step, JSON.stringify(data || {})]);
+
+    for (const message of messages) {
+      if (!message || !['client', 'assistant', 'admin', 'system'].includes(message.role) ||
+          typeof message.content !== 'string') {
+        throw new Error('رسالة محادثة غير صالحة');
+      }
+      await client.query(`
+        INSERT INTO client_conversations (project_id, role, content, metadata)
+        VALUES ($1, $2, $3, $4::jsonb)
+      `, [projectId, message.role, message.content, JSON.stringify(message.metadata || {})]);
+    }
+
+    await client.query('COMMIT');
+    return { processed: true, duplicate: false };
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   initProjectDatabase,
   setProjectSecret,
@@ -802,6 +872,7 @@ module.exports = {
   saveIntakeSession,
   deleteIntakeSession,
   approveProjectSpec,
+  persistIntakeUpdate,
   enqueueProjectNotification,
   claimProjectNotifications,
   completeProjectNotification,

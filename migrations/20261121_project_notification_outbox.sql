@@ -18,6 +18,18 @@ CREATE TABLE IF NOT EXISTS project_notification_outbox (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS project_intake_update_receipts (
+  bot_identity TEXT NOT NULL CHECK (bot_identity IN ('master', 'intake')),
+  update_id TEXT NOT NULL,
+  telegram_user_id BIGINT NOT NULL,
+  project_id BIGINT NOT NULL REFERENCES client_projects(id) ON DELETE CASCADE,
+  processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (bot_identity, update_id)
+);
+
+CREATE INDEX IF NOT EXISTS project_intake_update_receipts_project_idx
+  ON project_intake_update_receipts (project_id, processed_at DESC);
+
 CREATE INDEX IF NOT EXISTS project_notification_outbox_ready_idx
   ON project_notification_outbox (available_at, id)
   WHERE state IN ('pending', 'processing');
