@@ -23,9 +23,10 @@ test('customer update dispatcher routes only to the bot bound to the durable job
   const handler = createCustomerWebhookUpdateHandler({
     pool,
     decryptToken: record => { assert.equal(record.id, 12); return 'test-token'; },
-    createCustomerBot: (record, token) => ({
-      async handleUpdate(update) { handled.push({ botId: record.id, token, update }); }
-    }),
+    createCustomerBot: (record, token, options) => {
+      assert.equal(options.propagateErrors, true);
+      return { async handleUpdate(update) { handled.push({ botId: record.id, token, update }); } };
+    },
     logger: { error() {} }
   });
 
@@ -102,4 +103,23 @@ test('customer update dispatcher does not run a Telegram update already marked p
   const result = await handler({ bot_id: 15, payload: { botId: 15, updateId: 303 } });
   assert.deepEqual(result, { botId: 15, updateId: 303, processed: true, duplicate: true });
   assert.equal(calls, 3);
+});
+
+test('customer update dispatcher renews its inbox lease while processing', async () => {
+  let querySeen = '';
+  const handler = createCustomerWebhookUpdateHandler({
+    pool: { async query(sql, params) {
+      querySeen = sql;
+      assert.deepEqual(params, [21, 404]);
+      return { rowCount: 1, rows: [{ id: 88 }] };
+    } },
+    decryptToken() { return 'unused'; },
+    createCustomerBot() { return { async handleUpdate() {} }; }
+  });
+  const renewed = await handler.renewLease({
+    bot_id: 21, payload: { botId: 21, updateId: 404 }
+  });
+  assert.equal(renewed, true);
+  assert.match(querySeen, /SET locked_at = NOW\(\)/);
+  assert.match(querySeen, /state = 'processing'/);
 });
