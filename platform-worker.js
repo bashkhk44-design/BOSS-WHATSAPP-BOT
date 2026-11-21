@@ -24,6 +24,25 @@ function validatePlatformWorkerEnvironment(env = process.env) {
   return true;
 }
 
+async function verifyPlatformWorkerSchema(pool) {
+  if (!pool || typeof pool.query !== 'function') {
+    throw new TypeError('PostgreSQL pool is required to verify platform worker schema');
+  }
+  await pool.query(`
+    SELECT id, job_type, status, attempts, max_attempts, available_at,
+           locked_by, locked_at, payload
+    FROM platform_jobs
+    LIMIT 0
+  `);
+  await pool.query(`
+    SELECT bot_identity, update_id, payload, state, attempts,
+           locked_by, locked_at
+    FROM platform_bot_inbound_updates
+    LIMIT 0
+  `);
+  return true;
+}
+
 function createPlatformWorker({
   pool,
   runtimes,
@@ -157,7 +176,9 @@ async function main() {
       process.exitCode = 1;
     }));
 
-    // Confirm the shared application pool is usable before advertising readiness.
+    // Verify the actual queue tables/columns as well as basic database connectivity
+    // before advertising readiness; a missing migration must fail startup, not spin forever.
+    await verifyPlatformWorkerSchema(db.pool);
     await db.pool.query('SELECT 1');
     console.log('Platform Telegram worker started: ' + worker.workerId);
     const workerLoop = worker.start();
@@ -179,4 +200,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { validatePlatformWorkerEnvironment, createPlatformWorker, closePlatformWorkerResources, main };
+module.exports = { validatePlatformWorkerEnvironment, verifyPlatformWorkerSchema, createPlatformWorker, closePlatformWorkerResources, main };
