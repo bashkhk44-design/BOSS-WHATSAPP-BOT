@@ -108,6 +108,8 @@ jobs:
         run: npm run db:migrate
       - name: Verify migration is idempotent
         run: npm run db:migrate
+      - name: Exercise concurrent project intake deduplication on disposable PostgreSQL
+        run: node --test test/project-intake-update-atomicity.integration.test.js
       - name: Exercise real PostgreSQL queue operations
         run: node --test test/platform-queue.integration.test.js
       - name: Exercise isolated platform bot inbox on disposable PostgreSQL
