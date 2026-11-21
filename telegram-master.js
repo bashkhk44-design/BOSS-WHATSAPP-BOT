@@ -1653,33 +1653,93 @@ async function startRuntime() {
   });
 }
 
-async function createWebhookRuntime() {
-  let stopped = false;
-  await bot.init();
-  return {
-    handleUpdate(update) {
-      if (stopped) throw new Error('Master webhook runtime is stopped');
-      if (!update || typeof update !== 'object' || Array.isArray(update) ||
-          !Number.isSafeInteger(update.update_id) || update.update_id < 0) {
-        throw new TypeError('A valid Telegram update is required');
-      }
-      if (typeof bot.handleUpdate !== 'function') {
-        throw new TypeError('The configured master bot does not support handleUpdate');
-      }
-      return bot.handleUpdate(update);
-    },
-    async stop() {
-      stopped = true;
+let webhookRuntimeLockAcquired = false;
+let webhookRuntimeStarted = false;
+let webhookRuntimeStartPromise = null;
+
+async function createWebhookRuntime({ onLockFailure } = {}) {
+  if (webhookRuntimeStartPromise) return webhookRuntimeStartPromise;
+
+  webhookRuntimeStartPromise = (async () => {
+    // Webhook mode must own the same singleton lock as polling mode before
+    // any update handler can run. Never start alongside a polling instance.
+    await verifyDatabaseSchema();
+    const locked = await acquireTelegramRuntimeLock();
+    if (!locked) {
+      throw new Error('Another Telegram runtime already owns the platform lock');
     }
-  };
+    webhookRuntimeLockAcquired = true;
+
+    setRuntimeLockFailureHandler((error) => {
+      webhookRuntimeStarted = false;
+      process.emit('boss:runtime-stopping', 'RUNTIME_LOCK_LOST');
+      if (typeof onLockFailure === 'function') {
+        return onLockFailure(error);
+      }
+    });
+
+    try {
+      const recoveredJobs = await recoverInterruptedProjectAiJobs();
+      console.log('Recovered ' + recoveredJobs + ' interrupted AI job(s) before webhook startup');
+
+      await bot.init();
+      if (!(await isTelegramRuntimeLockHeld())) {
+        throw new Error('Telegram runtime lock was lost during webhook startup');
+      }
+
+      webhookRuntimeStarted = true;
+      let stopped = false;
+      return {
+        async handleUpdate(update) {
+          if (stopped || !webhookRuntimeStarted) {
+            throw new Error('Master webhook runtime is stopped or not ready');
+          }
+          if (!update || typeof update !== 'object' || Array.isArray(update) ||
+              !Number.isSafeInteger(update.update_id) || update.update_id < 0) {
+            throw new TypeError('A valid Telegram update is required');
+          }
+          if (typeof bot.handleUpdate !== 'function') {
+            throw new TypeError('The configured master bot does not support handleUpdate');
+          }
+          if (!(await isTelegramRuntimeLockHeld())) {
+            webhookRuntimeStarted = false;
+            throw new Error('Telegram runtime lock is no longer held');
+          }
+          return bot.handleUpdate(update);
+        },
+        async stop() {
+          stopped = true;
+        }
+      };
+    } catch (error) {
+      webhookRuntimeStarted = false;
+      setRuntimeLockFailureHandler(null);
+      if (webhookRuntimeLockAcquired) {
+        webhookRuntimeLockAcquired = false;
+        try {
+          await releaseTelegramRuntimeLock();
+        } catch (releaseError) {
+          error.lockReleaseError = releaseError;
+        }
+      }
+      throw error;
+    }
+  })();
+
+  return webhookRuntimeStartPromise;
 }
 
 let webhookResourcesClosePromise = null;
 async function closeWebhookResources() {
   if (!webhookResourcesClosePromise) {
     webhookResourcesClosePromise = (async () => {
+      webhookRuntimeStarted = false;
+      setRuntimeLockFailureHandler(null);
       try {
-        await releaseTelegramRuntimeLock();
+        if (webhookRuntimeLockAcquired) {
+          webhookRuntimeLockAcquired = false;
+          await releaseTelegramRuntimeLock();
+        }
       } finally {
         await pool.end();
       }
