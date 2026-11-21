@@ -262,13 +262,30 @@ async function verifyDatabaseSchema() {
     'project_notification_outbox_ready_idx'
   ];
   const indexesResult = await pool.query(
-    `SELECT indexname
-     FROM pg_indexes
-     WHERE schemaname = 'public' AND indexname = ANY($1::text[])`,
+    `SELECT index_row.relname AS indexname,
+            index_meta.indisvalid AS is_valid,
+            index_meta.indisready AS is_ready,
+            index_meta.indisunique AS is_unique,
+            pg_get_indexdef(index_meta.indexrelid) AS definition
+     FROM pg_class table_row
+     JOIN pg_namespace table_namespace ON table_namespace.oid = table_row.relnamespace
+     JOIN pg_index index_meta ON index_meta.indrelid = table_row.oid
+     JOIN pg_class index_row ON index_row.oid = index_meta.indexrelid
+     WHERE table_namespace.nspname = 'public'
+       AND index_row.relname = ANY($1::text[])`,
     [requiredIndexes]
   );
-  const foundIndexes = new Set(indexesResult.rows.map((row) => row.indexname));
-  const missingIndexes = requiredIndexes.filter((name) => !foundIndexes.has(name));
+  const indexRows = new Map(indexesResult.rows.map((row) => [row.indexname, row]));
+  const missingIndexes = requiredIndexes.filter((name) => {
+    const row = indexRows.get(name);
+    return !row || !row.is_valid || !row.is_ready ||
+      typeof row.definition !== 'string' || !row.definition.includes(' USING ');
+  });
+  const expectedUniqueIndexes = new Set(['client_projects_id_client_id_uq']);
+  const invalidIndexes = requiredIndexes.filter((name) => {
+    const row = indexRows.get(name);
+    return row && row.is_unique !== expectedUniqueIndexes.has(name);
+  });
 
   const requiredConstraints = [
     'telegram_bots_client_id_fk',
@@ -281,7 +298,9 @@ async function verifyDatabaseSchema() {
     'telegram_bots_update_transport_check'
   ];
   const constraintsResult = await pool.query(
-    `SELECT constraint_row.conname
+    `SELECT constraint_row.conname,
+            constraint_row.convalidated AS is_validated,
+            pg_get_constraintdef(constraint_row.oid, true) AS definition
      FROM pg_constraint constraint_row
      JOIN pg_namespace namespace_row
        ON namespace_row.oid = constraint_row.connamespace
@@ -289,12 +308,12 @@ async function verifyDatabaseSchema() {
        AND constraint_row.conname = ANY($1::text[])`,
     [requiredConstraints]
   );
-  const foundConstraints = new Set(
-    constraintsResult.rows.map((row) => row.conname)
-  );
-  const missingConstraints = requiredConstraints.filter(
-    (name) => !foundConstraints.has(name)
-  );
+  const constraintRows = new Map(constraintsResult.rows.map((row) => [row.conname, row]));
+  const missingConstraints = requiredConstraints.filter((name) => !constraintRows.has(name));
+  const invalidConstraints = requiredConstraints.filter((name) => {
+    const row = constraintRows.get(name);
+    return row && (!row.is_validated || typeof row.definition !== 'string' || !row.definition.trim());
+  });
 
   const requiredVersions = APPROVED_MIGRATION_FILES.map(
     (filename) => filename.replace(/\.sql$/i, '')
@@ -312,7 +331,9 @@ async function verifyDatabaseSchema() {
   if (missingTables.length) failures.push('الجداول: ' + missingTables.join(', '));
   if (missingColumns.length) failures.push('الأعمدة: ' + missingColumns.join(', '));
   if (missingIndexes.length) failures.push('الفهارس: ' + missingIndexes.join(', '));
-  if (missingConstraints.length) failures.push('القيود: ' + missingConstraints.join(', '));
+  if (missingConstraints.length) failures.push('القيود الناقصة: ' + missingConstraints.join(', '));
+  if (invalidIndexes.length) failures.push('تعريف الفهارس أو التفرد غير الصحيح: ' + invalidIndexes.join(', '));
+  if (invalidConstraints.length) failures.push('القيود غير المعتمدة أو غير الموثقة: ' + invalidConstraints.join(', '));
   if (missingVersions.length) failures.push('سجل الترحيلات: ' + missingVersions.join(', '));
 
   if (failures.length) {
