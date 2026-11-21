@@ -6,6 +6,7 @@ function createBotRuntime({
   pool,
   decryptToken,
   createCustomerBot,
+  loadRuntimeConfig = null,
   logger = console,
   maxBots = DEFAULT_MAX_BOTS,
   heartbeatIntervalMs = 30000,
@@ -18,6 +19,7 @@ function createBotRuntime({
   if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required');
   if (typeof decryptToken !== 'function') throw new TypeError('decryptToken(record) is required');
   if (typeof createCustomerBot !== 'function') throw new TypeError('createCustomerBot(record, token) is required');
+  if (loadRuntimeConfig !== null && typeof loadRuntimeConfig !== 'function') throw new TypeError('loadRuntimeConfig(record) must be a function');
   if (!Number.isInteger(maxBots) || maxBots < 1) throw new RangeError('maxBots must be a positive integer');
   if (!Number.isInteger(leaseSeconds) || leaseSeconds < 30) throw new RangeError('leaseSeconds must be at least 30 seconds');
 
@@ -146,7 +148,9 @@ function createBotRuntime({
 
   async function runCustomerBot(record, state) {
     let token;
+    let runtimeConfig = null;
     try {
+      if (loadRuntimeConfig) runtimeConfig = await loadRuntimeConfig(record);
       token = decryptToken(record);
     } catch (error) {
       await setStatus(state, 'error', error);
@@ -165,7 +169,10 @@ function createBotRuntime({
           const ownsLease = await setStatus(state, 'starting');
           if (requireLease && !ownsLease) { loseLease(state); break; }
           if (state.stopRequested || state.leaseLost) break;
-          state.bot = createCustomerBot(record, token);
+          state.bot = createCustomerBot(
+            runtimeConfig ? { ...record, runtimeConfig } : record,
+            token
+          );
           await state.bot.start({
             onStart: info => {
               void setStatus(state, 'running').then(owned => {
@@ -256,7 +263,7 @@ function createBotRuntime({
     const id = String(botId);
     if (!/^\d+$/.test(id)) throw new TypeError('A valid bot id is required');
     const result = await pool.query(`
-      SELECT id, name, username, token_ciphertext, token_iv, token_auth_tag
+      SELECT id, name, username, client_id, project_id, token_ciphertext, token_iv, token_auth_tag
       FROM telegram_bots
       WHERE id = $1 AND active = TRUE AND update_transport = 'polling' AND token_ciphertext IS NOT NULL
       LIMIT 1
@@ -343,7 +350,13 @@ function getDefaultRuntime() {
   if (!defaultRuntime) {
     const { pool, decryptToken } = require('./db');
     const { createCustomerBot } = require('./customer-bot');
-    defaultRuntime = createBotRuntime({ pool, decryptToken, createCustomerBot });
+    const { loadApprovedCustomerBotConfig } = require('./customer-bot-config');
+    defaultRuntime = createBotRuntime({
+      pool,
+      decryptToken,
+      createCustomerBot,
+      loadRuntimeConfig: record => loadApprovedCustomerBotConfig({ pool, record })
+    });
   }
   return defaultRuntime;
 }
