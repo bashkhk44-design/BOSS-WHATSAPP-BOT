@@ -186,3 +186,54 @@ test('webhook registration readiness gate fails closed when the queue worker nev
   );
   assert.equal(registrationStarted, false, 'webhook registration must remain blocked after readiness timeout');
 });
+
+test('webhook registration rolls back all attempted targets if the runtime lock is lost after registration', async () => {
+  const { registerPlatformTelegramWebhooks } = require('../platform-host');
+  const calls = [];
+  let checks = 0;
+  await assert.rejects(
+    registerPlatformTelegramWebhooks({
+      env: {
+        PLATFORM_WEBHOOK_BASE_URL: 'https://staging.example.invalid',
+        TELEGRAM_BOT_TOKEN: 'master-test-token',
+        INTAKE_BOT_TOKEN: 'intake-test-token',
+        MASTER_WEBHOOK_SECRET: 'M'.repeat(40),
+        INTAKE_WEBHOOK_SECRET: 'I'.repeat(40)
+      },
+      assertReady: async () => {
+        checks += 1;
+        if (checks === 3) throw new Error('Telegram runtime lock was lost');
+      },
+      fetchImpl: async (url) => {
+        const method = url.split('/').pop();
+        calls.push(method);
+        return new Response(JSON.stringify({ ok: true, result: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+    }),
+    /runtime lock was lost/
+  );
+  assert.deepEqual(calls, ['setWebhook', 'setWebhook', 'deleteWebhook', 'deleteWebhook']);
+});
+
+test('webhook registration does not contact Telegram when the runtime is unsafe before the first request', async () => {
+  const { registerPlatformTelegramWebhooks } = require('../platform-host');
+  let requests = 0;
+  await assert.rejects(
+    registerPlatformTelegramWebhooks({
+      env: {
+        PLATFORM_WEBHOOK_BASE_URL: 'https://staging.example.invalid',
+        TELEGRAM_BOT_TOKEN: 'master-test-token',
+        INTAKE_BOT_TOKEN: 'intake-test-token',
+        MASTER_WEBHOOK_SECRET: 'M'.repeat(40),
+        INTAKE_WEBHOOK_SECRET: 'I'.repeat(40)
+      },
+      assertReady: async () => { throw new Error('runtime is not ready'); },
+      fetchImpl: async () => { requests += 1; return new Response('{}'); }
+    }),
+    /runtime is not ready/
+  );
+  assert.equal(requests, 0);
+});
