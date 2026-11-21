@@ -247,9 +247,10 @@ async function runInteractiveIntake(ctx, session, userMessage = '') {
     return;
   }
 
+  let result;
   try {
     const history = await getProjectConversation(ctx.from.id, session.project_id);
-    const result = await processIntakeTurn({
+    result = await processIntakeTurn({
       project: {
         project_id: session.project_id,
         project_name: session.data.projectName,
@@ -259,37 +260,40 @@ async function runInteractiveIntake(ctx, session, userMessage = '') {
       userMessage,
       history
     });
-
-    const missingItems = result.missingItems || [];
-    const readyForReview = result.readyForReview && missingItems.length === 0;
-    const data = {
-      ...result.data,
-      aiIntakeTurns: (Number(session.data?.aiIntakeTurns) || 0) + (userMessage ? 1 : 0),
-      aiIntakeMissing: missingItems
-    };
-    const nextStep = readyForReview ? 'review' : 'ai_intake';
-
-    const persisted = await persistTurn(ctx, session, nextStep, data, result.assistantMessage, userMessage);
-    if (!persisted.processed) return;
-
-    if (readyForReview) {
-      await ctx.reply('✅ اكتمل جمع المتطلبات بمساعدة AI ANALYST. هذا ملخص طلبك للمراجعة:');
-      await askNext(ctx, { ...session, step: 'review', data });
-      return;
-    }
-
-    await ctx.reply(result.assistantMessage);
   } catch (error) {
     console.error('INTERACTIVE AI INTAKE ERROR:', error.message);
     const fallback = advanceFallbackIntake(
       { ...(session.data || {}), aiFallback: true },
       userMessage
     );
-    await saveIntakeSession({ telegramUserId: ctx.from.id, projectId: session.project_id, step: 'ai_intake', data: fallback.data });
-    const notice = '⚠️ المحلل الذكي غير متاح مؤقتاً بسبب حد الاستخدام أو مشكلة اتصال. حفظنا إجابتك وسنكمل جمع المواصفات بأسئلة واضحة دون فقدان ما سبق.\n\n';
-    await saveMessage(ctx.from.id, session.project_id, 'assistant', notice + fallback.assistantMessage);
+    const notice = '⚠️ المحلل الذكي غير متاح مؤقتاً بسبب حد الاستخدام أو مشكلة اتصال. حفظنا إجابتك وسنكمل جمع المواصفات بأسئلة واضحة دون فقدان ما سبق.\\n\\n';
+    const persisted = await persistTurn(
+      ctx, session, 'ai_intake', fallback.data,
+      notice + fallback.assistantMessage, userMessage
+    );
+    if (!persisted.processed) return;
     await ctx.reply(notice + fallback.assistantMessage);
+    return;
   }
+
+  const missingItems = result.missingItems || [];
+  const readyForReview = result.readyForReview && missingItems.length === 0;
+  const data = {
+    ...result.data,
+    aiIntakeTurns: (Number(session.data?.aiIntakeTurns) || 0) + (userMessage ? 1 : 0),
+    aiIntakeMissing: missingItems
+  };
+  const nextStep = readyForReview ? 'review' : 'ai_intake';
+  const persisted = await persistTurn(ctx, session, nextStep, data, result.assistantMessage, userMessage);
+  if (!persisted.processed) return;
+
+  if (readyForReview) {
+    await ctx.reply('✅ اكتمل جمع المتطلبات بمساعدة AI ANALYST. هذا ملخص طلبك للمراجعة:');
+    await askNext(ctx, { ...session, step: 'review', data });
+    return;
+  }
+
+  await ctx.reply(result.assistantMessage);
 }
 
 async function beginProject(ctx) {
