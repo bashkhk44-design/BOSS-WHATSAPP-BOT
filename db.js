@@ -412,5 +412,6 @@ module.exports = {
   acquireTelegramRuntimeLock,
   isTelegramRuntimeLockHeld,
   releaseTelegramRuntimeLock,
+  closeTelegramRuntimeLockPool: closeLockPool,
   setRuntimeLockFailureHandler
 };
