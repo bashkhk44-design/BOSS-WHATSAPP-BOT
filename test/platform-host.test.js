@@ -108,7 +108,7 @@ test('staging Telegram webhook registration targets both identities with indepen
   assert.equal(calls[1].body.secret_token, env.INTAKE_WEBHOOK_SECRET);
 });
 
-test('staging Telegram webhook registration rolls back the first bot if the second fails', async () => {
+test('staging Telegram webhook registration rolls back every attempted bot after an ambiguous network failure', async () => {
   const { registerPlatformTelegramWebhooks } = require('../platform-host');
   const calls = [];
   const env = {
@@ -121,18 +121,21 @@ test('staging Telegram webhook registration rolls back the first bot if the seco
   const fetchImpl = async (url, options) => {
     calls.push({ url, body: JSON.parse(options.body) });
     if (url.endsWith('/botintake-test-token/setWebhook')) {
-      return { ok: true, async json() { return { ok: false, description: 'test failure' }; } };
+      // Simulate Telegram accepting the request but the response being lost.
+      throw new Error('simulated network timeout after request delivery');
     }
     return { ok: true, async json() { return { ok: true, result: true }; } };
   };
 
   await assert.rejects(
     registerPlatformTelegramWebhooks({ env, fetchImpl }),
-    /Telegram setWebhook failed/
+    /simulated network timeout/
   );
-  assert.equal(calls.length, 3);
-  assert.ok(calls[2].url.endsWith('/botmaster-test-token/deleteWebhook'));
+  assert.equal(calls.length, 4);
+  assert.ok(calls[2].url.endsWith('/botintake-test-token/deleteWebhook'));
+  assert.ok(calls[3].url.endsWith('/botmaster-test-token/deleteWebhook'));
   assert.equal(calls[2].body.drop_pending_updates, false);
+  assert.equal(calls[3].body.drop_pending_updates, false);
 });
 
 test('staging Telegram webhook registration rejects a non-HTTPS or path-bearing origin', async () => {
