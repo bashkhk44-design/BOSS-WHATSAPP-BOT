@@ -112,6 +112,32 @@ test('a recorded database checksum mismatch stops the migration run', async () =
   );
 });
 
+test('an empty recorded checksum is rejected instead of treated as a legacy row', async () => {
+  const harness = createHarness({
+    existingRow: true,
+    existingChecksum: ''
+  });
+
+  await assert.rejects(harness.runner.run(), /valid checksum matching the reviewed SQL/i);
+  assert.deepEqual(harness.warnings, []);
+  assert.equal(harness.wasReleased(), true);
+  assert.equal(
+    harness.statements.some(({ statement }) => statement === 'COMMIT'),
+    false
+  );
+});
+
+test('a missing checksum field is rejected instead of treated as a legacy row', async () => {
+  const harness = createHarness({
+    existingRow: true,
+    existingChecksum: undefined
+  });
+
+  await assert.rejects(harness.runner.run(), /valid checksum matching the reviewed SQL/i);
+  assert.deepEqual(harness.warnings, []);
+  assert.equal(harness.wasReleased(), true);
+});
+
 test('new migrations persist their SHA-256 checksum in the ledger', async () => {
   const harness = createHarness();
   const result = await harness.runner.run();
