@@ -33,3 +33,12 @@ Run the unit and PostgreSQL integration workflows on the new branch, then test s
 - `/livez` reports process liveness. Configure the Render health-check path as `/readyz`, which returns 503 until the platform runtime has completed startup and while shutdown is in progress.
 - If the Master runtime reports advisory-lock loss, the host marks itself not ready and begins graceful shutdown.
 - This is a staging candidate only. It does not remove the need for a protected Cloudflare-to-Render wake path, isolated staging bot credentials, webhook registration tests, and end-to-end acceptance. Do not change the production Render start command or Cloudflare mode until those gates pass.
+
+
+## Cloudflare-to-Render wake handshake (staging only)
+
+- Configure the Cloudflare Worker variable `PLATFORM_WORKER_WAKE_URL` to the HTTPS Render service readiness endpoint, exactly `https://YOUR-SERVICE.onrender.com/readyz`.
+- After the durable queue transaction commits, Cloudflare requests this endpoint with an 8-second timeout. It returns Telegram webhook success only when Render reports ready.
+- If Render is asleep, the request wakes the web service but readiness remains 503 during startup. Telegram receives a retryable 503; the queue's unique update key makes redelivery safe. A later delivery retries the wake and is acknowledged only after the queue worker is healthy.
+- The URL is restricted to HTTPS and the exact `/readyz` path. No wake secret is required because this is a read-only readiness probe; do not add a state-changing unauthenticated wake route.
+- This handshake is not yet live-configured. Keep the Cloudflare webhook mode disabled until the Render staging host, staging-only bots/database, and Telegram delivery retry behavior have passed end-to-end acceptance.
