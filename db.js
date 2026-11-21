@@ -360,7 +360,7 @@ async function verifyDatabaseSchema() {
     platform_jobs_project_requires_client: { table: 'platform_jobs', type: 'c', definition: 'CHECK (project_id IS NULL OR client_id IS NOT NULL)' },
     ai_usage_project_requires_client: { table: 'ai_usage', type: 'c', definition: 'CHECK (project_id IS NULL OR client_id IS NOT NULL)' },
     platform_audit_project_requires_client: { table: 'platform_audit_logs', type: 'c', definition: 'CHECK (project_id IS NULL OR client_id IS NOT NULL)' },
-    telegram_bots_update_transport_check: { table: 'telegram_bots', type: 'c', definition: "CHECK (update_transport IN ('polling', 'webhook'))" }
+    telegram_bots_update_transport_check: { table: 'telegram_bots', type: 'c', definition: "CHECK (update_transport = ANY (ARRAY['polling'::text, 'webhook'::text]))" }
   };
   const constraintsResult = await pool.query(
     `SELECT constraint_row.conname,
