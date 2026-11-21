@@ -18,7 +18,8 @@ const APPROVED_MIGRATION_FILES = Object.freeze([
   '007_platform_bot_inbox.sql',
   '20261118_bot_runtime_status.sql',
   '20261119_bot_inbound_update_lease_owner.sql',
-  '20261119_bot_update_transport.sql'
+  '20261119_bot_update_transport.sql',
+  '20261121_project_notification_outbox.sql'
 ]);
 
 function listMigrationFiles(directory, fsApi = fs, approvedFiles = APPROVED_MIGRATION_FILES) {
