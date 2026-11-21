@@ -580,6 +580,15 @@ async function approveProjectSpec({
     `, [projectId, JSON.stringify({ version })]);
 
     await client.query(`
+      INSERT INTO project_notification_outbox (dedupe_key, event_type, payload)
+      VALUES ($1, 'project_approved', $2::jsonb)
+      ON CONFLICT (dedupe_key) DO NOTHING
+    `, [
+      `project-approved:${projectId}:${version}`,
+      JSON.stringify({ projectId, telegramUserId: String(telegramUserId), version, spec })
+    ]);
+
+    await client.query(`
       DELETE FROM client_intake_sessions
       WHERE telegram_user_id = $1 AND project_id = $2
     `, [String(telegramUserId), projectId]);
