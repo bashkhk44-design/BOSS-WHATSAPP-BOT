@@ -1,5 +1,5 @@
 {
-  "name": "boss-bot-platform-ingress-staging",
+  "name": "boss-bot-master-staging",
   "main": "worker.mjs",
   "compatibility_date": "2026-11-17",
   "compatibility_flags": ["nodejs_compat"],
