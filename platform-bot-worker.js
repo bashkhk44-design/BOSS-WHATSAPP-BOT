@@ -85,8 +85,11 @@ async function createPlatformBotWorker({
 
     masterWebhook = await masterRuntime.createWebhookRuntime({
       onLockFailure: async error => {
-        if (typeof onLockFailure === 'function') await onLockFailure(error);
-        await close();
+        try {
+          if (typeof onLockFailure === 'function') await onLockFailure(error);
+        } finally {
+          await close();
+        }
       }
     });
     const intakeRuntime = intakeFactory();
