@@ -142,7 +142,8 @@ async function waitForPlatformWorkerReady(readyPromise, timeoutMs = 30000, signa
   }
 }
 
-async function startHealthOnlyRuntime({ env = process.env, logger = console, db } = {}) {
+async function startHealthOnlyRuntime({ env = process.env, logger = console, db, signal } = {}) {
+  throwIfStartupAborted(signal);
   if (typeof env.DATABASE_URL !== 'string' ||
       !/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL)) {
     throw new Error('DATABASE_URL must use the PostgreSQL protocol');
@@ -155,7 +156,11 @@ async function startHealthOnlyRuntime({ env = process.env, logger = console, db 
   const done = new Promise(resolve => { resolveDone = resolve; });
 
   try {
+    throwIfStartupAborted(signal);
     await database.pool.query('SELECT 1');
+    // A shutdown may arrive while the database probe is pending. Do not return
+    // a live runtime after the host has already begun shutting down.
+    throwIfStartupAborted(signal);
     logger.log('BOSS staging health-only mode connected to PostgreSQL; Telegram runtimes are disabled and runtime readiness remains false.');
   } catch (error) {
     const cleanup = [];
@@ -202,7 +207,7 @@ async function startPlatformHost({ env = process.env, logger = console, db: inje
   throwIfStartupAborted(signal);
   const mode = env.PLATFORM_BOT_WEBHOOK_MODE || 'disabled';
   if (mode === 'disabled') {
-    return startHealthOnlyRuntime({ env, logger, db: injectedDb });
+    return startHealthOnlyRuntime({ env, logger, db: injectedDb, signal });
   }
   if (mode !== 'enabled') {
     throw new Error('PLATFORM_BOT_WEBHOOK_MODE must be enabled or disabled');
@@ -353,6 +358,11 @@ async function main() {
   server.on('error', error => {
     console.error('BOSS platform health server error:', error.message);
     process.exitCode = 1;
+    // Never register Telegram webhooks when the HTTP ingress cannot bind.
+    // Abort startup so acquired locks and database resources are released.
+    if (!startupAbortController.signal.aborted) {
+      startupAbortController.abort(new Error('Platform health server failed to listen: ' + error.message));
+    }
   });
 
   const onReady = () => { runtimeReady = true; runtimeStopping = false; };
