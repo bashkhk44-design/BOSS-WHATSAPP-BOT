@@ -75,7 +75,7 @@ jobs:
     needs: postgres-integration
     if: >-
       ${{ github.event_name == 'workflow_dispatch' &&
-          github.ref == 'refs/heads/staging/harden-schema-verification' &&
+          github.ref == 'refs/heads/staging/fix-neon-staging-migrations' &&
           inputs.confirm_target == 'STAGING-ONLY' &&
           inputs.confirm_execution == 'RUN-STAGING-BOOTSTRAP' }}
     runs-on: ubuntu-latest
