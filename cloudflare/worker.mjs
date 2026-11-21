@@ -5,6 +5,7 @@ const { enqueuePlatformBotUpdate } = platformQueue;
 const MAX_BODY_BYTES = 1024 * 1024;
 const DB_CONNECT_TIMEOUT_MS = 5000;
 const DB_QUERY_TIMEOUT_MS = 10000;
+const WORKER_WAKE_TIMEOUT_MS = 8000;
 const SECRET_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
 
 function jsonResponse(status, body) {
@@ -78,13 +79,44 @@ async function readRequestBody(request, maxBodyBytes) {
   return { bytes, tooLarge: false };
 }
 
+function resolveWorkerWakeUrl(env) {
+  try {
+    const value = env.PLATFORM_WORKER_WAKE_URL;
+    if (typeof value !== 'string' || !value.trim()) return null;
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.pathname !== '/readyz' ||
+        url.search || url.hash || url.username || url.password) return null;
+    return url.toString();
+  } catch (_) {
+    return null;
+  }
+}
+
+async function wakePlatformWorker(fetchImpl, wakeUrl) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), WORKER_WAKE_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(wakeUrl, {
+      method: 'GET',
+      redirect: 'error',
+      cache: 'no-store',
+      signal: controller.signal
+    });
+    return response.ok;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export function createPlatformWebhookHandler({
   ClientClass = Client,
   enqueue = enqueuePlatformBotUpdate,
+  fetchImpl = fetch,
   maxBodyBytes = MAX_BODY_BYTES
 } = {}) {
   if (typeof ClientClass !== 'function') throw new TypeError('PostgreSQL Client class is required');
   if (typeof enqueue !== 'function') throw new TypeError('Platform update enqueue function is required');
+  if (typeof fetchImpl !== 'function') throw new TypeError('Fetch implementation is required');
   if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1024) {
     throw new RangeError('maxBodyBytes must be at least 1024');
   }
@@ -159,6 +191,9 @@ export function createPlatformWebhookHandler({
     }
 
     const identity = match[1];
+    const wakeUrl = resolveWorkerWakeUrl(env);
+    if (!wakeUrl) return jsonResponse(503, { ok: false, error: 'worker_unavailable' });
+
     const expectedSecret = resolvePlatformSecret(identity, env);
     const suppliedSecret = request.headers.get('x-telegram-bot-api-secret-token');
     if (!expectedSecret || !safeEqual(suppliedSecret, expectedSecret)) {
@@ -198,10 +233,15 @@ export function createPlatformWebhookHandler({
       });
       await client.connect();
       const queued = await enqueue(client, { botIdentity: identity, update });
+      const workerReady = await wakePlatformWorker(fetchImpl, wakeUrl);
+      if (!workerReady) {
+        return jsonResponse(503, { ok: false, error: 'worker_not_ready' });
+      }
       return jsonResponse(200, {
         ok: true,
         duplicate: queued.duplicate,
-        queued: !queued.duplicate
+        queued: !queued.duplicate,
+        workerReady: true
       });
     } catch (error) {
       console.error('PLATFORM TELEGRAM WEBHOOK ERROR:', error?.message || 'unknown');
