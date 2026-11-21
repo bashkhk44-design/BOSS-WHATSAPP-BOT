@@ -2,7 +2,7 @@
 
 const { Bot } = require('grammy');
 
-function registerCustomerBotHandlers(clientBot, record) {
+function registerCustomerBotHandlers(clientBot, record, { propagateErrors = false } = {}) {
   clientBot.command('start', async (ctx) => {
     await ctx.reply(
       'أهلاً بك في ' + record.name + ' 👋\n\n' +
@@ -23,15 +23,18 @@ function registerCustomerBotHandlers(clientBot, record) {
       err.error_code || '',
       err.message || ''
     );
+    // Polling keeps its historical log-and-continue behavior. Durable webhook
+    // delivery must rethrow so the queue can retry failed Telegram API calls.
+    if (propagateErrors) throw err;
   });
 
   return clientBot;
 }
 
 // Single source of truth for both polling and durable-queue transports.
-function createCustomerBot(record, token) {
+function createCustomerBot(record, token, options = {}) {
   const clientBot = new Bot(token, { client: { timeoutSeconds: 45 } });
-  return registerCustomerBotHandlers(clientBot, record);
+  return registerCustomerBotHandlers(clientBot, record, options);
 }
 
 module.exports = { createCustomerBot, registerCustomerBotHandlers };
