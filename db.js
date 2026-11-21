@@ -295,6 +295,9 @@ async function verifyDatabaseSchema() {
     .replace(/::[a-z_][a-z0-9_]*(?:\[\])?/g, '')
     .replace(/\bpublic\./g, '')
     .replace(/\s+/g, '')
+    // PostgreSQL may render DESC's default NULLS FIRST explicitly in per-key definitions.
+    // Treat that spelling as equivalent to the implicit default; NULLS LAST remains distinct.
+    .replace(/descnullsfirst/g, 'desc')
     .replace(/[()]/g, '');
   const indexRowsResult = await pool.query(
     `SELECT index_row.relname AS indexname,
