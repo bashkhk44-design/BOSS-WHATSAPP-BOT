@@ -409,7 +409,20 @@ async function verifyDatabaseSchema() {
   if (missingColumns.length) failures.push('الأعمدة: ' + missingColumns.join(', '));
   if (missingIndexes.length) failures.push('الفهارس: ' + missingIndexes.join(', '));
   if (missingConstraints.length) failures.push('القيود الناقصة: ' + missingConstraints.join(', '));
-  if (invalidIndexes.length) failures.push('تعريف الفهارس أو التفرد غير الصحيح: ' + invalidIndexes.join(', '));
+  if (invalidIndexes.length) {
+    const details = invalidIndexes.map((name) => {
+      const row = indexRows.get(name);
+      const expected = expectedIndexes[name];
+      return name + ' actual=' + JSON.stringify({
+        table: row?.tablename,
+        method: row?.access_method,
+        unique: row?.is_unique,
+        columns: row?.key_columns,
+        predicate: row?.predicate
+      }) + ' expected=' + JSON.stringify(expected);
+    });
+    failures.push('تعريف الفهارس أو التفرد غير الصحيح: ' + details.join(' | '));
+  }
   if (invalidConstraints.length) failures.push('القيود غير المعتمدة أو غير الموثقة: ' + invalidConstraints.join(', '));
   if (missingVersions.length) failures.push('سجل الترحيلات: ' + missingVersions.join(', '));
 
