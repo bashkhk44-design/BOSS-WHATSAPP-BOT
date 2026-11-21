@@ -9,6 +9,7 @@ on:
       - feat/safe-auto-remediation
       - audit-hardening
       - cloudflare-ci-staging-branch
+      - staging/customer-webhook-transport
       - 'cloudflare-*'
   pull_request:
     branches:
