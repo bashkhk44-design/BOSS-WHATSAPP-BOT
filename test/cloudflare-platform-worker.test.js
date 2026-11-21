@@ -278,6 +278,7 @@ test('Cloudflare configuration keeps Hyperdrive and Worker compatibility staging
   assert.equal(stagingConfig.workers_dev, false);
   assert.equal(stagingConfig.hyperdrive[0].binding, 'HYPERDRIVE');
   assert.equal(stagingConfig.vars.PLATFORM_BOT_WEBHOOK_MODE, 'disabled');
+  assert.match(stagingConfig.vars.PLATFORM_WORKER_READY_URL, /^https:\/\/REPLACE_WITH_RENDER_PLATFORM_HOST\.onrender\.com\/readyz$/);
   assert.equal(
     stagingConfig.hyperdrive[0].id,
     'REPLACE_WITH_VERIFIED_STAGING_HYPERDRIVE_ID',
