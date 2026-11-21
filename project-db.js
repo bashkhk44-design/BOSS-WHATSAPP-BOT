@@ -782,12 +782,11 @@ async function claimProjectNotifications({ workerId, limit = 10, leaseSeconds = 
   return result.rows;
 }
 
-async function renewProjectNotificationLease({ id, workerId, leaseSeconds = 120 }) {
+async function renewProjectNotificationLease({ id, workerId }) {
   if (id === undefined || id === null ||
       typeof workerId !== 'string' || !workerId.trim()) {
     throw new Error('معرّف الإشعار أو العامل غير صالح');
   }
-  const safeLease = Math.max(10, Math.min(3600, Math.floor(Number(leaseSeconds) || 120)));
   const result = await pool.query(`
     UPDATE project_notification_outbox
     SET locked_at = NOW(), updated_at = NOW()
