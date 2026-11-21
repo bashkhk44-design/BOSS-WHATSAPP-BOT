@@ -46,5 +46,8 @@ test('webhook customer bot error handler rethrows failures for durable retry', a
   };
   registerCustomerBotHandlers(bot, { id: 18, name: 'Webhook Activity' }, { propagateErrors: true });
   const failure = new Error('Telegram sendMessage failed');
-  assert.throws(() => errorHandler({ error_code: 500, message: failure.message }), failure);
+  assert.throws(
+    () => errorHandler({ error_code: 500, message: failure.message }),
+    error => error.error_code === 500 && error.message === failure.message
+  );
 });
