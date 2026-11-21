@@ -75,14 +75,14 @@ jobs:
     needs: postgres-integration
     if: >-
       ${{ github.event_name == 'workflow_dispatch' &&
-          github.ref == 'refs/heads/staging/fix-neon-staging-migrations' &&
+          github.ref == 'refs/heads/staging/unified-platform-tls-migrations' &&
           inputs.confirm_target == 'STAGING-ONLY' &&
           inputs.confirm_execution == 'RUN-STAGING-BOOTSTRAP' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: cloudflare-staging
     steps:
-      - name: Checkout reviewed staging branch
+      - name: Checkout the exact manually selected unified STAGING branch
         uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}

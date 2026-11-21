@@ -782,6 +782,20 @@ async function claimProjectNotifications({ workerId, limit = 10, leaseSeconds = 
   return result.rows;
 }
 
+async function renewProjectNotificationLease({ id, workerId }) {
+  if (id === undefined || id === null ||
+      typeof workerId !== 'string' || !workerId.trim()) {
+    throw new Error('معرّف الإشعار أو العامل غير صالح');
+  }
+  const result = await pool.query(`
+    UPDATE project_notification_outbox
+    SET locked_at = NOW(), updated_at = NOW()
+    WHERE id = $1 AND state = 'processing' AND locked_by = $2
+    RETURNING id, locked_at
+  `, [id, workerId]);
+  return result.rowCount === 1;
+}
+
 async function completeProjectNotification({ id, workerId }) {
   const result = await pool.query(`
     UPDATE project_notification_outbox
@@ -982,6 +996,7 @@ module.exports = {
   cancelProjectIntake,
   enqueueProjectNotification,
   claimProjectNotifications,
+  renewProjectNotificationLease,
   completeProjectNotification,
   retryProjectNotification,
   ...projectAiJobs,

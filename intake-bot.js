@@ -34,7 +34,7 @@ function createIntakeRuntime({ dependencies = null, createBot = null } = {}) {
     'setProjectBusinessType', 'updateProjectName', 'updateClientProjectStatus',
     'addConversationMessage', 'getIntakeSession', 'getProjectConversation',
     'saveIntakeSession', 'deleteIntakeSession', 'approveProjectSpec', 'persistIntakeUpdate', 'cancelProjectIntake',
-    'processIntakeTurn', 'advanceFallbackIntake'
+    'processIntakeTurn', 'advanceFallbackIntake', 'claimProjectNotifications', 'renewProjectNotificationLease', 'completeProjectNotification', 'retryProjectNotification'
   ]) {
     if (!runtimeDependencies[name]) {
       throw new TypeError('Missing intake runtime dependency: ' + name);
@@ -64,43 +64,44 @@ const TYPES = [
 ];
 
 
-async function dispatchPendingNotifications() {
-  if (typeof notifyAdminHandler !== 'function') return 0;
-  const workerId = `intake-notifier:${process.pid}`;
-  const jobs = await runtimeDependencies.claimProjectNotifications({ workerId, limit: 10, leaseSeconds: 90 });
-  let sent = 0;
-  for (const job of jobs) {
-    try {
-      if (job.event_type !== 'project_approved') {
-        await runtimeDependencies.retryProjectNotification({
-          id: job.id, workerId, error: 'Unsupported notification event type', delaySeconds: 300
-        });
-        continue;
-      }
-      const payload = job.payload || {};
-      const text = [
-        '📥 طلب مشروع جديد — يحتاج مراجعة الإدارة',
-        '',
-        `رقم المشروع: ${payload.projectId || 'غير محدد'}`,
-        `معرّف العميل: ${payload.telegramUserId || 'غير محدد'}`,
-        '',
-        buildSummary(payload.spec || {}),
-        '',
-        `نسخة المواصفات المعتمدة: ${payload.version || 'غير محددة'}`
-      ].join('\n');
-      const adminKeyboard = new InlineKeyboard()
-        .text('🤖 إحالة إلى Gemini للتحليل', `project:ai:${payload.projectId}`);
-      await notifyAdminHandler({ text: text.length > 3500 ? text.slice(0, 3500) + '\n... تم اختصار بقية التفاصيل.' : text, extra: { reply_markup: adminKeyboard } });
-      const completed = await runtimeDependencies.completeProjectNotification({ id: job.id, workerId });
-      if (completed) sent += 1;
-    } catch (error) {
-      await runtimeDependencies.retryProjectNotification({
-        id: job.id, workerId, error: error.message, delaySeconds: Math.min(3600, 30 * (Number(job.attempts) || 1))
-      });
-      console.error('PROJECT NOTIFICATION OUTBOX ERROR:', error.message);
+const { createProjectNotificationDispatcher } = require('./project-notification-dispatcher');
+
+const notificationDispatcher = createProjectNotificationDispatcher({
+  getNotifyAdminHandler: () => notifyAdminHandler,
+  claimNotifications: options => runtimeDependencies.claimProjectNotifications(options),
+  renewLease: options => runtimeDependencies.renewProjectNotificationLease(options),
+  completeNotification: options => runtimeDependencies.completeProjectNotification(options),
+  retryNotification: options => runtimeDependencies.retryProjectNotification(options),
+  leaseSeconds: 120,
+  heartbeatIntervalMs: 30000,
+  sendNotification: async (job, handler) => {
+    if (job.event_type !== 'project_approved') {
+      throw new Error('Unsupported notification event type: ' + job.event_type);
     }
+    const payload = job.payload || {};
+    const message = [
+      '📥 طلب مشروع جديد — يحتاج مراجعة الإدارة',
+      '',
+      `رقم المشروع: ${payload.projectId || 'غير محدد'}`,
+      `معرّف العميل: ${payload.telegramUserId || 'غير محدد'}`,
+      '',
+      buildSummary(payload.spec || {}),
+      '',
+      `نسخة المواصفات المعتمدة: ${payload.version || 'غير محددة'}`
+    ].join('\\n');
+    const adminKeyboard = new InlineKeyboard()
+      .text('🤖 إحالة إلى Gemini للتحليل', `project:ai:${payload.projectId}`);
+    await handler({
+      text: message.length > 3500
+        ? message.slice(0, 3500) + '\\n... تم اختصار بقية التفاصيل.'
+        : message,
+      extra: { reply_markup: adminKeyboard }
+    });
   }
-  return sent;
+});
+
+async function dispatchPendingNotifications() {
+  return notificationDispatcher.dispatch();
 }
 
 function startNotificationPolling() {
@@ -114,9 +115,10 @@ function startNotificationPolling() {
   if (typeof notificationTimer.unref === 'function') notificationTimer.unref();
 }
 
-function stopNotificationPolling() {
+async function stopNotificationPolling() {
   if (notificationTimer) clearInterval(notificationTimer);
   notificationTimer = null;
+  await notificationDispatcher.waitForIdle();
 }
 
 async function saveMessage(userId, projectId, role, content) {
@@ -393,7 +395,7 @@ function createWebhookAdapter(bot) {
     },
     async stop() {
       if (intakeBot === bot && intakeMode === 'webhook') {
-        stopNotificationPolling();
+        await stopNotificationPolling();
         notifyAdminHandler = null;
         intakeBot = null;
         pollingPromise = null;
@@ -878,7 +880,7 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       startNotificationPolling();
       return createWebhookAdapter(currentBot);
     } catch (error) {
-      stopNotificationPolling();
+      await stopNotificationPolling();
       notifyAdminHandler = null;
       if (intakeBot === currentBot) {
         intakeBot = null;
@@ -937,7 +939,7 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
     startNotificationPolling();
     return currentBot;
   } catch (err) {
-    stopNotificationPolling();
+    await stopNotificationPolling();
     notifyAdminHandler = null;
     intakeStopping = true;
 
@@ -957,7 +959,7 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
 }
 
 async function stopIntakeBot() {
-  stopNotificationPolling();
+  await stopNotificationPolling();
   notifyAdminHandler = null;
   const currentBot = intakeBot;
   if (!currentBot) return;
