@@ -85,10 +85,10 @@ async function dispatchPendingNotifications() {
         buildSummary(payload.spec || {}),
         '',
         `نسخة المواصفات المعتمدة: ${payload.version || 'غير محددة'}`
-      ].join('\\n');
+      ].join('\n');
       const adminKeyboard = new InlineKeyboard()
         .text('🤖 إحالة إلى Gemini للتحليل', `project:ai:${payload.projectId}`);
-      await notifyAdmin({ text: text.length > 3500 ? text.slice(0, 3500) + '\\n... تم اختصار بقية التفاصيل.' : text, extra: { reply_markup: adminKeyboard } });
+      await notifyAdmin({ text: text.length > 3500 ? text.slice(0, 3500) + '\n... تم اختصار بقية التفاصيل.' : text, extra: { reply_markup: adminKeyboard } });
       const completed = await runtimeDependencies.completeProjectNotification({ id: job.id, workerId });
       if (completed) sent += 1;
     } catch (error) {
