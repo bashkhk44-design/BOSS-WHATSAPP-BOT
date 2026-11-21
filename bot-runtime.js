@@ -290,7 +290,7 @@ function createBotRuntime({
   async function startBotRuntime() {
     runtimeStopping = false;
     const result = await pool.query(`
-      SELECT id, name, username, token_ciphertext, token_iv, token_auth_tag
+      SELECT id, name, username, client_id, project_id, token_ciphertext, token_iv, token_auth_tag
       FROM telegram_bots
       WHERE active = TRUE AND update_transport = 'polling' AND token_ciphertext IS NOT NULL
       ORDER BY id ASC
