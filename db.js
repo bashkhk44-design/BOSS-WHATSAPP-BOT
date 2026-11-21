@@ -203,6 +203,7 @@ async function verifyDatabaseSchema() {
     .map((row) => row.table_name);
 
   const requiredColumns = [
+    ['schema_migrations', 'checksum'],
     ['telegram_bots', 'client_id'],
     ['telegram_bots', 'project_id'],
     ['telegram_bots', 'update_transport'],
