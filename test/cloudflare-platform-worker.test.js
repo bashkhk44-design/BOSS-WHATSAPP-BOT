@@ -313,7 +313,7 @@ test('Cloudflare retry after a failed Render wake reuses the committed inbox upd
     constructor() { database.clients += 1; }
     async connect() {}
     async query(sql, params) {
-      if (/^\\s*(BEGIN|COMMIT|ROLLBACK)\\s*$/i.test(sql)) return { rowCount: 0, rows: [] };
+      if (/^\s*(BEGIN|COMMIT|ROLLBACK)\s*$/i.test(sql)) return { rowCount: 0, rows: [] };
       if (sql.includes('INSERT INTO platform_bot_inbound_updates')) {
         const key = params[0] + ':' + params[1];
         if (database.updates.has(key)) return { rowCount: 0, rows: [] };
