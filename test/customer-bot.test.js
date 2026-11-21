@@ -39,24 +39,49 @@ test('shared customer bot factory preserves polling /start and /help replies', a
 });
 
 
-test('registers only commands from the validated declarative runtime config', async () => {
+test('registers declarative commands, inline buttons, and safe callback replies', async () => {
   const handlers = new Map();
+  const callbacks = new Map();
   const bot = {
     command(name, handler) { handlers.set(name, handler); return this; },
+    callbackQuery(data, handler) { callbacks.set(data, handler); return this; },
     catch() { return this; }
   };
   const replies = [];
+  let answered = 0;
   registerCustomerBotHandlers(bot, {
     id: 18,
     name: 'Configured Activity',
     runtimeConfig: {
       welcomeText: 'Welcome',
       helpText: 'Help text',
-      commands: [{ command: 'catalog', text: 'Catalog response' }]
+      commands: [{
+        command: 'catalog',
+        text: 'Catalog response',
+        buttons: [{
+          text: 'View details',
+          callbackData: 'catalog_details',
+          responseText: 'Catalog details'
+        }]
+      }]
     }
   });
 
   assert.deepEqual([...handlers.keys()], ['start', 'help', 'catalog']);
-  await handlers.get('catalog')({ reply: async text => replies.push(text) });
-  assert.deepEqual(replies, ['Catalog response']);
+  assert.deepEqual([...callbacks.keys()], ['catalog_details']);
+  await handlers.get('catalog')({
+    reply: async (text, options) => replies.push({ text, options })
+  });
+  assert.equal(replies[0].text, 'Catalog response');
+  assert.deepEqual(replies[0].options.reply_markup.inline_keyboard, [[{
+    text: 'View details',
+    callback_data: 'catalog_details'
+  }]]);
+
+  await callbacks.get('catalog_details')({
+    answerCallbackQuery: async () => { answered += 1; },
+    reply: async text => replies.push({ text })
+  });
+  assert.equal(answered, 1);
+  assert.deepEqual(replies[1], { text: 'Catalog details' });
 });
