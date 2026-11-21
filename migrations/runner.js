@@ -166,11 +166,26 @@ async function main() {
 
   const { Pool } = require('pg');
 
+  const databaseUrl = new URL(process.env.DATABASE_URL);
+  const verifyTls = process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true';
+
+  if (verifyTls) {
+    const sslMode = databaseUrl.searchParams.get('sslmode');
+    if (sslMode !== 'require' && sslMode !== 'verify-full') {
+      throw new Error('Verified TLS requires sslmode=require or sslmode=verify-full');
+    }
+    // pg-connection-string maps sslmode=require to rejectUnauthorized:false.
+    // Remove sslmode so the explicit certificate-verifying TLS options win.
+    databaseUrl.searchParams.delete('sslmode');
+  }
+
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: databaseUrl.toString(),
     ssl: process.env.DATABASE_SSL === 'disable'
       ? false
-      : { rejectUnauthorized: false },
+      : verifyTls
+        ? { rejectUnauthorized: true, servername: databaseUrl.hostname }
+        : { rejectUnauthorized: false },
     max: 1,
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 10000
