@@ -69,6 +69,10 @@ async function registerPlatformTelegramWebhooks({ env, fetchImpl = fetch }) {
   if (targets[0].token === targets[1].token || targets[0].secret === targets[1].secret) {
     throw new Error('Master and intake webhook credentials must be distinct');
   }
+  if (targets.some(target => target.secret === target.token) ||
+      targets.some(target => targets.some(other => target.secret === other.token))) {
+    throw new Error('Telegram webhook secrets must be independent from bot API tokens');
+  }
 
   const registered = [];
   try {
