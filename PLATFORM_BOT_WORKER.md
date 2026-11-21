@@ -32,7 +32,7 @@ Run the unit and PostgreSQL integration workflows on the new branch, then test s
 - The host starts the HTTP server first, then verifies the database schema through the Master runtime, acquires the Telegram advisory lock, initializes both no-polling webhook adapters, checks PostgreSQL connectivity, and starts the queue loop.
 - `/livez` reports process liveness. Configure the Render health-check path as `/readyz`, which returns 503 until the platform runtime has completed startup and while shutdown is in progress.
 - If the Master runtime reports advisory-lock loss, the host marks itself not ready and begins graceful shutdown.
-- This is a staging candidate only. It does not remove the need for a protected Cloudflare-to-Render wake path, isolated staging bot credentials, webhook registration tests, and end-to-end acceptance. Do not change the production Render start command or Cloudflare mode until those gates pass.
+- This is a staging candidate only. It must be paired with the Cloudflare HTTPS /readyz wake handshake documented below, isolated staging bot credentials, webhook registration tests, and end-to-end acceptance. Do not change the production Render start command or Cloudflare mode until those gates pass.
 
 
 ## Cloudflare-to-Render wake handshake (staging only)
