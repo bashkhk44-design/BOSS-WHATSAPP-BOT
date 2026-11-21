@@ -110,6 +110,49 @@ test('platform bot worker wires both system identities to no-polling runtimes an
 });
 
 
+
+test('platform bot worker closes its adapters when the master runtime lock is lost', async () => {
+  const events = [];
+  let lockFailureHandler;
+  const worker = await createPlatformBotWorker({
+    pool: { query() {} },
+    env: enabledEnv(),
+    onLockFailure: async error => { events.push('notified:' + error.message); },
+    createMasterRuntime() {
+      return {
+        bot: { api: { async sendMessage() {} } },
+        createWebhookRuntime(options) {
+          lockFailureHandler = options.onLockFailure;
+          return {
+            async handleUpdate() {},
+            async stop() { events.push('master-stopped'); }
+          };
+        },
+        async closeWebhookResources() { events.push('master-resources-closed'); }
+      };
+    },
+    createIntakeRuntime() {
+      return {
+        async createWebhookRuntime() {
+          return {
+            async handleUpdate() {},
+            async stop() { events.push('intake-stopped'); }
+          };
+        }
+      };
+    }
+  });
+
+  await lockFailureHandler(new Error('lock connection lost'));
+  assert.deepEqual(events, [
+    'notified:lock connection lost',
+    'intake-stopped',
+    'master-stopped',
+    'master-resources-closed'
+  ]);
+  await worker.close();
+});
+
 test('platform bot worker closes every runtime even when one stop operation fails', async () => {
   const events = [];
   const worker = await createPlatformBotWorker({
