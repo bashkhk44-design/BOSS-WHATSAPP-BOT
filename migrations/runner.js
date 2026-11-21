@@ -2,25 +2,54 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const LOCK_KEY_1 = 20261117;
 const LOCK_KEY_2 = 1;
 
-// Only reviewed migrations are executable. Add a new migration here only
-// after reviewing its SQL and updating the migration tests.
-const APPROVED_MIGRATION_FILES = Object.freeze([
-  '001_foundation_database.sql',
-  '002_distributed_bot_worker_indexes.sql',
-  '003_bot_runtime_commands.sql',
-  '004_manager_command_recovery.sql',
-  '005_worker_health_heartbeats.sql',
-  '006_auto_remediation_audit.sql',
-  '007_platform_bot_inbox.sql',
-  '20261118_bot_runtime_status.sql',
-  '20261119_bot_inbound_update_lease_owner.sql',
-  '20261119_bot_update_transport.sql',
-  '20261121_project_notification_outbox.sql'
-]);
+// Immutable SHA-256 baseline for the reviewed migration SQL at
+// c1712db1d761389d0021f1a42844731468500e33. Existing ledger rows predate
+// checksum storage; this pins their reviewed source files without pretending
+// the historical database application recorded a checksum.
+const APPROVED_MIGRATION_CHECKSUMS = Object.freeze({
+  '001_foundation_database.sql': '5a47542cfbb66e814308072f842a182f837d9b1a9747060b6517788764c8724f',
+  '002_distributed_bot_worker_indexes.sql': 'b2d6ca25efa36c9dc74cf78028548fec7ea2f6e1d8f49412c52d244dee46e87e',
+  '003_bot_runtime_commands.sql': '4ff5d6a92662018fdb2d0fad1b047df3ccc86095ab5ca8f32aa4783a41224e01',
+  '004_manager_command_recovery.sql': '9b6b11d4a624a8d1ce46bf65fd6b0b76cf3d2eef7bdb91f9bc7f114e1caf29d1',
+  '005_worker_health_heartbeats.sql': 'ccdbcd7ebc8aaeb66ce924d06fa2d00ac89232025292a675872a80c180c2a947',
+  '006_auto_remediation_audit.sql': 'e586d2edff10d8dc398775b56ae6475cd2aa1d7e5ceea21736f8570b621a9927',
+  '007_platform_bot_inbox.sql': 'c3cb9414370e9e3b467b763bc43d2c3d90d026552082fe7553af8acbdffe3277',
+  '20261118_bot_runtime_status.sql': 'cea92604a46b20c84d5a0c9e2dda1a008f5433f9adff394239db0ef176ae2009',
+  '20261119_bot_inbound_update_lease_owner.sql': '70e69f5bc3f2bd2eb59356631dbb67a77246961aeaead587b21359dd5a8a17cf',
+  '20261119_bot_update_transport.sql': '1c57cfc0efa0375708a5b62fcfa86d4be7bb2604436f00d0ce3bb8b084e688da',
+  '20261121_project_notification_outbox.sql': 'deea9c9b3835bd632c5a7fad3ad815414cef0984bafdab02f409e2a0fdb19685'
+});
+
+// Add a migration only after reviewing its SQL, adding its SHA-256 above,
+// and updating the migration tests.
+const APPROVED_MIGRATION_FILES = Object.freeze(Object.keys(APPROVED_MIGRATION_CHECKSUMS));
+
+function getMigrationChecksum(sql) {
+  if (typeof sql !== 'string') {
+    throw new TypeError('Migration SQL must be a string');
+  }
+  return crypto.createHash('sha256').update(sql, 'utf8').digest('hex');
+}
+
+function assertApprovedMigrationChecksum(filename, sql, checksumManifest = APPROVED_MIGRATION_CHECKSUMS) {
+  const expected = checksumManifest[filename];
+  if (typeof expected !== 'string' || !/^[a-f0-9]{64}$/i.test(expected)) {
+    throw new Error('Migration ' + filename + ' has no valid approved SHA-256 checksum');
+  }
+
+  const actual = getMigrationChecksum(sql);
+  if (actual !== expected.toLowerCase()) {
+    throw new Error(
+      'Migration checksum mismatch for ' + filename + ': source SQL differs from the reviewed baseline'
+    );
+  }
+  return actual;
+}
 
 function listMigrationFiles(directory, fsApi = fs, approvedFiles = APPROVED_MIGRATION_FILES) {
   if (!Array.isArray(approvedFiles) || approvedFiles.some(name => typeof name !== 'string' || !/^\d+_[a-z0-9_-]+\.sql$/i.test(name))) {
@@ -42,14 +71,14 @@ function extractMigrationBody(sql, filename) {
 
   if (!start || !end.test(sql)) {
     throw new Error(
-      `Migration ${filename} must contain a transaction beginning with BEGIN and ending with COMMIT`
+      'Migration ' + filename + ' must contain a transaction beginning with BEGIN and ending with COMMIT'
     );
   }
 
   const body = sql.slice(start[0].length).replace(end, '').trim();
 
   if (!body) {
-    throw new Error(`Migration ${filename} has an empty body`);
+    throw new Error('Migration ' + filename + ' has an empty body');
   }
 
   return body;
@@ -60,7 +89,8 @@ function createMigrationRunner({
   migrationsDir = __dirname,
   fsApi = fs,
   logger = console,
-  approvedMigrationFiles = APPROVED_MIGRATION_FILES
+  approvedMigrationFiles = APPROVED_MIGRATION_FILES,
+  approvedMigrationChecksums = APPROVED_MIGRATION_CHECKSUMS
 }) {
   if (!pool || typeof pool.connect !== 'function') {
     throw new TypeError('A PostgreSQL pool is required');
@@ -72,6 +102,7 @@ function createMigrationRunner({
       let lockAcquired = false;
       const applied = [];
       const skipped = [];
+      const legacyChecksumRows = [];
 
       try {
         const lock = await client.query(
@@ -85,31 +116,54 @@ function createMigrationRunner({
           throw new Error('Another migration runner is already active');
         }
 
-        await client.query(`
-          CREATE TABLE IF NOT EXISTS schema_migrations (
-            version TEXT PRIMARY KEY,
-            description TEXT NOT NULL,
-            applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-          )
-        `);
+        await client.query(
+          'CREATE TABLE IF NOT EXISTS schema_migrations (' +
+          'version TEXT PRIMARY KEY, ' +
+          'description TEXT NOT NULL, ' +
+          'applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), ' +
+          'checksum TEXT)'
+        );
+        // Upgrade existing ledgers additively. Historical rows remain NULL and
+        // are explicitly reported; they are never silently assigned a checksum.
+        await client.query(
+          'ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT'
+        );
 
         for (const filename of listMigrationFiles(migrationsDir, fsApi, approvedMigrationFiles)) {
           const version = filename.replace(/\.sql$/i, '');
-
-          const existing = await client.query(
-            'SELECT version FROM schema_migrations WHERE version = $1',
-            [version]
-          );
-
-          if (existing.rowCount > 0) {
-            skipped.push(version);
-            continue;
-          }
-
           const sql = fsApi.readFileSync(
             path.join(migrationsDir, filename),
             'utf8'
           );
+          const checksum = assertApprovedMigrationChecksum(
+            filename,
+            sql,
+            approvedMigrationChecksums
+          );
+
+          const existing = await client.query(
+            'SELECT version, checksum FROM schema_migrations WHERE version = $1',
+            [version]
+          );
+
+          if (existing.rowCount > 0) {
+            const recordedChecksum = existing.rows[0].checksum;
+            if (recordedChecksum && recordedChecksum !== checksum) {
+              throw new Error(
+                'Migration checksum mismatch for ' + version +
+                ': database ledger does not match the reviewed SQL'
+              );
+            }
+            if (!recordedChecksum) {
+              legacyChecksumRows.push(version);
+              logger.warn(
+                'Legacy migration has no recorded database checksum; reviewed source baseline verified: ' + version
+              );
+            }
+            skipped.push(version);
+            continue;
+          }
+
           const body = extractMigrationBody(sql, filename);
 
           try {
@@ -117,28 +171,27 @@ function createMigrationRunner({
             await client.query(body);
 
             await client.query(
-              `INSERT INTO schema_migrations(version, description)
-               VALUES ($1, $2)`,
-              [version, `Applied migration file ${filename}`]
+              'INSERT INTO schema_migrations(version, description, checksum) VALUES ($1, $2, $3)',
+              [version, 'Applied migration file ' + filename, checksum]
             );
 
             await client.query('COMMIT');
 
             applied.push(version);
-            logger.log(`Migration applied: ${version}`);
+            logger.log('Migration applied: ' + version);
           } catch (error) {
             try {
               await client.query('ROLLBACK');
             } catch (_) {}
 
             throw new Error(
-              `Migration ${version} failed: ${error.message}`,
+              'Migration ' + version + ' failed: ' + error.message,
               { cause: error }
             );
           }
         }
 
-        return { applied, skipped };
+        return { applied, skipped, legacyChecksumRows };
       } finally {
         if (lockAcquired) {
           try {
@@ -210,7 +263,10 @@ if (require.main === module) {
 
 module.exports = {
   APPROVED_MIGRATION_FILES,
+  APPROVED_MIGRATION_CHECKSUMS,
+  assertApprovedMigrationChecksum,
   createMigrationRunner,
+  getMigrationChecksum,
   listMigrationFiles,
   extractMigrationBody
 };
