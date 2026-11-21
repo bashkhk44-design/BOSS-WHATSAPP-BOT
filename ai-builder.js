@@ -6,6 +6,7 @@ const {
   normalizeDesignArtifact
 } = require('./design-artifact');
 const { validateDesignMap } = require('./build-design-map');
+const { validateCustomerBotConfig } = require('./customer-bot-config');
 
 const MAX_FILES = 50;
 const MAX_TOTAL_BYTES = 1024 * 1024;
@@ -129,6 +130,9 @@ async function buildProject({ project, analysis, design }) {
     'لا تنشئ ملفات .env أو node_modules أو .git.',
     'أدرج package.json صالحاً مع scripts وdependencies اللازمة.',
     'أنشئ boss-manifest.json بجذر المشروع بالحقول: version=1, requiredEnv, optionalEnv, startScript, healthCheck الاختياري.',
+    'أنشئ boss-telegram.json بجذر المشروع ليقرأه مشغّل المنصة الآمن. هذا ملف JSON وصفي فقط وليس كود JavaScript.',
+    'شكل boss-telegram.json الإلزامي: {"schemaVersion":1,"welcomeText":"رسالة الترحيب","helpText":"رسالة المساعدة","commands":[{"command":"catalog","description":"وصف قصير","text":"نص الرد"}]}.',
+    'استخدم أوامر Telegram بسيطة ترد بنص ثابت فقط. لا تضع شيفرة أو تعبيرات أو HTML أو أوامر نظام أو روابط تنفيذ داخل boss-telegram.json. لا تضف start أو help إلى commands لأن المنصة توفرهما تلقائياً.',
     'requiredEnv وoptionalEnv أسماء متغيرات فقط دون قيم. startScript يجب أن يكون أمراً موجوداً في package.json scripts.',
     'لا تستخدم مسارات مطلقة أو تتجاوز مجلد المشروع. الحد الأقصى 50 ملفاً و1MB.',
     'إذا تعذر تنفيذ عنصر دون افتراض غير معتمد، اذكره في notes ولا تدّعِ تنفيذه. مع ذلك يجب أن يبقى التصميم كله ممثلاً في الخريطة، ويجب ألا يُقدّم البناء كجاهز إذا بقيت فجوة.',
@@ -140,6 +144,7 @@ async function buildProject({ project, analysis, design }) {
       files: [
         { path: 'package.json', content: '{"name":"project","version":"1.0.0","scripts":{"start":"node src/index.js"}}' },
         { path: 'boss-manifest.json', content: '{"version":1,"requiredEnv":[],"optionalEnv":[],"startScript":"start","healthCheck":"/health"}' },
+        { path: 'boss-telegram.json', content: '{"schemaVersion":1,"welcomeText":"مرحباً بك","helpText":"المساعدة","commands":[]}' },
         { path: 'boss-design-map.json', content: JSON.stringify(mappingExample) },
         { path: 'src/index.js', content: '/* implementation */' }
       ]
@@ -168,6 +173,14 @@ async function buildProject({ project, analysis, design }) {
   catch { throw new Error('AI BUILDER أعاد نتيجة ليست JSON صالحاً من ' + response.provider + '.'); }
 
   const bundle = validateBundle(parsed);
+  const telegramConfigFile = bundle.files.find(file => file.path === 'boss-telegram.json');
+  if (!telegramConfigFile) throw new Error('AI BUILDER لم يُنشئ boss-telegram.json المطلوب لتشغيل بوت Telegram.');
+  let telegramConfig;
+  try {
+    telegramConfig = validateCustomerBotConfig(JSON.parse(telegramConfigFile.content));
+  } catch (error) {
+    throw new Error('إعدادات بوت Telegram غير صالحة: ' + error.message);
+  }
   const designContract = validateBuildDesignContract({
     bundle,
     designArtifact: approvedDesign
@@ -176,6 +189,7 @@ async function buildProject({ project, analysis, design }) {
   return {
     ...bundle,
     designContract,
+    telegramConfig,
     designFingerprint: approvedDesign.sourceFingerprint,
     model: response.model,
     provider: response.provider,
