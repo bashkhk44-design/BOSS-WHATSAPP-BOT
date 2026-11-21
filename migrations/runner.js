@@ -18,7 +18,8 @@ const APPROVED_MIGRATION_FILES = Object.freeze([
   '007_platform_bot_inbox.sql',
   '20261118_bot_runtime_status.sql',
   '20261119_bot_inbound_update_lease_owner.sql',
-  '20261119_bot_update_transport.sql'
+  '20261119_bot_update_transport.sql',
+  '20261121_project_notification_outbox.sql'
 ]);
 
 function listMigrationFiles(directory, fsApi = fs, approvedFiles = APPROVED_MIGRATION_FILES) {
@@ -166,11 +167,26 @@ async function main() {
 
   const { Pool } = require('pg');
 
+  const databaseUrl = new URL(process.env.DATABASE_URL);
+  const verifyTls = process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true';
+
+  if (verifyTls) {
+    const sslMode = databaseUrl.searchParams.get('sslmode');
+    if (sslMode !== 'require' && sslMode !== 'verify-full') {
+      throw new Error('Verified TLS requires sslmode=require or sslmode=verify-full');
+    }
+    // pg-connection-string maps sslmode=require to rejectUnauthorized:false.
+    // Remove sslmode so the explicit certificate-verifying TLS options win.
+    databaseUrl.searchParams.delete('sslmode');
+  }
+
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: databaseUrl.toString(),
     ssl: process.env.DATABASE_SSL === 'disable'
       ? false
-      : { rejectUnauthorized: false },
+      : verifyTls
+        ? { rejectUnauthorized: true, servername: databaseUrl.hostname }
+        : { rejectUnauthorized: false },
     max: 1,
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 10000
