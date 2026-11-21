@@ -78,13 +78,30 @@ async function readRequestBody(request, maxBodyBytes) {
   return { bytes, tooLarge: false };
 }
 
+function resolveWorkerReadyUrl(env) {
+  try {
+    const url = new URL(env.PLATFORM_WORKER_READY_URL || '');
+    if (url.protocol !== 'https:' || url.username || url.password ||
+        url.pathname !== '/readyz' || url.search || url.hash) return null;
+    return url.toString();
+  } catch (_) {
+    return null;
+  }
+}
+
 export function createPlatformWebhookHandler({
   ClientClass = Client,
   enqueue = enqueuePlatformBotUpdate,
+  fetchImpl = globalThis.fetch,
+  wakeTimeoutMs = 10000,
   maxBodyBytes = MAX_BODY_BYTES
 } = {}) {
   if (typeof ClientClass !== 'function') throw new TypeError('PostgreSQL Client class is required');
   if (typeof enqueue !== 'function') throw new TypeError('Platform update enqueue function is required');
+  if (typeof fetchImpl !== 'function') throw new TypeError('Worker readiness fetch function is required');
+  if (!Number.isInteger(wakeTimeoutMs) || wakeTimeoutMs < 1000 || wakeTimeoutMs > 30000) {
+    throw new RangeError('wakeTimeoutMs must be between 1000 and 30000');
+  }
   if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1024) {
     throw new RangeError('maxBodyBytes must be at least 1024');
   }
@@ -123,6 +140,11 @@ export function createPlatformWebhookHandler({
     const match = url.pathname.match(/^\/telegram\/platform\/(master|intake)$/);
     if (!match || env.PLATFORM_BOT_WEBHOOK_MODE !== 'enabled') {
       return jsonResponse(404, { ok: false, error: 'not_found' });
+    }
+
+    const workerReadyUrl = resolveWorkerReadyUrl(env);
+    if (!workerReadyUrl) {
+      return jsonResponse(503, { ok: false, error: 'worker_readiness_url_not_configured' });
     }
 
     if (request.method !== 'POST') {
@@ -198,6 +220,25 @@ export function createPlatformWebhookHandler({
       });
       await client.connect();
       const queued = await enqueue(client, { botIdentity: identity, update });
+
+      // Release the database connection before waiting for Render to wake.
+      await client.end();
+      client = null;
+
+      // Telegram receives success only after the processor is ready. If Render
+      // is cold or unavailable, return 503 so Telegram retries this same update;
+      // the durable inbox deduplicates it while the retry wakes the host again.
+      const readinessResponse = await fetchImpl(workerReadyUrl, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(wakeTimeoutMs)
+      });
+      let readiness = null;
+      try { readiness = await readinessResponse.json(); } catch (_) {}
+      if (!readinessResponse.ok || readiness?.status !== 'ok') {
+        return jsonResponse(503, { ok: false, error: 'platform_worker_not_ready' });
+      }
+
       return jsonResponse(200, {
         ok: true,
         duplicate: queued.duplicate,
