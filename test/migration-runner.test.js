@@ -9,6 +9,7 @@ const path = require('node:path');
 const {
   APPROVED_MIGRATION_FILES,
   createMigrationRunner,
+  createMigrationPoolOptions,
   listMigrationFiles,
   extractMigrationBody
 } = require('../migrations/runner');
@@ -53,6 +54,36 @@ function makePool({ locked = true, failLedger = false } = {}) {
     calls
   };
 }
+
+test('migration pool options verify PostgreSQL TLS by default and when required', () => {
+  const connectionString = 'postgresql://test:test@localhost:5432/boss_test';
+
+  assert.equal(
+    createMigrationPoolOptions({ DATABASE_URL: connectionString }).ssl,
+    true
+  );
+  assert.equal(
+    createMigrationPoolOptions({
+      DATABASE_URL: connectionString,
+      DATABASE_SSL: 'require'
+    }).ssl,
+    true
+  );
+  assert.equal(
+    createMigrationPoolOptions({
+      DATABASE_URL: connectionString,
+      DATABASE_SSL: 'disable'
+    }).ssl,
+    false
+  );
+  assert.throws(
+    () => createMigrationPoolOptions({
+      DATABASE_URL: connectionString,
+      DATABASE_SSL: 'prefer'
+    }),
+    /DATABASE_SSL must be either require or disable/
+  );
+});
 
 test('migration runner applies pending files once and skips recorded versions', async (t) => {
   const directory = fs.mkdtempSync(
