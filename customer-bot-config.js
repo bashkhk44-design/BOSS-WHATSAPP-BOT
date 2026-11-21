@@ -75,8 +75,8 @@ function validateCustomerBotConfig(input) {
 
 async function loadApprovedCustomerBotConfig({ pool, record } = {}) {
   if (!pool || typeof pool.query !== 'function') throw new TypeError('PostgreSQL pool is required.');
-  if (!record || !/^\\d+$/.test(String(record.project_id || '')) ||
-      !/^\\d+$/.test(String(record.client_id || ''))) {
+  if (!record || !/^\d+$/.test(String(record.project_id || '')) ||
+      !/^\d+$/.test(String(record.client_id || ''))) {
     return null;
   }
 
