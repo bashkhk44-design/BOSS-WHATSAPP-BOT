@@ -122,3 +122,35 @@ test('dispatcher does not claim work when the admin sender is unavailable', asyn
   assert.equal(await dispatcher.dispatch(), 0);
   assert.equal(calls.claims.length, 0);
 });
+
+
+test('sequential queue draining gives every claimed notification a distinct owner', async () => {
+  const claims = [];
+  const completions = [];
+  let nextId = 1;
+  const dispatcher = createProjectNotificationDispatcher({
+    getNotifyAdminHandler: () => async () => {},
+    claimNotifications: async options => {
+      claims.push(options);
+      if (nextId > 2) return [];
+      const id = String(nextId++);
+      return [{ id, event_type: 'project_approved', payload: {}, attempts: 1 }];
+    },
+    renewLease: async () => true,
+    completeNotification: async options => {
+      completions.push(options);
+      return true;
+    },
+    retryNotification: async () => null,
+    sendNotification: async () => {},
+    logger: { warn() {}, error() {} },
+    leaseSeconds: 30,
+    heartbeatIntervalMs: 1000
+  });
+
+  assert.equal(await dispatcher.dispatch(), 2);
+  assert.equal(claims.length, 3, 'two jobs plus one empty-queue check');
+  assert.ok(claims.every(claim => claim.limit === 1));
+  assert.notEqual(claims[0].workerId, claims[1].workerId);
+  assert.equal(completions.length, 2);
+});
