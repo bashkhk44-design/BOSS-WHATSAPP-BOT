@@ -23,8 +23,7 @@ async function startHealthOnlyRuntime({ env = process.env, logger = console, db 
 
   try {
     await database.pool.query('SELECT 1');
-    logger.log('BOSS staging health-only mode connected to PostgreSQL; Telegram runtimes are disabled.');
-    process.emit('boss:runtime-ready');
+    logger.log('BOSS staging health-only mode connected to PostgreSQL; Telegram runtimes are disabled and runtime readiness remains false.');
   } catch (error) {
     const cleanup = [];
     if (database.pool && typeof database.pool.end === 'function') {
@@ -39,7 +38,7 @@ async function startHealthOnlyRuntime({ env = process.env, logger = console, db 
 
   return {
     mode: 'health-only',
-    get ready() { return !stopped; },
+    get ready() { return false; },
     done,
     stop() {
       if (!stopPromise) {
