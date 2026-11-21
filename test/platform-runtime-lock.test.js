@@ -77,9 +77,23 @@ test('lost runtime lock marks webhook runtime unready and notifies the fail-clos
   lockHeld = false;
   await assert.rejects(state.runtime.assertReady(), /no longer owns/);
   assert.equal(state.runtime.ready, false);
-  assert.equal(notified, null);
-  // Simulate the database driver's asynchronous lock-loss notification.
+  assert.equal(notified, 'Telegram runtime lock is no longer held');
+  // A later driver notification must not invoke shutdown twice.
   await state.failureHandler(new Error('lock connection lost'));
+  assert.equal(notified, 'Telegram runtime lock is no longer held');
+});
+
+
+test('database driver lock-loss notification invokes fail-closed callback once', async () => {
+  let notified = null;
+  const state = setup();
+  await state.runtime.start({
+    onLockFailure: async error => { notified = error.message; }
+  });
+  await state.failureHandler(new Error('lock connection lost'));
+  assert.equal(notified, 'lock connection lost');
+  assert.equal(state.runtime.ready, false);
+  await state.failureHandler(new Error('duplicate lock notification'));
   assert.equal(notified, 'lock connection lost');
 });
 
