@@ -75,7 +75,7 @@ jobs:
     needs: postgres-integration
     if: >-
       ${{ github.event_name == 'workflow_dispatch' &&
-          github.ref == 'refs/heads/staging/fix-neon-staging-migrations' &&
+          github.ref == 'refs/heads/staging/harden-schema-verification' &&
           inputs.confirm_target == 'STAGING-ONLY' &&
           inputs.confirm_execution == 'RUN-STAGING-BOOTSTRAP' }}
     runs-on: ubuntu-latest
@@ -85,7 +85,7 @@ jobs:
       - name: Checkout reviewed staging branch
         uses: actions/checkout@v4
         with:
-          ref: staging/fix-neon-staging-migrations
+          ref: ${{ github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
