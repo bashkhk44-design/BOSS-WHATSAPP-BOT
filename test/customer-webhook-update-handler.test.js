@@ -1,0 +1,78 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { createCustomerWebhookUpdateHandler } = require('../customer-webhook-update-handler');
+
+test('customer update dispatcher routes only to the bot bound to the durable job', async () => {
+  const calls = [];
+  const pool = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (/SELECT u\.id AS inbox_id/.test(sql)) {
+        return { rowCount: 1, rows: [{
+          inbox_id: 9, payload: { update_id: 101, message: { text: '/start' } },
+          id: 12, name: 'Customer 12', username: 'customer12',
+          token_ciphertext: 'cipher', token_iv: 'iv', token_auth_tag: 'tag'
+        }] };
+      }
+      return { rowCount: 1, rows: [] };
+    }
+  };
+  const handled = [];
+  const handler = createCustomerWebhookUpdateHandler({
+    pool,
+    decryptToken: record => { assert.equal(record.id, 12); return 'test-token'; },
+    createCustomerBot: (record, token) => ({
+      async handleUpdate(update) { handled.push({ botId: record.id, token, update }); }
+    }),
+    logger: { error() {} }
+  });
+
+  const result = await handler({ bot_id: 12, payload: { botId: 12, updateId: 101 } });
+  assert.deepEqual(result, { botId: 12, updateId: 101, processed: true });
+  assert.equal(handled.length, 1);
+  assert.equal(handled[0].botId, 12);
+  assert.equal(handled[0].token, 'test-token');
+  assert.equal(handled[0].update.update_id, 101);
+  assert.match(calls[0].sql, /u\.bot_id = \$1 AND u\.update_id = \$2 AND b\.active = TRUE/);
+  assert.match(calls[1].sql, /state = 'processing'/);
+  assert.match(calls[2].sql, /state = 'processed'/);
+});
+
+test('customer update dispatcher rejects mismatched bot identities before database access', async () => {
+  const handler = createCustomerWebhookUpdateHandler({
+    pool: { async query() { assert.fail('mismatched job must not access database'); } },
+    decryptToken() { assert.fail('must not decrypt another bot token'); },
+    createCustomerBot() { assert.fail('must not create another bot'); }
+  });
+  await assert.rejects(
+    handler({ bot_id: 12, payload: { botId: 13, updateId: 101 } }),
+    /identity is invalid/
+  );
+});
+
+test('customer update dispatcher records failed delivery and rethrows for queue retry', async () => {
+  const updates = [];
+  const pool = {
+    async query(sql) {
+      updates.push(sql);
+      if (/SELECT u\.id AS inbox_id/.test(sql)) return { rowCount: 1, rows: [{
+        inbox_id: 10, payload: { update_id: 202 }, id: 14, name: 'Customer 14',
+        token_ciphertext: 'cipher', token_iv: 'iv', token_auth_tag: 'tag'
+      }] };
+      return { rowCount: 1, rows: [] };
+    }
+  };
+  const handler = createCustomerWebhookUpdateHandler({
+    pool,
+    decryptToken: () => 'token',
+    createCustomerBot: () => ({ async handleUpdate() { throw new Error('Telegram unavailable'); } }),
+    logger: { error() {} }
+  });
+  await assert.rejects(
+    handler({ bot_id: 14, payload: { botId: 14, updateId: 202 } }),
+    /Telegram unavailable/
+  );
+  assert.match(updates[2], /state = 'failed'/);
+});
