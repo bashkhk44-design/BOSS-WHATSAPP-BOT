@@ -11,6 +11,7 @@ on:
       - audit-hardening
       - cloudflare-ci-staging-branch
       - 'cloudflare-*'
+      - fix/platform-webhook-runtime-lock-health
   pull_request:
     branches:
       - main
