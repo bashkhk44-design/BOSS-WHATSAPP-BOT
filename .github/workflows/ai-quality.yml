@@ -17,6 +17,7 @@ on:
       - main
       - audit-hardening
       - feat/runtime-health-monitor
+      - staging/unified-platform-tls-migrations
 
 permissions:
   contents: read
