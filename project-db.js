@@ -546,18 +546,6 @@ async function approveProjectSpec({
   try {
     await client.query('BEGIN');
 
-    const owned = await client.query(`
-      SELECT p.id
-      FROM client_projects p
-      JOIN clients c ON c.id = p.client_id
-      WHERE p.id = $1 AND c.telegram_user_id = $2
-      FOR UPDATE OF p
-    `, [projectId, String(telegramUserId)]);
-
-    if (!owned.rowCount) {
-      throw new Error('المشروع غير موجود أو لا يخص هذا العميل');
-    }
-
     const receipt = await client.query(`
       INSERT INTO project_intake_update_receipts (bot_identity, update_id, telegram_user_id, project_id)
       VALUES ('intake', $1, $2, $3)
@@ -567,6 +555,19 @@ async function approveProjectSpec({
     if (!receipt.rowCount) {
       await client.query('ROLLBACK');
       return { duplicate: true };
+    }
+
+    const owned = await client.query(`
+      SELECT p.id
+      FROM client_projects p
+      JOIN clients c ON c.id = p.client_id
+      WHERE p.id = $1 AND c.telegram_user_id = $2
+        AND p.status = 'collecting_requirements'
+      FOR UPDATE OF p
+    `, [projectId, String(telegramUserId)]);
+
+    if (!owned.rowCount) {
+      throw new Error('المشروع غير موجود أو لا يخص هذا العميل');
     }
 
     const versionResult = await client.query(`
@@ -809,7 +810,7 @@ async function retryProjectNotification({ id, workerId, error, delaySeconds = 60
 
 
 async function cancelProjectIntake({ telegramUserId, projectId, updateId, botIdentity = 'intake' }) {
-  if (!telegramUserId || !/^\\d+$/.test(String(projectId || ''))) {
+  if (!telegramUserId || !/^\d+$/.test(String(projectId || ''))) {
     throw new Error('بيانات العميل أو المشروع غير صحيحة');
   }
   if (!Number.isSafeInteger(Number(updateId)) || Number(updateId) < 0) {
@@ -820,16 +821,6 @@ async function cancelProjectIntake({ telegramUserId, projectId, updateId, botIde
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const owned = await client.query(`
-      SELECT p.id
-      FROM client_projects p
-      JOIN clients c ON c.id = p.client_id
-      WHERE p.id = $1 AND c.telegram_user_id = $2
-        AND p.status = 'collecting_requirements'
-      FOR UPDATE OF p
-    `, [projectId, String(telegramUserId)]);
-    if (!owned.rowCount) throw new Error('المشروع غير موجود أو لم يعد قابلاً للإلغاء');
-
     const receipt = await client.query(`
       INSERT INTO project_intake_update_receipts (bot_identity, update_id, telegram_user_id, project_id)
       VALUES ($1, $2, $3, $4)
@@ -840,6 +831,16 @@ async function cancelProjectIntake({ telegramUserId, projectId, updateId, botIde
       await client.query('ROLLBACK');
       return { cancelled: false, duplicate: true };
     }
+
+    const owned = await client.query(`
+      SELECT p.id
+      FROM client_projects p
+      JOIN clients c ON c.id = p.client_id
+      WHERE p.id = $1 AND c.telegram_user_id = $2
+        AND p.status = 'collecting_requirements'
+      FOR UPDATE OF p
+    `, [projectId, String(telegramUserId)]);
+    if (!owned.rowCount) throw new Error('المشروع غير موجود أو لم يعد قابلاً للإلغاء');
 
     await client.query(`
       UPDATE client_projects
