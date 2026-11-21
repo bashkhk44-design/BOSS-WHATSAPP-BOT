@@ -794,7 +794,7 @@ async function persistIntakeUpdate({
 }) {
   if (!['master', 'intake'].includes(botIdentity)) throw new Error('هوية البوت غير صالحة');
   if (!Number.isSafeInteger(Number(updateId)) || Number(updateId) < 0) throw new Error('معرّف تحديث تيليغرام غير صالح');
-  if (!telegramUserId || !/^\\d+$/.test(String(projectId || ''))) throw new Error('بيانات العميل أو المشروع غير صحيحة');
+  if (!telegramUserId || !/^\d+$/.test(String(projectId || ''))) throw new Error('بيانات العميل أو المشروع غير صحيحة');
   if (typeof step !== 'string' || !step.trim() || !Array.isArray(messages)) throw new Error('بيانات تحديث الاستبيان غير صالحة');
 
   const client = await pool.connect();
