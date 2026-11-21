@@ -40,7 +40,7 @@ function createProjectNotificationDispatcher({
     const workerId = 'intake-notifier:' + randomUUID();
     const jobs = await claimNotifications({ workerId, limit: 1, leaseSeconds });
     const job = jobs[0];
-    if (!job) return 0;
+    if (!job) return null;
 
     let leaseLost = false;
     let heartbeatInFlight = null;
@@ -68,20 +68,20 @@ function createProjectNotificationDispatcher({
       if (heartbeatInFlight) await heartbeatInFlight;
       if (leaseLost) {
         logger.warn('Notification sent but lease ownership was lost before acknowledgement:', job.id);
-        return 0;
+        return false;
       }
       const completed = await completeNotification({ id: job.id, workerId });
       if (!completed) {
         logger.warn('Notification completion was rejected by the current lease owner:', job.id);
-        return 0;
+        return false;
       }
-      return 1;
+      return true;
     } catch (error) {
       clearInterval(heartbeat);
       if (heartbeatInFlight) await heartbeatInFlight;
       if (leaseLost) {
         logger.warn('Skipping notification retry because its lease is no longer owned:', job.id);
-        return 0;
+        return false;
       }
       try {
         await retryNotification({
@@ -94,7 +94,7 @@ function createProjectNotificationDispatcher({
         logger.error('Could not schedule project notification retry:', retryError.message);
       }
       logger.error('PROJECT NOTIFICATION OUTBOX ERROR:', error.message);
-      return 0;
+      return false;
     } finally {
       clearInterval(heartbeat);
       if (heartbeatInFlight) await heartbeatInFlight;
@@ -104,7 +104,16 @@ function createProjectNotificationDispatcher({
   async function runDispatch() {
     const handler = getNotifyAdminHandler();
     if (typeof handler !== 'function') return 0;
-    return dispatchOne(handler);
+    let sent = 0;
+    // Claim one row at a time so each notification has its own fenced lease owner.
+    // This preserves useful batch throughput without holding a large batch while
+    // sequential Telegram sends consume the lease window.
+    for (let index = 0; index < 10; index += 1) {
+      const result = await dispatchOne(handler);
+      if (result === null || result === false) break;
+      sent += 1;
+    }
+    return sent;
   }
 
   function dispatch() {
