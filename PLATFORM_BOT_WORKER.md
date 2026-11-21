@@ -4,6 +4,7 @@
 
 - `npm run start:platform-webhook` accepts only `POST /telegram/platform/master` and `POST /telegram/platform/intake`, verifies a separate Telegram secret-token value for each identity, and atomically enqueues the update through `enqueuePlatformBotUpdate`.
 - `npm run start:platform-worker` claims only `telegram.master.update` and `telegram.intake.update` jobs. It constructs the existing master and intake bot handlers in webhook mode and never starts long polling.
+- `npm run start:platform-host` runs that worker with a small HTTP health server. `/healthz` reports process liveness; `/readyz` returns success only after schema verification, singleton-lock ownership, both webhook adapters, and the queue loop are initialized.
 - Customer-bot updates remain on the existing `telegram.update` worker path and customer inbox.
 
 ## Required environment
@@ -17,9 +18,15 @@ Set Telegram's `secret_token` for the master bot to `MASTER_WEBHOOK_SECRET` and 
 - Master and intake updates use distinct queue job types and a separate platform-bot inbox.
 - The platform worker registers no customer `telegram.update` handler.
 - The webhook ingress never receives or logs bot tokens.
-- The ingress and worker are separate processes/services; the worker must have no public ingress.
+- The Cloudflare ingress and Telegram processing worker remain separate processes/services. The worker exposes only health endpoints (`/healthz` and `/readyz`), never public Telegram update routes.
 - Start with a disposable PostgreSQL database and staging Telegram bots. Do not point these processes at production or call Telegram `setWebhook` until the full staging acceptance test is complete.
 - This wiring does not deploy services, change Telegram webhook configuration, migrate production data, or alter production secrets.
+
+## Cloudflare wake-up contract
+
+- Configure `PLATFORM_WORKER_READY_URL` on the Cloudflare Worker to the Render platform-host `/readyz` URL.
+- After a durable enqueue, Cloudflare calls that readiness URL. It acknowledges Telegram only when Render reports ready; a cold-start or unavailable worker returns a retryable error so Telegram can redeliver the same update. Queue deduplication makes redelivery safe.
+- Keep `PLATFORM_BOT_WEBHOOK_MODE=disabled` until staging-only secrets, bot tokens, database, Render host and Cloudflare wake-up are all verified together.
 
 ## Verification still required
 
