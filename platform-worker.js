@@ -18,7 +18,7 @@ function validatePlatformWorkerEnvironment(env = process.env) {
     throw new Error('TELEGRAM_ADMIN_ID must be a numeric Telegram user ID');
   }
   if (typeof env.DATABASE_DIRECT_URL !== 'string' ||
-      !/^postgres(?:ql)?:\\/\\//i.test(env.DATABASE_DIRECT_URL)) {
+      !/^postgres(?:ql)?:\/\//i.test(env.DATABASE_DIRECT_URL)) {
     throw new Error('DATABASE_DIRECT_URL is required for the session-scoped Telegram advisory lock');
   }
   const { validatePlatformBotWorkerEnvironment } = require('./platform-bot-worker');
