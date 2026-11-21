@@ -44,8 +44,9 @@ test('injected master webhook runtime handles updates without starting polling o
     pool: { query: noop, end: noop },
     initDatabase: noop,
     insertTelegramBot: noop,
-    acquireTelegramRuntimeLock: noop,
-    isTelegramRuntimeLockHeld: noop,
+    verifyDatabaseSchema: noop,
+    acquireTelegramRuntimeLock: async () => true,
+    isTelegramRuntimeLockHeld: async () => true,
     releaseTelegramRuntimeLock: noop,
     setRuntimeLockFailureHandler: noop,
     startBotRuntime: noop,
@@ -98,8 +99,8 @@ test('injected master webhook runtime handles updates without starting polling o
   assert.equal(await webhook.handleUpdate({ update_id: 456, message: { text: '/start' } }), 'master-handled');
   assert.equal(handled.length, 1);
   assert.equal(handled[0].update_id, 456);
-  assert.throws(() => webhook.handleUpdate({ update_id: -1 }), /valid Telegram update/);
+  await assert.rejects(webhook.handleUpdate({ update_id: -1 }), /valid Telegram update/);
   await webhook.stop();
-  assert.throws(() => webhook.handleUpdate({ update_id: 457 }), /stopped/);
+  await assert.rejects(webhook.handleUpdate({ update_id: 457 }), /stopped/);
   assert.equal(startCalls, 0);
 });
