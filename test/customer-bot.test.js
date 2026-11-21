@@ -37,3 +37,17 @@ test('shared customer bot factory preserves polling /start and /help replies', a
   assert.match(replies[1], /مساعدة Test Activity/);
   assert.match(replies[1], /سيتم تفعيل خدمات هذا البوت/);
 });
+
+test('webhook customer bot error handler rethrows failures for durable retry', async () => {
+  let errorHandler;
+  const bot = {
+    command() { return this; },
+    catch(handler) { errorHandler = handler; return this; }
+  };
+  registerCustomerBotHandlers(bot, { id: 18, name: 'Webhook Activity' }, { propagateErrors: true });
+  const failure = new Error('Telegram sendMessage failed');
+  assert.throws(
+    () => errorHandler({ error_code: 500, message: failure.message }),
+    error => error.error_code === 500 && error.message === failure.message
+  );
+});

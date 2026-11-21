@@ -9,6 +9,7 @@ on:
       - feat/safe-auto-remediation
       - audit-hardening
       - cloudflare-ci-staging-branch
+      - staging/customer-webhook-transport
       - 'cloudflare-*'
   pull_request:
     branches:
@@ -117,6 +118,8 @@ jobs:
         run: node --test test/deployment-preflight-worker.heartbeat.integration.test.js
       - name: Exercise concurrent distributed bot claims
         run: node --test test/customer-bot-worker.integration.test.js
+      - name: Exercise durable customer webhook queue and dispatch on disposable PostgreSQL
+        run: node --test test/customer-webhook.postgres.integration.test.js
       - name: Exercise distributed manager bot controls
         run: node --test test/customer-bot-worker-control.integration.test.js
       - name: Exercise durable automatic remediation
@@ -134,6 +137,9 @@ jobs:
             ownership_constraint_count INTEGER;
             command_table_count INTEGER;
             command_migration_count INTEGER;
+            transport_migration_count INTEGER;
+            transport_column_count INTEGER;
+            polling_bot_count INTEGER;
           BEGIN
             SELECT COUNT(*) INTO migration_count
               FROM schema_migrations WHERE version = '001_foundation_database';
@@ -150,6 +156,14 @@ jobs:
               WHERE table_schema = 'public' AND table_name = 'bot_runtime_commands';
             SELECT COUNT(*) INTO command_migration_count
               FROM schema_migrations WHERE version = '003_bot_runtime_commands';
+            SELECT COUNT(*) INTO transport_migration_count
+              FROM schema_migrations WHERE version = '008_customer_bot_transport_mode';
+            SELECT COUNT(*) INTO transport_column_count
+              FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'telegram_bots'
+                AND column_name = 'transport_mode';
+            SELECT COUNT(*) INTO polling_bot_count
+              FROM telegram_bots WHERE transport_mode = 'polling';
             IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'bot_worker_status') THEN
               RAISE EXCEPTION 'Worker heartbeat table was not created';
             END IF;
@@ -181,9 +195,11 @@ jobs:
               );
             IF migration_count <> 1 OR bot_count <> 1 OR table_count <> 5
                OR ownership_constraint_count <> 4 OR command_table_count <> 1
-               OR command_migration_count <> 1 THEN
-              RAISE EXCEPTION 'Migration verification failed: migrations %, bots %, tables %, ownership checks %',
-                migration_count, bot_count, table_count, ownership_constraint_count;
+               OR command_migration_count <> 1 OR transport_migration_count <> 1
+               OR transport_column_count <> 1 OR polling_bot_count <> 1 THEN
+              RAISE EXCEPTION 'Migration verification failed: foundation %, bots %, tables %, ownership checks %, transport migration %, transport column %, polling bots %',
+                migration_count, bot_count, table_count, ownership_constraint_count,
+                transport_migration_count, transport_column_count, polling_bot_count;
             END IF;
           END $$;
           SQL

@@ -70,11 +70,14 @@ function createQueueWorker({
     if (renewLease) {
       heartbeatTimer = setInterval(() => {
         if (heartbeatInFlight || leaseLost) return;
-        heartbeatInFlight = queueApi.renewPlatformJobLease(pool, { jobId: job.id, workerId })
-          .then(renewed => {
-            if (!renewed) {
+        heartbeatInFlight = Promise.all([
+          queueApi.renewPlatformJobLease(pool, { jobId: job.id, workerId }),
+          typeof handler.renewLease === 'function' ? handler.renewLease(job, { workerId, leaseSeconds }) : true
+        ])
+          .then(([jobRenewed, handlerRenewed]) => {
+            if (!jobRenewed || !handlerRenewed) {
               leaseLost = true;
-              logger.warn(`Job lease lost during execution: ${job.id}`);
+              logger.warn(`Job or handler lease lost during execution: ${job.id}`);
             }
           })
           .catch(error => {

@@ -1,7 +1,7 @@
 import { Client } from 'pg';
 import platformQueue from '../platform-queue.js';
 
-const { enqueuePlatformBotUpdate } = platformQueue;
+const { enqueuePlatformBotUpdate, enqueueTelegramUpdate } = platformQueue;
 const MAX_BODY_BYTES = 1024 * 1024;
 const DB_CONNECT_TIMEOUT_MS = 5000;
 const DB_QUERY_TIMEOUT_MS = 10000;
@@ -78,13 +78,65 @@ async function readRequestBody(request, maxBodyBytes) {
   return { bytes, tooLarge: false };
 }
 
+
+export async function deriveCustomerWebhookSecret(rootSecret, botId) {
+  if (typeof rootSecret !== 'string' || rootSecret.length < 32) return null;
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(rootSecret),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signature = new Uint8Array(await crypto.subtle.sign('HMAC', key,
+    new TextEncoder().encode('telegram-customer-webhook:' + botId)));
+  let binary = '';
+  for (const byte of signature) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+async function handleCustomerWebhook(request, env, botId, ClientClass, enqueue, maxBodyBytes) {
+  if (env.CUSTOMER_BOT_WEBHOOK_MODE !== 'enabled') return jsonResponse(404, { ok: false, error: 'not_found' });
+  if (!Number.isSafeInteger(Number(botId)) || Number(botId) < 1) return jsonResponse(404, { ok: false, error: 'not_found' });
+  if (request.method !== 'POST') return new Response(JSON.stringify({ ok: false, error: 'method_not_allowed' }), {
+    status: 405, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', allow: 'POST' }
+  });
+  const contentType = (request.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+  if (contentType !== 'application/json') return jsonResponse(415, { ok: false, error: 'unsupported_media_type' });
+  const encoding = (request.headers.get('content-encoding') || 'identity').trim().toLowerCase();
+  if (encoding !== 'identity') { await request.body?.cancel().catch(() => {}); return jsonResponse(415, { ok: false, error: 'unsupported_content_encoding' }); }
+  const declaredLength = request.headers.get('content-length');
+  if (declaredLength !== null && (!/^\d+$/.test(declaredLength) || !Number.isSafeInteger(Number(declaredLength)))) return jsonResponse(400, { ok: false, error: 'invalid_content_length' });
+  if (declaredLength !== null && Number(declaredLength) > maxBodyBytes) { await request.body?.cancel(); return jsonResponse(413, { ok: false, error: 'payload_too_large' }); }
+  const expectedSecret = await deriveCustomerWebhookSecret(env.CUSTOMER_WEBHOOK_SECRET, botId);
+  if (!expectedSecret || !safeEqual(request.headers.get('x-telegram-bot-api-secret-token'), expectedSecret)) {
+    await request.body?.cancel(); return jsonResponse(401, { ok: false, error: 'unauthorized' });
+  }
+  const body = await readRequestBody(request, maxBodyBytes);
+  if (body.tooLarge) return jsonResponse(413, { ok: false, error: 'payload_too_large' });
+  let update;
+  try { update = JSON.parse(new TextDecoder().decode(body.bytes)); } catch (_) { return jsonResponse(400, { ok: false, error: 'invalid_json' }); }
+  if (!update || typeof update !== 'object' || Array.isArray(update) || !Number.isSafeInteger(update.update_id) || update.update_id < 0) return jsonResponse(400, { ok: false, error: 'invalid_update' });
+  const connectionString = env.HYPERDRIVE?.connectionString;
+  if (typeof connectionString !== 'string' || !/^postgres(?:ql)?:\/\//i.test(connectionString)) return jsonResponse(503, { ok: false, error: 'temporarily_unavailable' });
+  let client;
+  try {
+    client = new ClientClass({ connectionString, connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS, query_timeout: DB_QUERY_TIMEOUT_MS, statement_timeout: DB_QUERY_TIMEOUT_MS });
+    await client.connect();
+    const active = await client.query("SELECT id FROM telegram_bots WHERE id = $1 AND active = TRUE AND transport_mode = 'webhook' LIMIT 1", [botId]);
+    if (!active.rowCount) return jsonResponse(404, { ok: false, error: 'bot_not_found' });
+    const queued = await enqueue(client, { botId: Number(botId), update });
+    return jsonResponse(200, { ok: true, duplicate: queued.duplicate, queued: !queued.duplicate });
+  } catch (error) {
+    console.error('CUSTOMER TELEGRAM WEBHOOK ERROR:', error?.message || 'unknown');
+    return jsonResponse(503, { ok: false, error: 'temporarily_unavailable' });
+  } finally { if (client) { try { await client.end(); } catch (_) {} } }
+}
+
 export function createPlatformWebhookHandler({
   ClientClass = Client,
   enqueue = enqueuePlatformBotUpdate,
+  enqueueCustomer = enqueueTelegramUpdate,
   maxBodyBytes = MAX_BODY_BYTES
 } = {}) {
   if (typeof ClientClass !== 'function') throw new TypeError('PostgreSQL Client class is required');
   if (typeof enqueue !== 'function') throw new TypeError('Platform update enqueue function is required');
+  if (typeof enqueueCustomer !== 'function') throw new TypeError('Customer update enqueue function is required');
   if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1024) {
     throw new RangeError('maxBodyBytes must be at least 1024');
   }
@@ -94,6 +146,9 @@ export function createPlatformWebhookHandler({
     if (url.pathname === '/healthz' && request.method === 'GET') {
       return jsonResponse(200, { ok: true, service: 'platform-telegram-webhook-edge' });
     }
+
+    const customerMatch = url.pathname.match(/^\/telegram\/customer\/(\d+)$/);
+    if (customerMatch) return handleCustomerWebhook(request, env, customerMatch[1], ClientClass, enqueueCustomer, maxBodyBytes);
 
     const match = url.pathname.match(/^\/telegram\/platform\/(master|intake)$/);
     if (!match || env.PLATFORM_BOT_WEBHOOK_MODE !== 'enabled') {

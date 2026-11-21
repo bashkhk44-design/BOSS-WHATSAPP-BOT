@@ -14,6 +14,7 @@ async function claimNextBot(pool, workerId, leaseSeconds = DEFAULT_LEASE_SECONDS
       FROM telegram_bots b
       LEFT JOIN bot_runtime_status s ON s.bot_id = b.id
       WHERE b.active = TRUE
+        AND b.transport_mode = 'polling'
         AND b.token_ciphertext IS NOT NULL
         AND ($2::bigint IS NULL OR b.id = $2::bigint)
         AND (
