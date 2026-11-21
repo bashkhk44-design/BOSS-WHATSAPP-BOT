@@ -20,7 +20,49 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: boss_bot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d boss_bot_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout reviewed staging branch
+        uses: actions/checkout@v4
+        with:
+          ref: staging/fix-neon-staging-migrations
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run repository tests
+        run: npm test
+
+      - name: Run full bootstrap and migration integration against disposable PostgreSQL
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/boss_bot_test
+          DATABASE_SSL: disable
+        run: npm run db:test:integration
+
   bootstrap:
+    needs: postgres-integration
     if: >-
       ${{ github.ref == 'refs/heads/staging/fix-neon-staging-migrations' &&
           inputs.confirm_target == 'STAGING-ONLY' &&
