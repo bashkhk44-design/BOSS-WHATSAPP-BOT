@@ -115,9 +115,10 @@ function startNotificationPolling() {
   if (typeof notificationTimer.unref === 'function') notificationTimer.unref();
 }
 
-function stopNotificationPolling() {
+async function stopNotificationPolling() {
   if (notificationTimer) clearInterval(notificationTimer);
   notificationTimer = null;
+  await notificationDispatcher.waitForIdle();
 }
 
 async function saveMessage(userId, projectId, role, content) {
@@ -394,7 +395,7 @@ function createWebhookAdapter(bot) {
     },
     async stop() {
       if (intakeBot === bot && intakeMode === 'webhook') {
-        stopNotificationPolling();
+        await stopNotificationPolling();
         notifyAdminHandler = null;
         intakeBot = null;
         pollingPromise = null;
@@ -879,7 +880,7 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       startNotificationPolling();
       return createWebhookAdapter(currentBot);
     } catch (error) {
-      stopNotificationPolling();
+      await stopNotificationPolling();
       notifyAdminHandler = null;
       if (intakeBot === currentBot) {
         intakeBot = null;
@@ -938,7 +939,7 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
     startNotificationPolling();
     return currentBot;
   } catch (err) {
-    stopNotificationPolling();
+    await stopNotificationPolling();
     notifyAdminHandler = null;
     intakeStopping = true;
 
@@ -958,7 +959,7 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
 }
 
 async function stopIntakeBot() {
-  stopNotificationPolling();
+  await stopNotificationPolling();
   notifyAdminHandler = null;
   const currentBot = intakeBot;
   if (!currentBot) return;
