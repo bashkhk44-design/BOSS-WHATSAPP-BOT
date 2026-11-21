@@ -42,6 +42,19 @@ async function main() {
     if (!rejectedMissingIndex) throw new Error('Schema verifier accepted a missing required index.');
     await db.pool.query(indexDefinition.rows[0].definition);
 
+    // A present but structurally incorrect index must also be rejected.
+    await db.pool.query('DROP INDEX public.project_notification_outbox_ready_idx');
+    await db.pool.query(
+      'CREATE INDEX project_notification_outbox_ready_idx ON public.project_notification_outbox (state)'
+    );
+    let rejectedWrongIndexDefinition = false;
+    try { await db.verifyDatabaseSchema(); } catch (error) {
+      rejectedWrongIndexDefinition = /تعريف الفهارس/.test(error.message);
+    }
+    if (!rejectedWrongIndexDefinition) throw new Error('Schema verifier accepted an index with the wrong key definition.');
+    await db.pool.query('DROP INDEX public.project_notification_outbox_ready_idx');
+    await db.pool.query(indexDefinition.rows[0].definition);
+
     // A CHECK constraint marked NOT VALID must also be rejected.
     const constraintDefinition = await db.pool.query(
       `SELECT table_row.relname AS table_name,
@@ -59,6 +72,19 @@ async function main() {
       rejectedUnvalidatedConstraint = /القيود غير المعتمدة/.test(error.message);
     }
     if (!rejectedUnvalidatedConstraint) throw new Error('Schema verifier accepted an unvalidated required constraint.');
+    await db.pool.query(`ALTER TABLE public.${constraint.table_name} DROP CONSTRAINT telegram_bots_update_transport_check`);
+    await db.pool.query(`ALTER TABLE public.${constraint.table_name} ADD CONSTRAINT telegram_bots_update_transport_check ${constraint.definition}`);
+
+    // A validated CHECK with the wrong expression must not pass verification.
+    await db.pool.query(`ALTER TABLE public.${constraint.table_name} DROP CONSTRAINT telegram_bots_update_transport_check`);
+    await db.pool.query(
+      `ALTER TABLE public.${constraint.table_name} ADD CONSTRAINT telegram_bots_update_transport_check CHECK (update_transport IS NOT NULL)`
+    );
+    let rejectedWrongConstraintDefinition = false;
+    try { await db.verifyDatabaseSchema(); } catch (error) {
+      rejectedWrongConstraintDefinition = /القيود غير المعتمدة/.test(error.message);
+    }
+    if (!rejectedWrongConstraintDefinition) throw new Error('Schema verifier accepted a constraint with the wrong CHECK expression.');
     await db.pool.query(`ALTER TABLE public.${constraint.table_name} DROP CONSTRAINT telegram_bots_update_transport_check`);
     await db.pool.query(`ALTER TABLE public.${constraint.table_name} ADD CONSTRAINT telegram_bots_update_transport_check ${constraint.definition}`);
 
