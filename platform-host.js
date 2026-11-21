@@ -70,14 +70,32 @@ async function startPlatformHost({ env = process.env, logger = console } = {}) {
       runtimes: { master: masterWebhook, intake: intakeWebhook },
       pollIntervalMs: Number(env.QUEUE_POLL_INTERVAL_MS || 1000),
       leaseSeconds: Number(env.QUEUE_LEASE_SECONDS || 120),
-      logger
+      logger,
+      onHealthChange(isHealthy, error) {
+        if (stopping) return;
+        if (isHealthy) {
+          if (!ready) {
+            ready = true;
+            process.emit('boss:runtime-ready');
+          }
+        } else {
+          ready = false;
+          process.emit('boss:runtime-not-ready', error);
+          logger.error('Platform queue worker is unhealthy:', error?.message || 'unknown error');
+        }
+      }
     });
+
+    // Exercise the real queue tables before declaring readiness; SELECT 1 alone
+    // does not prove the queue schema or claim/recovery queries are usable.
+    await worker.processOne();
+    if (!(await db.isTelegramRuntimeLockHeld())) {
+      throw new Error('Telegram runtime lock was lost before queue worker startup');
+    }
 
     process.on('boss:runtime-lock-lost', onLockLost);
     const done = worker.start();
-    ready = true;
-    process.emit('boss:runtime-ready');
-    logger.log('BOSS platform webhook host READY; queue worker:', worker.workerId);
+    logger.log('BOSS platform webhook host started; waiting for queue health:', worker.workerId);
 
     return {
       workerId: worker.workerId,
@@ -116,8 +134,10 @@ async function main() {
   });
 
   const onReady = () => { runtimeReady = true; runtimeStopping = false; };
+  const onNotReady = () => { runtimeReady = false; };
   const onStopping = () => { runtimeReady = false; runtimeStopping = true; };
   process.on('boss:runtime-ready', onReady);
+  process.on('boss:runtime-not-ready', onNotReady);
   process.on('boss:runtime-stopping', onStopping);
 
   const shutdown = async signal => {
@@ -129,6 +149,7 @@ async function main() {
       await runtime?.stop();
     } finally {
       process.removeListener('boss:runtime-ready', onReady);
+      process.removeListener('boss:runtime-not-ready', onNotReady);
       process.removeListener('boss:runtime-stopping', onStopping);
       process.removeListener('boss:runtime-lock-lost', onLockLost);
       await new Promise(resolve => server.close(resolve));
@@ -152,7 +173,6 @@ async function main() {
 
   try {
     runtime = await startPlatformHost();
-    if (runtime.ready) onReady();
     await runtime.done;
   } catch (error) {
     onStopping();
