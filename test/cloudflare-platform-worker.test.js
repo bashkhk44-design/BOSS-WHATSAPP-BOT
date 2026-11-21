@@ -348,7 +348,7 @@ test('Cloudflare retry after a failed Render wake reuses the committed inbox upd
 
   const first = await handler(request(), env);
   assert.equal(first.status, 503);
-  assert.deepEqual(await first.json(), { ok: false, error: 'worker_not_ready' });
+  assert.deepEqual(await first.json(), { ok: false, error: 'temporarily_unavailable' });
   assert.deepEqual([...database.updates], ['master:99001']);
   assert.deepEqual([...database.jobs], ['telegram.master.update:99001']);
 
