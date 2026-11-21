@@ -148,3 +148,46 @@ test('project name and business type changes share the intake transaction and re
     loaded.restore();
   }
 });
+
+test('cancellation atomically updates project status and removes the session', async () => {
+  const loaded = loadProjectDb(async (sql) => {
+    if (sql === 'BEGIN' || sql === 'COMMIT') return { rowCount: 0, rows: [] };
+    if (sql.includes('INSERT INTO project_intake_update_receipts')) return { rowCount: 1, rows: [{ update_id: '903' }] };
+    if (sql.includes('SELECT p.id')) return { rowCount: 1, rows: [{ id: '55' }] };
+    if (sql.includes('UPDATE client_projects')) return { rowCount: 1, rows: [] };
+    if (sql.includes('DELETE FROM client_intake_sessions')) return { rowCount: 1, rows: [] };
+    assert.fail('unexpected SQL: ' + sql);
+  });
+  try {
+    const result = await loaded.projectDb.cancelProjectIntake({
+      updateId: 903, telegramUserId: '123', projectId: '55'
+    });
+    assert.deepEqual(result, { cancelled: true, duplicate: false });
+    const sql = loaded.queries.map(q => q.sql);
+    assert.equal(sql[0], 'BEGIN');
+    assert.ok(sql[1].includes('INSERT INTO project_intake_update_receipts'));
+    assert.ok(sql[2].includes('SELECT p.id'));
+    assert.ok(sql[3].includes('UPDATE client_projects'));
+    assert.ok(sql[4].includes('DELETE FROM client_intake_sessions'));
+    assert.equal(sql.at(-1), 'COMMIT');
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('duplicate cancellation receipt returns without touching project state', async () => {
+  const loaded = loadProjectDb(async (sql) => {
+    if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rowCount: 0, rows: [] };
+    if (sql.includes('INSERT INTO project_intake_update_receipts')) return { rowCount: 0, rows: [] };
+    assert.fail('duplicate cancellation must not inspect or update project state: ' + sql);
+  });
+  try {
+    const result = await loaded.projectDb.cancelProjectIntake({
+      updateId: 903, telegramUserId: '123', projectId: '55'
+    });
+    assert.deepEqual(result, { cancelled: false, duplicate: true });
+    assert.equal(loaded.queries.at(-1).sql, 'ROLLBACK');
+  } finally {
+    loaded.restore();
+  }
+});
