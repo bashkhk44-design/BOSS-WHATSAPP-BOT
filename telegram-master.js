@@ -26,7 +26,7 @@ const {
   pool, verifyDatabaseSchema, insertTelegramBot,
   getBotAssignmentClients, getBotAssignmentProjects, assignTelegramBotToProject,
   acquireTelegramRuntimeLock,
-  isTelegramRuntimeLockHeld, releaseTelegramRuntimeLock, setRuntimeLockFailureHandler,
+  isTelegramRuntimeLockHeld, releaseTelegramRuntimeLock, closeTelegramRuntimeLockPool, setRuntimeLockFailureHandler,
   startBotRuntime, stopBotRuntime, startBotById, stopBotById,
   getRunningBotCount, getBotRuntimeStatus,
   createProjectAiJob, getLatestCompletedProjectAiJob, markProjectAiJobRunning,
@@ -1738,6 +1738,9 @@ async function closeWebhookResources() {
           await releaseTelegramRuntimeLock();
         }
       } finally {
+        if (typeof closeTelegramRuntimeLockPool === 'function') {
+          await closeTelegramRuntimeLockPool();
+        }
         await pool.end();
       }
     })();
