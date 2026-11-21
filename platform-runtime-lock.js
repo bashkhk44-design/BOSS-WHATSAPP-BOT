@@ -20,6 +20,17 @@ function createPlatformRuntimeLock({
   let ready = false;
   let startPromise = null;
   let closePromise = null;
+  let onLockFailureHandler = null;
+  let lockFailureNotified = false;
+
+  async function notifyLockFailure(error) {
+    if (lockFailureNotified) return;
+    lockFailureNotified = true;
+    ready = false;
+    if (typeof onLockFailureHandler === 'function') {
+      await onLockFailureHandler(error);
+    }
+  }
 
   async function start({ onLockFailure } = {}) {
     if (startPromise) return startPromise;
@@ -30,10 +41,9 @@ function createPlatformRuntimeLock({
       ownsLock = true;
 
       try {
-        setLockFailureHandler(async error => {
-          ready = false;
-          if (typeof onLockFailure === 'function') await onLockFailure(error);
-        });
+        onLockFailureHandler = onLockFailure;
+        lockFailureNotified = false;
+        setLockFailureHandler(notifyLockFailure);
         await recoverInterruptedJobs();
         await initializeBot();
         if (!(await isLockHeld())) {
@@ -44,6 +54,7 @@ function createPlatformRuntimeLock({
       } catch (error) {
         ready = false;
         setLockFailureHandler(null);
+        onLockFailureHandler = null;
         if (ownsLock) {
           ownsLock = false;
           try {
@@ -59,9 +70,21 @@ function createPlatformRuntimeLock({
   }
 
   async function assertReady() {
-    if (!ready || !(await isLockHeld())) {
-      ready = false;
+    if (!ready) {
       throw new Error('Telegram webhook runtime is not ready or no longer owns the runtime lock');
+    }
+
+    let held = false;
+    try {
+      held = await isLockHeld();
+    } catch (error) {
+      await notifyLockFailure(error);
+      throw error;
+    }
+    if (!held) {
+      const error = new Error('Telegram runtime lock is no longer held');
+      await notifyLockFailure(error);
+      throw error;
     }
     return true;
   }
