@@ -237,3 +237,31 @@ test('webhook registration does not contact Telegram when the runtime is unsafe 
   );
   assert.equal(requests, 0);
 });
+
+test('platform host refuses to start when shutdown has already cancelled startup', async () => {
+  const db = fakeDatabase();
+  const controller = new AbortController();
+  controller.abort(new Error('shutdown requested'));
+  await assert.rejects(
+    startPlatformHost({
+      env: {
+        PLATFORM_BOT_WEBHOOK_MODE: 'disabled',
+        DATABASE_URL: 'postgresql://staging:test@localhost/staging'
+      },
+      db,
+      signal: controller.signal,
+      logger: { log() {}, error() {} }
+    }),
+    /shutdown requested/
+  );
+  assert.equal(db.calls.query, 0, 'cancelled startup must not open database resources');
+});
+
+test('webhook readiness wait is cancelled immediately when shutdown is requested', async () => {
+  const { waitForPlatformWorkerReady } = require('../platform-host');
+  const controller = new AbortController();
+  const workerReady = new Promise(() => {});
+  const waiting = waitForPlatformWorkerReady(workerReady, 10000, controller.signal);
+  controller.abort(new Error('shutdown during worker readiness'));
+  await assert.rejects(waiting, /shutdown during worker readiness/);
+});
