@@ -20,9 +20,27 @@ function registerCustomerBotHandlers(clientBot, record) {
   });
 
   for (const item of config?.commands || []) {
+    const buttons = item.buttons || [];
     clientBot.command(item.command, async (ctx) => {
-      await ctx.reply(item.text);
+      if (!buttons.length) {
+        await ctx.reply(item.text);
+        return;
+      }
+      const keyboard = {
+        inline_keyboard: buttons.map(button => [{
+          text: button.text,
+          callback_data: button.callbackData
+        }])
+      };
+      await ctx.reply(item.text, { reply_markup: keyboard });
     });
+
+    for (const button of buttons) {
+      clientBot.callbackQuery(button.callbackData, async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await ctx.reply(button.responseText);
+      });
+    }
   }
 
   clientBot.catch((err) => {
