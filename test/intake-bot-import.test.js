@@ -79,6 +79,10 @@ test('injected intake webhook runtime handles updates without starting polling o
     saveIntakeSession: noop,
     deleteIntakeSession: noop,
     approveProjectSpec: noop,
+    persistIntakeUpdate: noop,
+    claimProjectNotifications: async () => [],
+    completeProjectNotification: noop,
+    retryProjectNotification: noop,
     processIntakeTurn: noop,
     advanceFallbackIntake: () => ({ data: {}, assistantMessage: 'fallback' })
   };
