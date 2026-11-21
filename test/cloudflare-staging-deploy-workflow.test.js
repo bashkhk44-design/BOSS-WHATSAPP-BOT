@@ -19,5 +19,5 @@ test('Cloudflare staging deployment is restricted to the unified staging branch'
   );
   assert.match(workflow, /\[ "\$GITHUB_REF" != "\$EXPECTED_REF" \]/);
   assert.match(workflow, /PLATFORM_BOT_WEBHOOK_MODE": "disabled"/);
-  assert.match(workflow, /boss-bot-platform-ingress-staging/);
+  assert.match(workflow, /boss-bot-master-staging/);
 });
