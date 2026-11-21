@@ -79,7 +79,7 @@ async function readRequestBody(request, maxBodyBytes) {
 }
 
 
-async function deriveCustomerWebhookSecret(rootSecret, botId) {
+export async function deriveCustomerWebhookSecret(rootSecret, botId) {
   if (typeof rootSecret !== 'string' || rootSecret.length < 32) return null;
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(rootSecret),
     { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
