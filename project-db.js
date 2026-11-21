@@ -799,8 +799,16 @@ async function persistIntakeUpdate({
   projectId,
   step,
   data,
-  messages = []
+  messages = [],
+  projectName,
+  businessType
 }) {
+  if (projectName !== undefined && (!String(projectName || '').trim() || String(projectName).trim().length > 100)) {
+    throw new Error('اسم المشروع مطلوب ويجب ألا يتجاوز 100 حرف');
+  }
+  if (businessType !== undefined && !['restaurant', 'store', 'games', 'booking', 'services', 'support', 'payments', 'other'].includes(businessType)) {
+    throw new Error('نوع النشاط غير صالح');
+  }
   if (!['master', 'intake'].includes(botIdentity)) throw new Error('هوية البوت غير صالحة');
   if (!Number.isSafeInteger(Number(updateId)) || Number(updateId) < 0) throw new Error('معرّف تحديث تيليغرام غير صالح');
   if (!telegramUserId || !/^\d+$/.test(String(projectId || ''))) throw new Error('بيانات العميل أو المشروع غير صحيحة');
@@ -828,6 +836,24 @@ async function persistIntakeUpdate({
     if (!receipt.rowCount) {
       await client.query('ROLLBACK');
       return { processed: false, duplicate: true };
+    }
+
+    if (projectName !== undefined || businessType !== undefined) {
+      const projectUpdate = await client.query(`
+        UPDATE client_projects
+        SET name = CASE WHEN $2 THEN $3 ELSE name END,
+            business_type = CASE WHEN $4 THEN $5 ELSE business_type END,
+            updated_at = NOW()
+        WHERE id = $1 AND status = 'collecting_requirements'
+        RETURNING id
+      `, [
+        projectId,
+        projectName !== undefined,
+        projectName === undefined ? null : String(projectName).trim(),
+        businessType !== undefined,
+        businessType === undefined ? null : businessType
+      ]);
+      if (!projectUpdate.rowCount) throw new Error('المشروع غير متاح للتعديل أو لا يخص هذا العميل');
     }
 
     await client.query(`

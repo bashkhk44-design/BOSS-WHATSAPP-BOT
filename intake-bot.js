@@ -255,14 +255,11 @@ async function askNext(ctx, session) {
 }
 
 
-async function persistTurn(ctx, session, step, data, assistantMessage, userMessage) {
+async function persistSessionUpdate(ctx, session, step, data, options = {}) {
   const updateId = ctx.update?.update_id;
   if (!Number.isSafeInteger(updateId)) {
     throw new Error('لا يمكن حفظ الإجابة دون معرّف تحديث تيليغرام موثوق');
   }
-  const messages = [];
-  if (userMessage) messages.push({ role: 'client', content: userMessage });
-  if (assistantMessage) messages.push({ role: 'assistant', content: assistantMessage });
   return persistIntakeUpdate({
     botIdentity: 'intake',
     updateId,
@@ -270,8 +267,17 @@ async function persistTurn(ctx, session, step, data, assistantMessage, userMessa
     projectId: session.project_id,
     step,
     data,
-    messages
+    messages: options.messages || [],
+    projectName: options.projectName,
+    businessType: options.businessType
   });
+}
+
+async function persistTurn(ctx, session, step, data, assistantMessage, userMessage) {
+  const messages = [];
+  if (userMessage) messages.push({ role: 'client', content: userMessage });
+  if (assistantMessage) messages.push({ role: 'assistant', content: assistantMessage });
+  return persistSessionUpdate(ctx, session, step, data, { messages });
 }
 
 async function runInteractiveIntake(ctx, session, userMessage = '') {
@@ -423,12 +429,8 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       if (session.step !== step || session.data?.platform !== 'telegram') {
         session = { ...session, step, data };
 
-        await saveIntakeSession({
-          telegramUserId: ctx.from.id,
-          projectId: session.project_id,
-          step,
-          data
-        });
+        const saved = await persistSessionUpdate(ctx, session, step, data);
+        if (!saved.processed) return;
       }
 
       await ctx.reply(
@@ -509,28 +511,13 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
     const businessType = ctx.match[1];
     const data = { ...session.data, businessType, platform: 'telegram' };
 
-    await setProjectBusinessType({
-      telegramUserId: ctx.from.id,
-      projectId: session.project_id,
-      businessType
-    });
-
     const editing = session.step === 'edit_business_type';
     const nextStep = editing ? 'review' : 'ai_intake';
-
-    await saveIntakeSession({
-      telegramUserId: ctx.from.id,
-      projectId: session.project_id,
-      step: nextStep,
-      data
+    const saved = await persistSessionUpdate(ctx, session, nextStep, data, {
+      businessType,
+      messages: [{ role: 'client', content: `نوع النشاط: ${typeName(businessType)}` }]
     });
-
-    await saveMessage(
-      ctx.from.id,
-      session.project_id,
-      'client',
-      `نوع النشاط: ${typeName(businessType)}`
-    );
+    if (!saved.processed) return;
 
     await ctx.answerCallbackQuery();
 
@@ -556,19 +543,10 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
     const platform = 'telegram';
     const data = { ...session.data, platform };
 
-    await saveIntakeSession({
-      telegramUserId: ctx.from.id,
-      projectId: session.project_id,
-      step: 'description',
-      data
+    const saved = await persistSessionUpdate(ctx, session, 'description', data, {
+      messages: [{ role: 'client', content: 'المنصة: تيليغرام فقط' }]
     });
-
-    await saveMessage(
-      ctx.from.id,
-      session.project_id,
-      'client',
-      'المنصة: تيليغرام فقط'
-    );
+    if (!saved.processed) return;
 
     await ctx.answerCallbackQuery();
 
@@ -632,12 +610,8 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       return;
     }
 
-    await saveIntakeSession({
-      telegramUserId: ctx.from.id,
-      projectId: session.project_id,
-      step: 'edit_menu',
-      data: session.data
-    });
+    const saved = await persistSessionUpdate(ctx, session, 'edit_menu', session.data);
+    if (!saved.processed) return;
 
     await ctx.answerCallbackQuery();
     await askNext(ctx, { ...session, step: 'edit_menu' });
@@ -651,12 +625,8 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       return;
     }
 
-    await saveIntakeSession({
-      telegramUserId: ctx.from.id,
-      projectId: session.project_id,
-      step: 'review',
-      data: session.data
-    });
+    const saved = await persistSessionUpdate(ctx, session, 'review', session.data);
+    if (!saved.processed) return;
 
     await ctx.answerCallbackQuery();
     await askNext(ctx, { ...session, step: 'review' });
@@ -684,12 +654,8 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
 
     const step = field === 'businessType' ? 'edit_business_type' : 'edit_' + field;
 
-    await saveIntakeSession({
-      telegramUserId: ctx.from.id,
-      projectId: session.project_id,
-      step,
-      data: session.data
-    });
+    const saved = await persistSessionUpdate(ctx, session, step, session.data);
+    if (!saved.processed) return;
 
     await ctx.answerCallbackQuery();
 
@@ -781,20 +747,11 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       return;
     }
 
-    if (!session.step.startsWith('edit_')) {
-      await saveMessage(userId, session.project_id, 'client', text);
-    }
-
     if (session.step.startsWith('edit_')) {
       const field = session.step.slice(5);
       const data = { ...session.data };
 
       if (field === 'projectName') {
-        await updateProjectName({
-          telegramUserId: userId,
-          projectId: session.project_id,
-          name: text
-        });
         data.projectName = text;
       } else {
         const editableFields = [
@@ -810,21 +767,15 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
         data[field] = text;
       }
 
-      await saveIntakeSession({
-        telegramUserId: userId,
-        projectId: session.project_id,
-        step: 'review',
-        data
+      const editMessages = [
+        { role: 'client', content: text },
+        { role: 'system', content: 'تم تعديل الحقل: ' + field }
+      ];
+      const saved = await persistSessionUpdate(ctx, session, 'review', data, {
+        projectName: field === 'projectName' ? text : undefined,
+        messages: editMessages
       });
-
-      await saveMessage(userId, session.project_id, 'client', text);
-
-      await saveMessage(
-        userId,
-        session.project_id,
-        'system',
-        'تم تعديل الحقل: ' + field
-      );
+      if (!saved.processed) return;
 
       await ctx.reply('✅ تم حفظ التعديل في المواصفات.');
       await askNext(ctx, { ...session, step: 'review', data });
@@ -839,12 +790,10 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
           .join('\n')
       };
 
-      await saveIntakeSession({
-        telegramUserId: userId,
-        projectId: session.project_id,
-        step: 'review',
-        data
+      const saved = await persistSessionUpdate(ctx, session, 'review', data, {
+        messages: [{ role: 'client', content: text }]
       });
+      if (!saved.processed) return;
 
       session = { ...session, step: 'review', data };
       await askNext(ctx, session);
@@ -881,12 +830,10 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
       [fields[session.step]]: text
     };
 
-    await saveIntakeSession({
-      telegramUserId: userId,
-      projectId: session.project_id,
-      step: nextStep,
-      data
+    const saved = await persistSessionUpdate(ctx, session, nextStep, data, {
+      messages: [{ role: 'client', content: text }]
     });
+    if (!saved.processed) return;
 
     session = {
       ...session,
