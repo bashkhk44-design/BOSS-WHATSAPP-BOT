@@ -202,10 +202,11 @@ test('migration discovery fails closed when an approved migration file is missin
 });
 
 test('default migration allowlist contains all currently reviewed migrations', () => {
-  assert.equal(APPROVED_MIGRATION_FILES.length, 10);
+  assert.equal(APPROVED_MIGRATION_FILES.length, 11);
   assert.ok(APPROVED_MIGRATION_FILES.includes('20261118_bot_runtime_status.sql'));
   assert.ok(APPROVED_MIGRATION_FILES.includes('20261119_bot_inbound_update_lease_owner.sql'));
   assert.ok(APPROVED_MIGRATION_FILES.includes('20261119_bot_update_transport.sql'));
+  assert.ok(APPROVED_MIGRATION_FILES.includes('20261121_project_notification_outbox.sql'));
   assert.equal(APPROVED_MIGRATION_FILES.includes('000_staging_bootstrap.sql'), false);
 });
 

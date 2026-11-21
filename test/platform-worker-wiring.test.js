@@ -10,6 +10,7 @@ const {
 
 const validEnv = {
   DATABASE_URL: 'postgresql://test:test@localhost:5432/boss_test',
+  DATABASE_DIRECT_URL: 'postgresql://test:test@localhost:5432/boss_test',
   BOTS_ENCRYPTION_KEY: 'a'.repeat(64),
   TELEGRAM_BOT_TOKEN: 'master-test-token',
   TELEGRAM_ADMIN_ID: '10001',

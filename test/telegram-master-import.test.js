@@ -23,6 +23,9 @@ test('injected master webhook runtime handles updates without starting polling o
   let startCalls = 0;
   let initCalls = 0;
   let registeredHandlers = 0;
+  let schemaChecks = 0;
+  let lockAcquisitions = 0;
+  let lockReleases = 0;
 
   const fakeBot = {
     async init() { initCalls += 1; },
@@ -44,9 +47,10 @@ test('injected master webhook runtime handles updates without starting polling o
     pool: { query: noop, end: noop },
     initDatabase: noop,
     insertTelegramBot: noop,
-    acquireTelegramRuntimeLock: noop,
-    isTelegramRuntimeLockHeld: noop,
-    releaseTelegramRuntimeLock: noop,
+    async verifyDatabaseSchema() { schemaChecks += 1; },
+    async acquireTelegramRuntimeLock() { lockAcquisitions += 1; return true; },
+    async isTelegramRuntimeLockHeld() { return true; },
+    async releaseTelegramRuntimeLock() { lockReleases += 1; },
     setRuntimeLockFailureHandler: noop,
     startBotRuntime: noop,
     stopBotRuntime: noop,
@@ -91,6 +95,8 @@ test('injected master webhook runtime handles updates without starting polling o
   });
   const webhook = await runtime.createWebhookRuntime();
 
+  assert.equal(schemaChecks, 1, 'database schema must be verified before webhook startup');
+  assert.equal(lockAcquisitions, 1, 'webhook runtime must acquire the Telegram lock');
   assert.equal(initCalls, 1, 'master bot must initialize before webhook updates');
 
   assert.ok(registeredHandlers > 0, 'master handlers should be registered');
@@ -98,8 +104,10 @@ test('injected master webhook runtime handles updates without starting polling o
   assert.equal(await webhook.handleUpdate({ update_id: 456, message: { text: '/start' } }), 'master-handled');
   assert.equal(handled.length, 1);
   assert.equal(handled[0].update_id, 456);
-  assert.throws(() => webhook.handleUpdate({ update_id: -1 }), /valid Telegram update/);
+  await assert.rejects(webhook.handleUpdate({ update_id: -1 }), /valid Telegram update/);
   await webhook.stop();
-  assert.throws(() => webhook.handleUpdate({ update_id: 457 }), /stopped/);
+  await assert.rejects(webhook.handleUpdate({ update_id: 457 }), /stopped/);
+  await runtime.closeWebhookResources();
+  assert.equal(lockReleases, 1, 'only the lock owner releases the runtime lock');
   assert.equal(startCalls, 0);
 });
