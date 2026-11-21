@@ -148,16 +148,19 @@ function createMigrationRunner({
 
           if (existing.rowCount > 0) {
             const recordedChecksum = existing.rows[0].checksum;
-            if (recordedChecksum && recordedChecksum !== checksum) {
-              throw new Error(
-                'Migration checksum mismatch for ' + version +
-                ': database ledger does not match the reviewed SQL'
-              );
-            }
-            if (!recordedChecksum) {
+            if (recordedChecksum === null) {
               legacyChecksumRows.push(version);
               logger.warn(
                 'Legacy migration has no recorded database checksum; reviewed source baseline verified: ' + version
+              );
+            } else if (
+              typeof recordedChecksum !== 'string' ||
+              !/^[a-f0-9]{64}$/i.test(recordedChecksum) ||
+              recordedChecksum.toLowerCase() !== checksum
+            ) {
+              throw new Error(
+                'Migration checksum mismatch for ' + version +
+                ': database ledger does not contain a valid checksum matching the reviewed SQL'
               );
             }
             skipped.push(version);
