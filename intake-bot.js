@@ -34,7 +34,7 @@ function createIntakeRuntime({ dependencies = null, createBot = null } = {}) {
     'setProjectBusinessType', 'updateProjectName', 'updateClientProjectStatus',
     'addConversationMessage', 'getIntakeSession', 'getProjectConversation',
     'saveIntakeSession', 'deleteIntakeSession', 'approveProjectSpec', 'persistIntakeUpdate', 'cancelProjectIntake',
-    'processIntakeTurn', 'advanceFallbackIntake', 'renewProjectNotificationLease'
+    'processIntakeTurn', 'advanceFallbackIntake', 'claimProjectNotifications', 'renewProjectNotificationLease', 'completeProjectNotification', 'retryProjectNotification'
   ]) {
     if (!runtimeDependencies[name]) {
       throw new TypeError('Missing intake runtime dependency: ' + name);
