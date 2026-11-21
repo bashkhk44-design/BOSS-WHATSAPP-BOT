@@ -26,6 +26,43 @@ async function main() {
       throw new Error('Migration idempotency check failed on the second bootstrap pass.');
     }
 
+    // Negative-path verification: an invalid/missing required index must fail schema validation.
+    const indexDefinition = await db.pool.query(
+      `SELECT pg_get_indexdef(index_meta.indexrelid) AS definition
+       FROM pg_index index_meta
+       JOIN pg_class index_row ON index_row.oid = index_meta.indexrelid
+       WHERE index_row.relname = 'project_notification_outbox_ready_idx'`
+    );
+    if (!indexDefinition.rowCount) throw new Error('Expected verification-test index was not created.');
+    await db.pool.query('DROP INDEX public.project_notification_outbox_ready_idx');
+    let rejectedMissingIndex = false;
+    try { await db.verifyDatabaseSchema(); } catch (error) {
+      rejectedMissingIndex = /الفهارس/.test(error.message);
+    }
+    if (!rejectedMissingIndex) throw new Error('Schema verifier accepted a missing required index.');
+    await db.pool.query(indexDefinition.rows[0].definition);
+
+    // A CHECK constraint marked NOT VALID must also be rejected.
+    const constraintDefinition = await db.pool.query(
+      `SELECT table_row.relname AS table_name,
+              pg_get_constraintdef(constraint_row.oid, true) AS definition
+       FROM pg_constraint constraint_row
+       JOIN pg_class table_row ON table_row.oid = constraint_row.conrelid
+       WHERE constraint_row.conname = 'telegram_bots_update_transport_check'`
+    );
+    if (!constraintDefinition.rowCount) throw new Error('Expected verification-test constraint was not created.');
+    const constraint = constraintDefinition.rows[0];
+    await db.pool.query(`ALTER TABLE public.${constraint.table_name} DROP CONSTRAINT telegram_bots_update_transport_check`);
+    await db.pool.query(`ALTER TABLE public.${constraint.table_name} ADD CONSTRAINT telegram_bots_update_transport_check ${constraint.definition} NOT VALID`);
+    let rejectedUnvalidatedConstraint = false;
+    try { await db.verifyDatabaseSchema(); } catch (error) {
+      rejectedUnvalidatedConstraint = /القيود غير المعتمدة/.test(error.message);
+    }
+    if (!rejectedUnvalidatedConstraint) throw new Error('Schema verifier accepted an unvalidated required constraint.');
+    await db.pool.query(`ALTER TABLE public.${constraint.table_name} DROP CONSTRAINT telegram_bots_update_transport_check`);
+    await db.pool.query(`ALTER TABLE public.${constraint.table_name} ADD CONSTRAINT telegram_bots_update_transport_check ${constraint.definition}`);
+
+    await db.verifyDatabaseSchema();
     const identity = await db.pool.query(
       'SELECT current_database() AS database_name, current_user AS database_role'
     );
