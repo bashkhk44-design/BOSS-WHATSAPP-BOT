@@ -18,7 +18,7 @@
     "start:platform-webhook": "node platform-webhook.js",
     "db:bootstrap": "node scripts/bootstrap-database.js",
     "start:platform-host": "node platform-host.js",
-    "db:test:integration": "node scripts/test-postgres-bootstrap.js"
+    "db:test:integration": "node scripts/postgres-bootstrap-integration.js"
   },
   "keywords": [],
   "type": "commonjs",
