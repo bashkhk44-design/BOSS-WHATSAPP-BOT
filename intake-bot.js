@@ -24,6 +24,7 @@ function createIntakeRuntime({ dependencies = null, createBot = null } = {}) {
     deleteIntakeSession,
     approveProjectSpec,
     persistIntakeUpdate,
+    cancelProjectIntake,
     processIntakeTurn,
     advanceFallbackIntake
   } = runtimeDependencies;
@@ -32,7 +33,7 @@ function createIntakeRuntime({ dependencies = null, createBot = null } = {}) {
     'Bot', 'InlineKeyboard', 'pool', 'createClientProjectWithSession',
     'setProjectBusinessType', 'updateProjectName', 'updateClientProjectStatus',
     'addConversationMessage', 'getIntakeSession', 'getProjectConversation',
-    'saveIntakeSession', 'deleteIntakeSession', 'approveProjectSpec', 'persistIntakeUpdate',
+    'saveIntakeSession', 'deleteIntakeSession', 'approveProjectSpec', 'persistIntakeUpdate', 'cancelProjectIntake',
     'processIntakeTurn', 'advanceFallbackIntake'
   ]) {
     if (!runtimeDependencies[name]) {
@@ -349,18 +350,12 @@ async function beginProject(ctx) {
   const session = await getIntakeSession(userId);
 
   if (session) {
-    await pool.query(
-      `UPDATE client_projects p
-       SET status = 'cancelled', updated_at = NOW()
-       FROM clients c
-       WHERE p.client_id = c.id
-         AND p.id = $1
-         AND c.telegram_user_id = $2
-         AND p.status = 'collecting_requirements'`,
-      [session.project_id, String(userId)]
-    );
-
-    await deleteIntakeSession(userId);
+    const cancelled = await cancelProjectIntake({
+      telegramUserId: userId,
+      projectId: session.project_id,
+      updateId: ctx.update?.update_id
+    });
+    if (cancelled.duplicate) return;
   }
 
   await ctx.reply(
@@ -691,14 +686,16 @@ async function startIntakeBot(notifyAdmin = null, onFatal = null, options = {}) 
     const session = await getIntakeSession(ctx.from.id);
 
     if (session) {
-      await updateClientProjectStatus({
+      const cancelled = await cancelProjectIntake({
         telegramUserId: ctx.from.id,
         projectId: session.project_id,
-        status: 'cancelled'
+        updateId: ctx.update?.update_id
       });
+      if (cancelled.duplicate) {
+        await ctx.answerCallbackQuery({ text: 'تمت معالجة الإلغاء مسبقاً.' });
+        return;
+      }
     }
-
-    await deleteIntakeSession(ctx.from.id);
     await ctx.answerCallbackQuery({
       text: 'تم إلغاء جلسة الاستقبال.'
     });

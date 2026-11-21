@@ -808,6 +808,59 @@ async function retryProjectNotification({ id, workerId, error, delaySeconds = 60
 }
 
 
+async function cancelProjectIntake({ telegramUserId, projectId, updateId, botIdentity = 'intake' }) {
+  if (!telegramUserId || !/^\\d+$/.test(String(projectId || ''))) {
+    throw new Error('بيانات العميل أو المشروع غير صحيحة');
+  }
+  if (!Number.isSafeInteger(Number(updateId)) || Number(updateId) < 0) {
+    throw new Error('معرّف تحديث تيليغرام غير صالح');
+  }
+  if (!['master', 'intake'].includes(botIdentity)) throw new Error('هوية البوت غير صالحة');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const owned = await client.query(`
+      SELECT p.id
+      FROM client_projects p
+      JOIN clients c ON c.id = p.client_id
+      WHERE p.id = $1 AND c.telegram_user_id = $2
+        AND p.status = 'collecting_requirements'
+      FOR UPDATE OF p
+    `, [projectId, String(telegramUserId)]);
+    if (!owned.rowCount) throw new Error('المشروع غير موجود أو لم يعد قابلاً للإلغاء');
+
+    const receipt = await client.query(`
+      INSERT INTO project_intake_update_receipts (bot_identity, update_id, telegram_user_id, project_id)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (bot_identity, update_id) DO NOTHING
+      RETURNING update_id
+    `, [botIdentity, String(updateId), String(telegramUserId), projectId]);
+    if (!receipt.rowCount) {
+      await client.query('ROLLBACK');
+      return { cancelled: false, duplicate: true };
+    }
+
+    await client.query(`
+      UPDATE client_projects
+      SET status = 'cancelled', updated_at = NOW()
+      WHERE id = $1
+    `, [projectId]);
+    await client.query(`
+      DELETE FROM client_intake_sessions
+      WHERE telegram_user_id = $1 AND project_id = $2
+    `, [String(telegramUserId), projectId]);
+
+    await client.query('COMMIT');
+    return { cancelled: true, duplicate: false };
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function persistIntakeUpdate({
   botIdentity = 'intake',
   updateId,
@@ -924,6 +977,7 @@ module.exports = {
   deleteIntakeSession,
   approveProjectSpec,
   persistIntakeUpdate,
+  cancelProjectIntake,
   enqueueProjectNotification,
   claimProjectNotifications,
   completeProjectNotification,
