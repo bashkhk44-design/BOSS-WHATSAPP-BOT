@@ -1,48 +1,43 @@
 # Cloudflare staging integration
 
-Status: Worker source and local tests are prepared, but deployment remains disabled. No staging Hyperdrive binding, secret, route, webhook, or Cloudflare deployment has been configured. Production services and production Neon remain untouched.
+Status: customer webhook source, durable Node dispatch worker, and automated tests are present on this branch. Deployment and runtime activation remain disabled. The repository does not contain a live Hyperdrive ID, Cloudflare secrets, Telegram webhook registration, or production cutover.
 
 ## Deployment design
 
-1. GitHub Actions runs the repository's existing quality checks on every push to
-   `cloudflare-staging-integration` and on pull requests targeting `audit-hardening`.
-2. `cloudflare/worker.mjs` now provides the edge-only master/intake webhook ingress. A real Wrangler bundle test and staging-only deploy workflow are still required.
-3. Cloudflare deployment must use a dedicated Neon staging branch and a GitHub
-   Environment named `cloudflare-staging` with restricted deployment approvals.
-4. Cloudflare credentials and Telegram staging tokens must be GitHub Environment
-   secrets, never committed to the repository.
-5. Production Render, production Neon, production Telegram bot tokens/webhooks,
-   and `BOTS_ENCRYPTION_KEY` remain untouched until a separately approved cutover.
+1. GitHub Actions runs quality and PostgreSQL integration checks on the staging branch and pull requests.
+2. `cloudflare/worker.mjs` supports platform master/intake routes and the customer route `POST /telegram/customer/:botId`.
+3. The customer route requires `CUSTOMER_BOT_WEBHOOK_MODE=enabled`, a root `CUSTOMER_WEBHOOK_SECRET`, a matching active bot row with `transport_mode='webhook'`, and a verified Hyperdrive database.
+4. Cloudflare deployment must use a dedicated Neon staging project/database (or a branch whose ancestry and data isolation are verified) and a restricted GitHub Environment named `cloudflare-staging`.
+5. Cloudflare credentials, three independent webhook secrets, Telegram staging tokens, and the staging encryption key must be stored as secrets, never committed.
+6. Production Render, production Neon, production Telegram bot tokens/webhooks, and `BOTS_ENCRYPTION_KEY` remain untouched until a separately approved cutover.
 
-## Required staging configuration (not yet populated)
+## Staging configuration (not populated in the repository)
 
 GitHub Environment: `cloudflare-staging`
 
-- `CLOUDFLARE_API_TOKEN` — secret with access only to the staging Worker.
-- `CLOUDFLARE_ACCOUNT_ID` — staging account identifier (may be a variable).
-- Staging-only Telegram bot tokens and webhook secrets.
-- Hyperdrive binding connected only to a dedicated Neon staging database.
-- A staging encryption key and staging-only bot records.
+- `CLOUDFLARE_API_TOKEN` — staging Worker-scoped secret.
+- `CLOUDFLARE_ACCOUNT_ID` — account identifier.
+- `MASTER_WEBHOOK_SECRET` — independent platform master secret.
+- `INTAKE_WEBHOOK_SECRET` — independent platform intake secret.
+- `CUSTOMER_WEBHOOK_SECRET` — root secret used to derive per-customer-bot webhook secrets.
+- Staging-only Telegram bot tokens and a staging encryption key for the Node workers.
+- Hyperdrive binding connected only to the independently verified staging database.
 
-Do not copy production credentials into this environment.
+Never copy production credentials into this environment. Keep both webhook modes disabled until the complete staging acceptance criteria pass.
 
-## Current migration boundary
+## Runtime boundaries
 
-The previous Cloudflare prototype lives on the older
-`cloudflare-webhook-prep` branch. That branch diverged substantially from the
-current application branch. Its runtime files must be ported and reconciled with
-the current source; merging or deploying that old branch wholesale could roll
-back security and reliability fixes. This integration branch therefore starts
-from the current application head and records the safe deployment contract
-before any runtime code is moved.
+- Cloudflare Worker authenticates requests and durably enqueues updates only.
+- `customer-webhook-worker.js` is a dedicated Node queue worker for customer webhook updates. It requires `CUSTOMER_WEBHOOK_WORKER_ENABLED=YES` and a staging-only `DATABASE_URL`, decryption key, and bot records.
+- Existing customer polling claims only rows with `transport_mode='polling'`; webhook dispatch handles only `transport_mode='webhook'`. Existing records default to polling.
+- A queue integration test on disposable PostgreSQL is not a live connection to the user's Neon database.
 
 ## Acceptance criteria before enabling deployment
 
-- Worker entrypoint uses the current platform queue API and avoids importing Node bot runtimes or the Node HTTP server.
-- Worker unit tests, a static dependency-boundary test, and a credential-free Wrangler dry-run bundle test run in CI. The bundle test intentionally has no Hyperdrive binding.
-- A newly created, independently verified staging-only Hyperdrive binding connection test passes.
-- Master, intake, and customer webhook routes pass end-to-end staging tests.
-- AI build/test pipeline is dispatched to isolated Node workers/queue; it is not
-  silently treated as supported by the edge Worker.
-- GitHub Actions deploys only the staging Worker after all checks pass.
+- Worker dependency-boundary tests and a Wrangler dry-run bundle pass.
+- The Hyperdrive origin hostname, Neon project, branch ancestry, and database name are verified to be staging-only; the database is confirmed free of production data.
+- The staging Node customer webhook worker connects to the same isolated staging database with staging-only credentials.
+- Master, intake, and customer webhook authentication/enqueue/dispatch paths pass end-to-end tests with dedicated staging bot tokens.
+- Retry, lease recovery, deduplication, cross-bot isolation, and duplicate side-effect behavior are reviewed.
+- Deployment is restricted to the `cloudflare-staging` environment and requires approval.
 - Production cutover remains a separate, explicitly approved operation.
