@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 
 const MAX_TEXT_LENGTH = 3500;
 const MAX_COMMANDS = 30;
+const MAX_BUTTONS_PER_COMMAND = 8;
 
 function stableJson(value) {
   if (Array.isArray(value)) return '[' + value.map(stableJson).join(',') + ']';
@@ -42,12 +43,13 @@ function validateCustomerBotConfig(input) {
   }
 
   const seen = new Set(['start', 'help']);
+  const seenCallbacks = new Set();
   const commands = input.commands.map((item, index) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
       throw new Error('commands[' + index + '] must be an object.');
     }
     const keys = Object.keys(item);
-    if (keys.some(key => !['command', 'description', 'text'].includes(key))) {
+    if (keys.some(key => !['command', 'description', 'text', 'buttons'].includes(key))) {
       throw new Error('commands[' + index + '] contains an unsupported field.');
     }
     const command = item.command;
@@ -58,10 +60,43 @@ function validateCustomerBotConfig(input) {
     seen.add(command);
     const description = cleanText(item.description, 'commands[' + index + '].description');
     if (description.length > 256) throw new Error('Telegram command descriptions cannot exceed 256 characters.');
+    const buttons = item.buttons === undefined ? [] : item.buttons;
+    if (!Array.isArray(buttons) || buttons.length > MAX_BUTTONS_PER_COMMAND) {
+      throw new Error('commands[' + index + '].buttons must contain no more than ' + MAX_BUTTONS_PER_COMMAND + ' buttons.');
+    }
+    const validatedButtons = buttons.map((button, buttonIndex) => {
+      if (!button || typeof button !== 'object' || Array.isArray(button)) {
+        throw new Error('commands[' + index + '].buttons[' + buttonIndex + '] must be an object.');
+      }
+      if (Object.keys(button).some(key => !['text', 'callbackData', 'responseText'].includes(key))) {
+        throw new Error('commands[' + index + '].buttons[' + buttonIndex + '] contains an unsupported field.');
+      }
+      const text = cleanText(button.text, 'commands[' + index + '].buttons[' + buttonIndex + '].text');
+      if (Buffer.byteLength(text, 'utf8') > 64) {
+        throw new Error('Telegram inline button labels cannot exceed 64 UTF-8 bytes.');
+      }
+      if (typeof button.callbackData !== 'string' ||
+          !/^[A-Za-z0-9:_-]{1,64}$/.test(button.callbackData)) {
+        throw new Error('Telegram callback data must use 1-64 safe ASCII characters.');
+      }
+      if (seenCallbacks.has(button.callbackData)) {
+        throw new Error('Duplicate Telegram callback data: ' + button.callbackData);
+      }
+      seenCallbacks.add(button.callbackData);
+      return {
+        text,
+        callbackData: button.callbackData,
+        responseText: cleanText(
+          button.responseText,
+          'commands[' + index + '].buttons[' + buttonIndex + '].responseText'
+        )
+      };
+    });
     return {
       command,
       description,
-      text: cleanText(item.text, 'commands[' + index + '].text')
+      text: cleanText(item.text, 'commands[' + index + '].text'),
+      buttons: validatedButtons
     };
   });
 
