@@ -26,12 +26,24 @@ function makeRelease(config = validConfig()) {
       files: [{ path: 'boss-telegram.json', content: JSON.stringify(config) }]
     }
   };
-  return {
+  const release = {
     id: '41',
+    project_id: '12',
     release_version: 3,
+    spec_version: 1,
+    authorized_by: '99',
     artifact,
     artifact_sha256: sha256(stableJson(artifact))
   };
+  release.authorization_sha256 = sha256(stableJson({
+    releaseId: release.id,
+    projectId: release.project_id,
+    releaseVersion: release.release_version,
+    specVersion: release.spec_version,
+    artifactSha256: release.artifact_sha256,
+    authorizedBy: release.authorized_by
+  }));
+  return release;
 }
 
 test('validates a safe declarative Telegram command configuration', () => {
@@ -70,7 +82,41 @@ test('loads only a digest-verified approved release with manager authorization',
   assert.deepEqual(query.params, [12, 8]);
   assert.match(query.sql, /r\.status = 'approved'/);
   assert.match(query.sql, /a\.status = 'authorized'/);
+  assert.match(query.sql, /a\.authorization_sha256/);
   assert.match(query.sql, /p\.client_id = \$2/);
+});
+
+test('fails closed when deployment authorization digest is invalid', async () => {
+  const release = makeRelease();
+  release.authorization_sha256 = '0'.repeat(64);
+  await assert.rejects(
+    loadApprovedCustomerBotConfig({
+      pool: { async query() { return { rowCount: 1, rows: [release] }; } },
+      record: { client_id: 8, project_id: 12 }
+    }),
+    /deployment authorization failed its integrity check/
+  );
+});
+
+test('fails closed when an intact release artifact identifies another project', async () => {
+  const release = makeRelease();
+  release.artifact.report.project.id = '13';
+  release.artifact_sha256 = sha256(stableJson(release.artifact));
+  release.authorization_sha256 = sha256(stableJson({
+    releaseId: release.id,
+    projectId: release.project_id,
+    releaseVersion: release.release_version,
+    specVersion: release.spec_version,
+    artifactSha256: release.artifact_sha256,
+    authorizedBy: release.authorized_by
+  }));
+  await assert.rejects(
+    loadApprovedCustomerBotConfig({
+      pool: { async query() { return { rowCount: 1, rows: [release] }; } },
+      record: { client_id: 8, project_id: 12 }
+    }),
+    /belongs to a different project/
+  );
 });
 
 test('fails closed when no authorized approved release exists', async () => {
